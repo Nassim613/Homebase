@@ -33,6 +33,10 @@ function headersFor(sheetName) {
       return ['Name', 'Status', 'Bought For', 'Date Bought', 'Sold For', 'Date Sold', 'ID', 'Raw JSON'];
     case 'GarageCosts':
       return ['Date', 'Vehicle ID', 'Expense Type ID', 'Repair Type ID', 'Total Cost', 'Mileage', 'Comments', 'ID', 'Raw JSON'];
+    case 'Categories':
+      return ['Name', 'Type', 'Conditional Field', 'ID', 'Raw JSON'];
+    case 'Stores':
+      return ['Name', 'ID', 'Raw JSON'];
     default:
       return ['Date', 'ID', 'Raw JSON'];
   }
@@ -50,6 +54,10 @@ function rowFor(sheetName, entry) {
       return [entry.name, entry.status, entry.boughtFor || '', entry.dateBought || '', entry.soldFor || '', entry.dateSold || '', entry.id, JSON.stringify(entry)];
     case 'GarageCosts':
       return [entry.date, entry.vehicleId, entry.expenseTypeId, entry.repairTypeId || '', entry.totalCost || '', entry.mileage || '', entry.comments || '', entry.id, JSON.stringify(entry)];
+    case 'Categories':
+      return [(entry.name || '').toString().toUpperCase(), entry.type, entry.conditionalField, entry.id, JSON.stringify(entry)];
+    case 'Stores':
+      return [entry.name, entry.id, JSON.stringify(entry)];
     default:
       return [entry.date || '', entry.id || '', JSON.stringify(entry)];
   }

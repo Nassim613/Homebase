@@ -43,7 +43,7 @@ const Sync = {
     // Resets every record's sync flag so a subsequent retryAllPending() re-pushes everything
     // from scratch. Use this after manually clearing the Sheet, so the Sheet ends up with
     // exactly one clean copy of each record instead of relying on deduping a messy history.
-    const stores = ['entries', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
+    const stores = ['entries', 'categories', 'payees', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
     for (const s of stores) {
       try {
         const items = await DB.getAll(s);
@@ -64,6 +64,8 @@ const Sync = {
     try {
       const jobs = [
         { store: 'entries', sheet: 'Finance', strip: [] },
+        { store: 'categories', sheet: 'Categories', strip: [] },
+        { store: 'payees', sheet: 'Stores', strip: ['logo'] },
         { store: 'jazzIssues', sheet: 'Jazz', strip: ['photos'] },
         { store: 'weightEntries', sheet: 'Weight', strip: [] },
         { store: 'vehicles', sheet: 'Vehicles', strip: ['photos', 'ownershipDoc'] },
@@ -92,7 +94,7 @@ const Sync = {
   async refreshStatus() {
     const url = await this.getUrl();
     if (!url) { this.setStatus('offline'); return; }
-    const stores = ['entries', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
+    const stores = ['entries', 'categories', 'payees', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
     let pendingCount = 0;
     for (const s of stores) {
       try {

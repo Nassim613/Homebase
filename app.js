@@ -61,7 +61,10 @@ async function route() {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderFinanceMain();
     if (currentView === 'add') return renderAddEntry();
+    if (currentView === 'entryDetail') return renderEntryDetail();
     if (currentView === 'categories') return renderCategoriesManager();
+    if (currentView === 'categoryForm') return renderCategoryForm();
+    if (currentView === 'storeForm') return renderStoreForm();
     if (currentView === 'reports') return renderReportsStub();
   } else if (currentTab === 'jazz') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
@@ -152,7 +155,7 @@ function renderEntryRow(e, catById, payeeById) {
   const valClass = e.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
   const sign = e.type === 'transfer' ? '' : (isNeg ? '' : '+');
   return `
-    <div class="entry-row" onclick="openEntryActions('${e.id}')">
+    <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
         ${payee.logo ? `<img src="${payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:var(--gold-soft)"><i class="ti ${cat.icon || 'ti-tag'}" style="color:#8a6412"></i></div>
@@ -199,13 +202,71 @@ function renderReportsStub() {
 }
 
 // ---------- Add / Edit Entry ----------
-async function openEntryActions(id) {
-  const entry = await DB.get('entries', id);
-  if (!entry) return;
-  const action = prompt('Type "duplicate", "edit", or "delete" for this entry:');
-  if (action === 'duplicate') { duplicateSource = entry; currentView = 'add'; route(); }
-  else if (action === 'edit') { duplicateSource = { ...entry, __editId: entry.id }; currentView = 'add'; route(); }
-  else if (action === 'delete') { await DB.delete('entries', id); renderFinanceMain(); }
+let currentEntryId = null;
+function openEntryDetail(id) { currentEntryId = id; currentView = 'entryDetail'; route(); }
+
+async function renderEntryDetail() {
+  const entry = await DB.get('entries', currentEntryId);
+  if (!entry) { goMain(); return; }
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const cars = await DB.getAll('cars');
+  const projects = await DB.getAll('projects');
+  const cat = categories.find((c) => c.id === entry.categoryId) || {};
+  const payee = payees.find((p) => p.id === entry.storeId) || {};
+  const car = entry.carId ? cars.find((c) => c.id === entry.carId) : null;
+  const project = entry.projectId ? projects.find((p) => p.id === entry.projectId) : null;
+  const isNeg = entry.type === 'expense';
+  const valClass = entry.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Entry</span></div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="entry-icon" style="width:36px;height:36px">
+            ${payee.logo ? `<img src="${payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
+          </div>
+          <div>
+            <p style="font-size:16px;font-weight:600;margin:0">${esc(payee.name || cat.name || 'Entry')}</p>
+            <p style="font-size:12px;color:var(--ink-soft);margin:2px 0 0">${esc(cat.name || '')}</p>
+          </div>
+        </div>
+        <span class="entry-value ${valClass}" style="font-size:20px">${entry.type === 'expense' ? '-' : entry.type === 'income' ? '+' : ''}${fmtMoney(entry.amount)}</span>
+      </div>
+      <div class="divider"></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDate(entry.date)}</span></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Type</span><span style="font-size:12px;text-transform:capitalize">${entry.type}</span></div>
+      ${entry.description ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Description</span><span style="font-size:12px;text-align:right;max-width:60%">${esc(entry.description)}</span></div>` : ''}
+      ${car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Car</span><span style="font-size:12px">${esc(car.name)}</span></div>` : ''}
+      ${entry.carName && !car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cars</span><span style="font-size:12px">${esc(entry.carName)}</span></div>` : ''}
+      ${project ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Project</span><span style="font-size:12px">${esc(project.name)}</span></div>` : ''}
+      ${entry.givenTo ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Given to</span><span style="font-size:12px">${esc(entry.givenTo)}</span></div>` : ''}
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Synced</span><span style="font-size:12px">${entry.synced ? 'Yes' : 'Pending'}</span></div>
+    </div>
+
+    <button class="btn" style="margin-bottom:10px" onclick="editEntry()"><i class="ti ti-edit"></i> Edit</button>
+    <button class="btn" style="margin-bottom:10px" onclick="duplicateEntry()"><i class="ti ti-copy"></i> Duplicate</button>
+    <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteEntry()"><i class="ti ti-trash"></i> Delete</button>
+  `;
+}
+
+async function editEntry() {
+  const entry = await DB.get('entries', currentEntryId);
+  duplicateSource = { ...entry, __editId: entry.id };
+  currentView = 'add'; route();
+}
+async function duplicateEntry() {
+  const entry = await DB.get('entries', currentEntryId);
+  duplicateSource = { ...entry };
+  delete duplicateSource.__editId;
+  currentView = 'add'; route();
+}
+async function deleteEntry() {
+  if (!confirm('Delete this entry? This can\'t be undone locally (though it may still exist as a row in your Sheet history).')) return;
+  await DB.delete('entries', currentEntryId);
+  goMain();
 }
 
 async function renderAddEntry() {
@@ -260,10 +321,10 @@ async function renderAddEntry() {
   setType(src ? src.type : 'expense');
 
   document.getElementById('f_category').addEventListener('change', (e) => {
-    if (e.target.value === '__new') return promptNewCategory();
+    if (e.target.value === '__new') return goAddCategory('add');
   });
   document.getElementById('f_store').addEventListener('change', (e) => {
-    if (e.target.value === '__new') return promptNewPayee();
+    if (e.target.value === '__new') return goAddStore('add');
   });
 }
 
@@ -327,19 +388,127 @@ function updateCarSplitAmount(carId, val) {
   if (c) c.amount = parseFloat(val) || 0;
 }
 
-function promptNewCategory() {
-  const name = prompt('New category name:');
-  if (!name) { document.getElementById('f_category').value = ''; return; }
-  const type = prompt('Type: expense, income, or transfer?', 'expense') || 'expense';
-  const icon = 'ti-tag';
-  const cat = { id: uid(), name, type, icon, conditionalField: 'none', defaultStoreId: null, defaultAmount: null };
-  DB.put('categories', cat).then(() => { window.__categories.push(cat); renderAddEntry(); setTimeout(() => { document.getElementById('f_category').value = cat.id; onCategoryChange(); }, 0); });
+// ---------- Category form (its own page) ----------
+let categoryFormEditId = null;
+let categoryFormReturnTo = null;
+const CATEGORY_ICON_CHOICES = ['ti-tag', 'ti-shopping-cart', 'ti-home', 'ti-car', 'ti-heart', 'ti-tool', 'ti-building-bank', 'ti-user', 'ti-repeat', 'ti-tools-kitchen-2', 'ti-shield-check', 'ti-plane'];
+
+function goAddCategory(returnTo) { categoryFormEditId = null; categoryFormReturnTo = returnTo || null; currentView = 'categoryForm'; route(); }
+function goEditCategory(id) { categoryFormEditId = id; categoryFormReturnTo = null; currentView = 'categoryForm'; route(); }
+
+async function renderCategoryForm() {
+  const existing = categoryFormEditId ? await DB.get('categories', categoryFormEditId) : null;
+  window.__categoryTypeDraft = existing ? existing.type : 'expense';
+  window.__categoryIconDraft = existing ? (existing.icon || 'ti-tag') : 'ti-tag';
+  window.__categoryConditionalDraft = existing ? existing.conditionalField : 'none';
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${categoryFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} category</span></div>
+
+    <div class="field"><label class="field-label">Name</label><input id="cat_name" placeholder="e.g. Groceries" value="${existing ? esc(existing.name) : ''}"></div>
+
+    <label class="field-label">Type</label>
+    <div class="btn-toggle-row" id="catTypeToggle">
+      <button class="btn-toggle" onclick="selectCategoryType(this,'expense')">Expense</button>
+      <button class="btn-toggle" onclick="selectCategoryType(this,'income')">Income</button>
+      <button class="btn-toggle" onclick="selectCategoryType(this,'transfer')">Transfer</button>
+    </div>
+
+    <label class="field-label">Icon</label>
+    <div id="catIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      ${CATEGORY_ICON_CHOICES.map((ic) => `<button type="button" onclick="selectCategoryIcon('${ic}', event)" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === window.__categoryIconDraft ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
+    </div>
+
+    <label class="field-label">Extra field on entries</label>
+    <select id="cat_conditional" style="margin-bottom:20px">
+      <option value="none" ${window.__categoryConditionalDraft === 'none' ? 'selected' : ''}>None</option>
+      <option value="car" ${window.__categoryConditionalDraft === 'car' ? 'selected' : ''}>Car (single)</option>
+      <option value="carSplit" ${window.__categoryConditionalDraft === 'carSplit' ? 'selected' : ''}>Cars (split across multiple)</option>
+      <option value="project" ${window.__categoryConditionalDraft === 'project' ? 'selected' : ''}>Project</option>
+      <option value="givenTo" ${window.__categoryConditionalDraft === 'givenTo' ? 'selected' : ''}>Given to (You/Wife)</option>
+    </select>
+
+    <button class="btn btn-primary" onclick="saveCategoryForm()">Save category</button>
+  `;
+  setTimeout(() => selectCategoryType(document.querySelector(`#catTypeToggle button:nth-child(${window.__categoryTypeDraft === 'expense' ? 1 : window.__categoryTypeDraft === 'income' ? 2 : 3})`), window.__categoryTypeDraft), 0);
 }
-function promptNewPayee() {
-  const name = prompt('New store name:');
-  if (!name) { document.getElementById('f_store').value = ''; return; }
-  const payee = { id: uid(), name, logo: null, defaultCategoryId: null, defaultAmount: null };
-  DB.put('payees', payee).then(() => { renderAddEntry(); setTimeout(() => { document.getElementById('f_store').value = payee.id; }, 0); });
+function selectCategoryType(btn, t) {
+  document.querySelectorAll('#catTypeToggle .btn-toggle').forEach((b) => b.classList.remove('active-expense', 'active-income', 'active-transfer'));
+  if (btn) btn.classList.add('active-' + t);
+  window.__categoryTypeDraft = t;
+}
+function selectCategoryIcon(ic, evt) {
+  window.__categoryIconDraft = ic;
+  document.querySelectorAll('#catIconPicker button').forEach((b) => { b.style.background = 'var(--surface-raised)'; });
+  if (evt && evt.currentTarget) evt.currentTarget.style.background = 'var(--gold-soft)';
+}
+async function saveCategoryForm() {
+  const name = document.getElementById('cat_name').value.trim();
+  if (!name) { alert('Category needs a name.'); return; }
+  const cat = categoryFormEditId ? await DB.get('categories', categoryFormEditId) : { id: uid(), defaultStoreId: null, defaultAmount: null };
+  cat.name = name;
+  cat.type = window.__categoryTypeDraft || 'expense';
+  cat.icon = window.__categoryIconDraft || 'ti-tag';
+  cat.conditionalField = document.getElementById('cat_conditional').value;
+  cat.synced = false;
+  await DB.put('categories', cat);
+  Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
+  if (categoryFormReturnTo === 'add') {
+    currentView = 'add'; route();
+    setTimeout(() => { const sel = document.getElementById('f_category'); if (sel) { sel.value = cat.id; onCategoryChange(); } }, 0);
+  } else {
+    currentView = 'categories'; route();
+  }
+}
+
+// ---------- Store form (its own page, with logo upload) ----------
+let storeFormEditId = null;
+let storeFormReturnTo = null;
+let storeLogoDraft = null;
+
+function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; currentView = 'storeForm'; route(); }
+function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; currentView = 'storeForm'; route(); }
+
+async function renderStoreForm() {
+  const existing = storeFormEditId ? await DB.get('payees', storeFormEditId) : null;
+  if (existing) storeLogoDraft = existing.logo || null;
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
+
+    <div class="field"><label class="field-label">Name</label><input id="store_name" placeholder="e.g. Costco" value="${existing ? esc(existing.name) : ''}"></div>
+
+    <label class="field-label">Logo</label>
+    <div class="photo-slot" style="width:90px;height:90px;margin-bottom:20px" onclick="document.getElementById('storeLogoInput').click()">
+      ${storeLogoDraft ? `<img src="${storeLogoDraft}">` : '<i class="ti ti-building-store" style="font-size:24px"></i>'}
+    </div>
+    <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
+
+    <button class="btn btn-primary" onclick="saveStoreForm()">Save store</button>
+  `;
+}
+function handleStoreLogoUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => { storeLogoDraft = reader.result; renderStoreForm(); };
+  reader.readAsDataURL(f);
+}
+async function saveStoreForm() {
+  const name = document.getElementById('store_name').value.trim();
+  if (!name) { alert('Store needs a name.'); return; }
+  const payee = storeFormEditId ? await DB.get('payees', storeFormEditId) : { id: uid(), defaultCategoryId: null, defaultAmount: null };
+  payee.name = name;
+  payee.logo = storeLogoDraft;
+  payee.synced = false;
+  await DB.put('payees', payee);
+  const { logo, ...syncablePayee } = payee;
+  Sync.pushEntry('Stores', syncablePayee).then(() => { payee.synced = true; DB.put('payees', payee); });
+  if (storeFormReturnTo === 'add') {
+    currentView = 'add'; route();
+    setTimeout(() => { const sel = document.getElementById('f_store'); if (sel) sel.value = payee.id; }, 0);
+  } else {
+    currentView = 'categories'; route();
+  }
 }
 
 async function saveEntry() {
@@ -395,42 +564,22 @@ async function renderCategoriesManager() {
       <button class="chip ${managerTab === 'categories' ? 'active' : ''}" onclick="switchManagerTab('categories')">Categories</button>
       <button class="chip ${managerTab === 'payees' ? 'active' : ''}" onclick="switchManagerTab('payees')">Stores</button>
     </div>
-    <button class="btn btn-primary" style="margin-bottom:14px" onclick="${managerTab === 'categories' ? 'promptNewCategoryStandalone()' : 'promptNewPayeeStandalone()'}"><i class="ti ti-plus"></i> Add ${managerTab === 'categories' ? 'category' : 'store'}</button>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="${managerTab === 'categories' ? 'goAddCategory()' : 'goAddStore()'}"><i class="ti ti-plus"></i> Add ${managerTab === 'categories' ? 'category' : 'store'}</button>
     <div>${list.map((item) => managerTab === 'categories' ? renderCategoryListRow(item) : renderPayeeListRow(item)).join('') || '<div class="empty-state">Nothing yet.</div>'}</div>
   `;
 }
 function switchManagerTab(t) { managerTab = t; renderCategoriesManager(); }
 
 function renderCategoryListRow(c) {
-  return `<div class="list-row" onclick="editCategoryPrompt('${c.id}')">
+  return `<div class="list-row" onclick="goEditCategory('${c.id}')">
     <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ${c.icon || 'ti-tag'}"></i></div><span>${esc(c.name)}</span></div>
     <span style="font-size:11px;color:var(--ink-soft);text-transform:capitalize">${c.type}</span>
   </div>`;
 }
 function renderPayeeListRow(p) {
-  return `<div class="list-row" onclick="editPayeePrompt('${p.id}')">
+  return `<div class="list-row" onclick="goEditStore('${p.id}')">
     <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${p.logo ? `<img src="${p.logo}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
   </div>`;
-}
-
-function promptNewCategoryStandalone() {
-  const name = prompt('Category name:'); if (!name) return;
-  const type = prompt('Type: expense, income, or transfer?', 'expense') || 'expense';
-  DB.put('categories', { id: uid(), name, type, icon: 'ti-tag', conditionalField: 'none', defaultStoreId: null, defaultAmount: null }).then(renderCategoriesManager);
-}
-function promptNewPayeeStandalone() {
-  const name = prompt('Store name:'); if (!name) return;
-  DB.put('payees', { id: uid(), name, logo: null, defaultCategoryId: null, defaultAmount: null }).then(renderCategoriesManager);
-}
-async function editCategoryPrompt(id) {
-  const c = await DB.get('categories', id);
-  const name = prompt('Category name:', c.name); if (!name) return;
-  c.name = name; await DB.put('categories', c); renderCategoriesManager();
-}
-async function editPayeePrompt(id) {
-  const p = await DB.get('payees', id);
-  const name = prompt('Store name:', p.name); if (!name) return;
-  p.name = name; await DB.put('payees', p); renderCategoriesManager();
 }
 
 // ---------- Init ----------
@@ -711,9 +860,14 @@ async function renderJazzReport() {
 }
 
 // ============ WEIGHT MODULE (family) ============
-let weightPerson = 'You';
+let weightPerson = 'You'; // internal key, kept for consistency with existing synced data (subject: 'you'/'wife')
+let weightRange = '6m';
+const WEIGHT_LABELS = { You: 'Nassim', Wife: 'Safia' };
+let weightChartInstance = null;
+
 function goWeightMain() { currentView = 'main'; route(); }
 function selectWeightPerson(person) { weightPerson = person; renderWeightMain(); }
+function setWeightRange(r) { weightRange = r; renderWeightMain(); }
 
 async function renderWeightMain() {
   const all = (await DB.getAll('weightEntries')).filter((w) => w.subject === weightPerson.toLowerCase());
@@ -721,11 +875,12 @@ async function renderWeightMain() {
   const latest = sorted[0];
   const prev = sorted[1];
   const diff = latest && prev ? +(latest.value - prev.value).toFixed(1) : null;
+  const inRange = all.filter((w) => withinRange(w.date, weightRange)).sort((a, b) => a.date.localeCompare(b.date));
 
   $main.innerHTML = `
     <div class="btn-toggle-row">
-      <button class="btn-toggle ${weightPerson==='You'?'active-neutral':''}" onclick="selectWeightPerson('You')">You</button>
-      <button class="btn-toggle ${weightPerson==='Wife'?'active-neutral':''}" onclick="selectWeightPerson('Wife')">Wife</button>
+      <button class="btn-toggle ${weightPerson==='You'?'active-neutral':''}" onclick="selectWeightPerson('You')">${WEIGHT_LABELS.You}</button>
+      <button class="btn-toggle ${weightPerson==='Wife'?'active-neutral':''}" onclick="selectWeightPerson('Wife')">${WEIGHT_LABELS.Wife}</button>
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -733,14 +888,42 @@ async function renderWeightMain() {
         ${diff !== null ? `<div style="text-align:right"><p class="label" style="font-size:11px;color:var(--ink-soft)">Since last</p><p style="font-weight:600;color:${diff<=0?'#0F6E56':'var(--red)'}">${diff>0?'+':''}${diff} lbs</p></div>` : ''}
       </div>
     </div>
+
+    <div class="chip-row">
+      <button class="chip ${weightRange==='3m'?'active':''}" onclick="setWeightRange('3m')">3M</button>
+      <button class="chip ${weightRange==='6m'?'active':''}" onclick="setWeightRange('6m')">6M</button>
+      <button class="chip ${weightRange==='1y'?'active':''}" onclick="setWeightRange('1y')">1Y</button>
+      <button class="chip ${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All time</button>
+    </div>
+    <div style="position:relative;width:100%;height:180px;margin-bottom:20px">
+      ${inRange.length >= 2 ? '<canvas id="weightChart"></canvas>' : '<div class="empty-state">Log at least 2 entries in this range to see a trend.</div>'}
+    </div>
+
     <p class="section-label">History</p>
     <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" style="cursor:default"><div><span>${fmtDate(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
   `;
+
+  if (inRange.length >= 2 && window.Chart) {
+    const ctx = document.getElementById('weightChart');
+    if (weightChartInstance) weightChartInstance.destroy();
+    weightChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: inRange.map((w) => fmtDate(w.date)),
+        datasets: [{ data: inRange.map((w) => w.value), borderColor: '#2a78d6', backgroundColor: 'rgba(42,120,214,0.1)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#2a78d6' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { grid: { display: false } }, y: { grid: { color: 'rgba(137,135,129,0.2)' } } }
+      }
+    });
+  }
 }
 
 async function renderAddWeight() {
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goWeightMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log weight — ${weightPerson}</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goWeightMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log weight — ${WEIGHT_LABELS[weightPerson]}</span></div>
     <div class="field"><label class="field-label">Date</label><input type="date" id="w_date" value="${todayStr()}"></div>
     <div class="field"><label class="field-label">Weight (lbs)</label><input type="number" step="0.1" id="w_value" placeholder="0.0"></div>
     <div class="field"><label class="field-label">Notes</label><input id="w_note" placeholder="Optional"></div>

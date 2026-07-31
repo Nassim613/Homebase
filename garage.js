@@ -379,7 +379,7 @@ function withinRange(dateStr, range) {
   if (range === 'all') return true;
   const d = new Date(dateStr);
   const now = new Date();
-  const months = range === '6m' ? 6 : 12;
+  const months = range === '3m' ? 3 : range === '6m' ? 6 : 12;
   const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
   return d >= cutoff;
 }
