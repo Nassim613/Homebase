@@ -87,6 +87,22 @@ const Sync = {
           try { await DB.put(job.store, remote); } catch (e) { /* store may not exist locally yet, skip */ }
         }
       }
+      // Special case: the "already imported" flag lives in local settings, not a normal
+      // per-record store, so it needs its own small merge — only ever moves false -> true,
+      // never the reverse, so this can't accidentally re-lock a device that unlocked itself.
+      const metaRows = data['Meta'] || [];
+      for (const rawJson of metaRows) {
+        try {
+          const remoteFlag = JSON.parse(rawJson);
+          if (remoteFlag.key === 'importCompleted' && remoteFlag.value === true) {
+            const localMeta = (await DB.get('settings', 'meta')) || { id: 'meta' };
+            if (!localMeta.importCompleted) {
+              localMeta.importCompleted = true;
+              await DB.put('settings', localMeta);
+            }
+          }
+        } catch (e) { /* ignore malformed row */ }
+      }
     } catch (err) {
       console.warn('Pull sync failed:', err.message);
     } finally {
@@ -163,6 +179,6 @@ const Sync = {
   startPolling() {
     window.addEventListener('online', () => this.fullSync());
     window.addEventListener('offline', () => this.setStatus('pending'));
-    setInterval(() => this.fullSync(), 25000);
+    setInterval(() => this.fullSync(), 10000);
   }
 };

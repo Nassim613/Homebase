@@ -113,6 +113,7 @@ function handleImportFile(e) {
       const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
       meta.importCompleted = true;
       await DB.put('settings', meta);
+      Sync.pushEntry('Meta', { id: 'importFlag', key: 'importCompleted', value: true });
       Sync.retryAllPending();
       setTimeout(() => { if (typeof renderMore === 'function') renderMore(); }, 1500); // brief pause so the success message is visible before the screen switches to the locked state
     } catch (err) {
