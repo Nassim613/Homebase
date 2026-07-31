@@ -41,7 +41,7 @@ function headersFor(sheetName) {
 function rowFor(sheetName, entry) {
   switch (sheetName) {
     case 'Finance':
-      return [entry.date, entry.type, (entry.categoryName || entry.categoryId || '').toString().toUpperCase(), entry.storeName || entry.storeId, entry.carName || '', entry.projectName || '', entry.amount, entry.description || '', entry.id, JSON.stringify(entry)];
+      return [entry.date, (entry.type || '').toString().toUpperCase(), (entry.categoryName || entry.categoryId || '').toString().toUpperCase(), entry.storeName || entry.storeId, entry.carName || '', entry.projectName || '', entry.amount, entry.description || '', entry.id, JSON.stringify(entry)];
     case 'Jazz':
       return [entry.startDate, entry.status, entry.severity, entry.description || '', entry.medGiven ? 'Yes' : 'No', entry.medCost || '', entry.vetVisit ? 'Yes' : 'No', entry.vetCost || '', entry.id, JSON.stringify(entry)];
     case 'Weight':
