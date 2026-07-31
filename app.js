@@ -802,6 +802,11 @@ async function renderMore() {
       <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.retryAllPending().then(renderMore)">Retry sync</button>
     </div>
     <div class="card tight">
+      <label class="field-label">Force full resync</label>
+      <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this after manually clearing all rows from your Sheet's tabs. This re-sends every record from scratch, guaranteeing exactly one clean copy of each — but it will create duplicates again if the Sheet still has old rows in it.</p>
+      <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderMore();}">Force full resync</button>
+    </div>
+    <div class="card tight">
       <label class="field-label">Import historical data</label>
       <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Upload a converted <code>import-data.json</code> file to bring in past entries. This file never leaves your device except to sync to your own Sheet afterward.</p>
       <input type="file" accept=".json" onchange="handleImportFile(event)" style="margin-bottom:8px">

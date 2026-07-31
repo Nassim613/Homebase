@@ -39,6 +39,25 @@ const Sync = {
     }
   },
 
+  async forceFullResync() {
+    // Resets every record's sync flag so a subsequent retryAllPending() re-pushes everything
+    // from scratch. Use this after manually clearing the Sheet, so the Sheet ends up with
+    // exactly one clean copy of each record instead of relying on deduping a messy history.
+    const stores = ['entries', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
+    for (const s of stores) {
+      try {
+        const items = await DB.getAll(s);
+        for (const item of items) {
+          item.synced = false;
+          await DB.put(s, item);
+        }
+      } catch (err) {
+        console.warn(`Force resync: skipped store "${s}":`, err.message);
+      }
+    }
+    this.retryAllPending();
+  },
+
   async retryAllPending() {
     if (this._syncInProgress) return; // a sync is already running the queue — don't start a second overlapping pass
     this._syncInProgress = true;
