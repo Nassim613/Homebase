@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Homebase</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2B2640">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+</head>
+<body>
+<div id="app">
+  <header class="top" id="pageHeader">
+    <div class="back" id="headerLeft">
+      <div>
+        <div class="eyebrow" id="dateLine"></div>
+        <h1 id="pageTitle">Finances</h1>
+      </div>
+    </div>
+    <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
+  </header>
+
+  <main id="mainContent">
+    <!-- Views are rendered here by app.js -->
+    <div class="empty-state">Loading…</div>
+  </main>
+
+  <button class="fab" id="fab" style="display:none"><i class="ti ti-plus"></i></button>
+
+  <nav class="tabs">
+    <button data-tab="finance" class="active"><i class="ti ti-report-money"></i><span class="label">Finance</span></button>
+    <button data-tab="jazz"><i class="ti ti-paw"></i><span class="label">Jazz</span></button>
+    <button data-tab="weight"><i class="ti ti-scale"></i><span class="label">Weight</span></button>
+    <button data-tab="garage"><i class="ti ti-car"></i><span class="label">Garage</span></button>
+    <button data-tab="more"><i class="ti ti-dots"></i><span class="label">More</span></button>
+  </nav>
+</div>
+
+<script src="storage.js"></script>
+<script src="sync.js"></script>
+<script src="garage.js"></script>
+<script src="import.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
