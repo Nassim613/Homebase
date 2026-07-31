@@ -1,4 +1,4 @@
-const CACHE = 'homebase-v4';
+const CACHE = 'homebase-v5';
 const ASSETS = ['./', './index.html', './styles.css', './storage.js', './sync.js', './garage.js', './import.js', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -15,6 +15,7 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  if (!e.request.url.startsWith('http')) return; // skip chrome-extension:// and other unsupported schemes
   e.respondWith(
     caches.match(e.request).then((cached) => cached || fetch(e.request).then((res) => {
       const copy = res.clone();
