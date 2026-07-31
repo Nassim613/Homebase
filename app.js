@@ -360,8 +360,8 @@ async function saveEntry() {
   const carSplitFinal = carSplitDraft.length ? carSplitDraft.filter((c) => c.checked).map((c) => ({ carId: c.carId, amount: c.amount })) : null;
   const carSplitNames = carSplitFinal ? carSplitFinal.map((s) => {
     const c = (window.__cars || []).find((c) => c.id === s.carId);
-    return `${c ? c.name : s.carId} ($${s.amount})`;
-  }).join(', ') : '';
+    return c ? c.name : s.carId;
+  }).join(' & ') : '';
 
   const entry = {
     id: (duplicateSource && duplicateSource.__editId) || uid(),
