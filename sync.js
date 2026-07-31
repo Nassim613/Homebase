@@ -2,6 +2,7 @@
 const Sync = {
   status: 'offline', // 'synced' | 'syncing' | 'offline' | 'pending'
   listeners: [],
+  _syncInProgress: false,
 
   onStatusChange(fn) {
     this.listeners.push(fn);
@@ -39,26 +40,32 @@ const Sync = {
   },
 
   async retryAllPending() {
-    const jobs = [
-      { store: 'entries', sheet: 'Finance', strip: [] },
-      { store: 'jazzIssues', sheet: 'Jazz', strip: ['photos'] },
-      { store: 'weightEntries', sheet: 'Weight', strip: [] },
-      { store: 'vehicles', sheet: 'Vehicles', strip: ['photos', 'ownershipDoc'] },
-      { store: 'garageCosts', sheet: 'GarageCosts', strip: ['photos'] }
-    ];
-    for (const job of jobs) {
-      try {
-        const items = await DB.getAll(job.store);
-        const pending = items.filter((i) => !i.synced);
-        for (const item of pending) {
-          const payload = { ...item };
-          job.strip.forEach((k) => delete payload[k]);
-          const ok = await this.pushEntry(job.sheet, payload);
-          if (ok) { item.synced = true; await DB.put(job.store, item); }
+    if (this._syncInProgress) return; // a sync is already running the queue — don't start a second overlapping pass
+    this._syncInProgress = true;
+    try {
+      const jobs = [
+        { store: 'entries', sheet: 'Finance', strip: [] },
+        { store: 'jazzIssues', sheet: 'Jazz', strip: ['photos'] },
+        { store: 'weightEntries', sheet: 'Weight', strip: [] },
+        { store: 'vehicles', sheet: 'Vehicles', strip: ['photos', 'ownershipDoc'] },
+        { store: 'garageCosts', sheet: 'GarageCosts', strip: ['photos'] }
+      ];
+      for (const job of jobs) {
+        try {
+          const items = await DB.getAll(job.store);
+          const pending = items.filter((i) => !i.synced);
+          for (const item of pending) {
+            const payload = { ...item };
+            job.strip.forEach((k) => delete payload[k]);
+            const ok = await this.pushEntry(job.sheet, payload);
+            if (ok) { item.synced = true; await DB.put(job.store, item); }
+          }
+        } catch (err) {
+          console.warn(`Sync skipped store "${job.store}" (not present in local DB yet):`, err.message);
         }
-      } catch (err) {
-        console.warn(`Sync skipped store "${job.store}" (not present in local DB yet):`, err.message);
       }
+    } finally {
+      this._syncInProgress = false;
     }
     await this.refreshStatus();
   },

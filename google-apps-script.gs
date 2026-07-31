@@ -54,3 +54,44 @@ function rowFor(sheetName, entry) {
       return [entry.date || '', entry.id || '', JSON.stringify(entry)];
   }
 }
+
+// One-time cleanup: run this manually from the Apps Script editor (select the function
+// in the dropdown next to "Run", then click Run) if a sync race condition ever produces
+// duplicate rows. It finds the "ID" column on every sheet and removes duplicate rows,
+// keeping only the first occurrence of each ID. Safe to run more than once.
+function removeDuplicateRows() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ss.getSheets();
+  var totalRemoved = 0;
+
+  sheets.forEach(function (sheet) {
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return; // no data rows to check
+
+    var headers = data[0];
+    var idCol = headers.indexOf('ID');
+    if (idCol === -1) return; // not one of our sheets, skip it
+
+    var seen = {};
+    var rowsToDelete = [];
+    for (var r = 1; r < data.length; r++) {
+      var id = data[r][idCol];
+      if (seen[id]) {
+        rowsToDelete.push(r + 1); // +1 because sheet rows are 1-indexed and we have a header row
+      } else {
+        seen[id] = true;
+      }
+    }
+
+    // Delete from the bottom up so row numbers don't shift as we go
+    for (var i = rowsToDelete.length - 1; i >= 0; i--) {
+      sheet.deleteRow(rowsToDelete[i]);
+    }
+    if (rowsToDelete.length > 0) {
+      Logger.log(sheet.getName() + ': removed ' + rowsToDelete.length + ' duplicate row(s)');
+      totalRemoved += rowsToDelete.length;
+    }
+  });
+
+  Logger.log('Done. Total duplicate rows removed: ' + totalRemoved);
+}
