@@ -353,16 +353,26 @@ async function saveEntry() {
 
   const catObj = (window.__categories || []).find((c) => c.id === categoryId);
   const payeeObj = storeId ? (await DB.getAll('payees')).find((p) => p.id === storeId) : null;
+  const carId = document.getElementById('f_car') ? document.getElementById('f_car').value : null;
+  const projectId = document.getElementById('f_project') ? document.getElementById('f_project').value : null;
+  const carObj = carId ? (window.__cars || []).find((c) => c.id === carId) : null;
+  const projectObj = projectId ? (window.__projects || []).find((p) => p.id === projectId) : null;
+  const carSplitFinal = carSplitDraft.length ? carSplitDraft.filter((c) => c.checked).map((c) => ({ carId: c.carId, amount: c.amount })) : null;
+  const carSplitNames = carSplitFinal ? carSplitFinal.map((s) => {
+    const c = (window.__cars || []).find((c) => c.id === s.carId);
+    return `${c ? c.name : s.carId} ($${s.amount})`;
+  }).join(', ') : '';
 
   const entry = {
     id: (duplicateSource && duplicateSource.__editId) || uid(),
     date, categoryId, storeId, amount, description, type,
     categoryName: catObj ? catObj.name : '',
     storeName: payeeObj ? payeeObj.name : '',
-    carId: document.getElementById('f_car') ? document.getElementById('f_car').value : null,
-    projectId: document.getElementById('f_project') ? document.getElementById('f_project').value : null,
+    carId, projectId,
+    carName: carObj ? carObj.name : carSplitNames,
+    projectName: projectObj ? projectObj.name : '',
     givenTo: window.__givenTo || null,
-    carSplit: carSplitDraft.length ? carSplitDraft.filter((c) => c.checked).map((c) => ({ carId: c.carId, amount: c.amount })) : null,
+    carSplit: carSplitFinal,
     synced: false
   };
   await DB.put('entries', entry);
