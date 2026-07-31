@@ -1,8 +1,29 @@
 // ---------- Sync engine ----------
+// SYNC_JOBS is the single source of truth for what syncs where. `strip` fields never
+// get pushed (they're local-only, e.g. base64 photos — too big for Sheet cells). The same
+// list is used in reverse on pull: if a pulled record would otherwise wipe out a local-only
+// field (like a photo that was never synced), the local value is kept instead.
+const SYNC_JOBS = [
+  { store: 'entries', sheet: 'Finance', strip: [] },
+  { store: 'categories', sheet: 'Categories', strip: [] },
+  { store: 'payees', sheet: 'Stores', strip: ['logo'] },
+  { store: 'jazzIssues', sheet: 'Jazz', strip: ['photos'] },
+  { store: 'weightEntries', sheet: 'Weight', strip: [] },
+  { store: 'vehicles', sheet: 'Vehicles', strip: ['photos', 'ownershipDoc'] },
+  { store: 'garageCosts', sheet: 'GarageCosts', strip: ['photos'] },
+  { store: 'cars', sheet: 'Cars', strip: [] },
+  { store: 'projects', sheet: 'Projects', strip: [] },
+  { store: 'expenseTypes', sheet: 'ExpenseTypes', strip: [] },
+  { store: 'repairTypes', sheet: 'RepairTypes', strip: [] },
+  { store: 'issueTypes', sheet: 'IssueTypes', strip: [] },
+  { store: 'vetClinics', sheet: 'VetClinics', strip: [] }
+];
+
 const Sync = {
   status: 'offline', // 'synced' | 'syncing' | 'offline' | 'pending'
   listeners: [],
   _syncInProgress: false,
+  _pullInProgress: false,
 
   onStatusChange(fn) {
     this.listeners.push(fn);
@@ -39,20 +60,54 @@ const Sync = {
     }
   },
 
+  // Pulls the current state of every sheet down and merges it into local storage.
+  // Two safety rules: (1) never overwrite a local record that has unpushed changes
+  // of its own (synced: false) — that would silently discard something you just did;
+  // (2) never let a pulled record wipe out a local-only field (photos, logos) that
+  // was deliberately never sent to the Sheet in the first place.
+  async pullAll() {
+    if (this._pullInProgress) return;
+    const url = await this.getUrl();
+    if (!url || !navigator.onLine) return;
+    this._pullInProgress = true;
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      const data = await res.json();
+      for (const job of SYNC_JOBS) {
+        const rows = data[job.sheet] || [];
+        for (const rawJson of rows) {
+          let remote;
+          try { remote = JSON.parse(rawJson); } catch (e) { continue; }
+          if (!remote || !remote.id) continue;
+          let local;
+          try { local = await DB.get(job.store, remote.id); } catch (e) { continue; }
+          if (local && local.synced === false) continue; // local has a pending change — don't clobber it
+          job.strip.forEach((f) => { if (local && local[f] !== undefined) remote[f] = local[f]; });
+          remote.synced = true;
+          try { await DB.put(job.store, remote); } catch (e) { /* store may not exist locally yet, skip */ }
+        }
+      }
+    } catch (err) {
+      console.warn('Pull sync failed:', err.message);
+    } finally {
+      this._pullInProgress = false;
+    }
+    await this.refreshStatus();
+  },
+
   async forceFullResync() {
     // Resets every record's sync flag so a subsequent retryAllPending() re-pushes everything
     // from scratch. Use this after manually clearing the Sheet, so the Sheet ends up with
     // exactly one clean copy of each record instead of relying on deduping a messy history.
-    const stores = ['entries', 'categories', 'payees', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
-    for (const s of stores) {
+    for (const job of SYNC_JOBS) {
       try {
-        const items = await DB.getAll(s);
+        const items = await DB.getAll(job.store);
         for (const item of items) {
           item.synced = false;
-          await DB.put(s, item);
+          await DB.put(job.store, item);
         }
       } catch (err) {
-        console.warn(`Force resync: skipped store "${s}":`, err.message);
+        console.warn(`Force resync: skipped store "${job.store}":`, err.message);
       }
     }
     this.retryAllPending();
@@ -62,16 +117,7 @@ const Sync = {
     if (this._syncInProgress) return; // a sync is already running the queue — don't start a second overlapping pass
     this._syncInProgress = true;
     try {
-      const jobs = [
-        { store: 'entries', sheet: 'Finance', strip: [] },
-        { store: 'categories', sheet: 'Categories', strip: [] },
-        { store: 'payees', sheet: 'Stores', strip: ['logo'] },
-        { store: 'jazzIssues', sheet: 'Jazz', strip: ['photos'] },
-        { store: 'weightEntries', sheet: 'Weight', strip: [] },
-        { store: 'vehicles', sheet: 'Vehicles', strip: ['photos', 'ownershipDoc'] },
-        { store: 'garageCosts', sheet: 'GarageCosts', strip: ['photos'] }
-      ];
-      for (const job of jobs) {
+      for (const job of SYNC_JOBS) {
         try {
           const items = await DB.getAll(job.store);
           const pending = items.filter((i) => !i.synced);
@@ -91,17 +137,22 @@ const Sync = {
     await this.refreshStatus();
   },
 
+  // Pull first (catch up on anything from other devices), then push anything pending locally.
+  async fullSync() {
+    await this.pullAll();
+    await this.retryAllPending();
+  },
+
   async refreshStatus() {
     const url = await this.getUrl();
     if (!url) { this.setStatus('offline'); return; }
-    const stores = ['entries', 'categories', 'payees', 'jazzIssues', 'weightEntries', 'vehicles', 'garageCosts'];
     let pendingCount = 0;
-    for (const s of stores) {
+    for (const job of SYNC_JOBS) {
       try {
-        const items = await DB.getAll(s);
+        const items = await DB.getAll(job.store);
         pendingCount += items.filter((i) => !i.synced).length;
       } catch (err) {
-        console.warn(`Sync status check skipped store "${s}" (not present in local DB yet):`, err.message);
+        console.warn(`Sync status check skipped store "${job.store}" (not present in local DB yet):`, err.message);
       }
     }
     if (!navigator.onLine) this.setStatus('pending');
@@ -110,8 +161,8 @@ const Sync = {
   },
 
   startPolling() {
-    window.addEventListener('online', () => this.retryAllPending());
+    window.addEventListener('online', () => this.fullSync());
     window.addEventListener('offline', () => this.setStatus('pending'));
-    setInterval(() => this.retryAllPending(), 25000);
+    setInterval(() => this.fullSync(), 25000);
   }
 };

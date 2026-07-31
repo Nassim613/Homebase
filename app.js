@@ -580,8 +580,9 @@ async function init() {
   renderHeader();
   Sync.onStatusChange(renderSyncPill);
   await Sync.refreshStatus();
-  Sync.startPolling();
   route();
+  Sync.startPolling();
+  Sync.pullAll().then(() => { if (currentView === 'main') route(); }); // catch up with any existing Sheet data on this device
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
@@ -986,7 +987,7 @@ async function renderMore() {
     </div>
     <div class="card tight" style="display:flex;justify-content:space-between;align-items:center">
       <span class="status-pill ${Sync.status}" id="moreSyncPill"><i class="ti ti-cloud"></i> <span id="moreSyncText"></span></span>
-      <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.retryAllPending().then(renderMore)">Retry sync</button>
+      <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderMore)">Retry sync</button>
     </div>
     <div class="card tight">
       <label class="field-label">Force full resync</label>
@@ -1017,7 +1018,7 @@ async function saveSheetUrl() {
   await DB.put('settings', meta);
   try {
     await Sync.refreshStatus();
-    Sync.retryAllPending();
+    Sync.fullSync().then(renderMore);
   } catch (err) {
     console.warn('Sync status/retry hit an error, but the URL was saved:', err.message);
   }
