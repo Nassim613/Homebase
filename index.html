@@ -41,6 +41,10 @@
     <button data-tab="garage"><i class="ti ti-car"></i><span class="label">Garage</span></button>
     <button data-tab="more"><i class="ti ti-dots"></i><span class="label">More</span></button>
   </nav>
+
+  <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
+    <div class="modal-sheet" id="modalSheet"></div>
+  </div>
 </div>
 
 <script src="storage.js"></script>

@@ -142,6 +142,6 @@ async function seedIfEmpty() {
   }
   const settings = await DB.get('settings', 'meta');
   if (!settings) {
-    await DB.put('settings', { id: 'meta', sheetUrl: '' });
+    await DB.put('settings', { id: 'meta', sheetUrl: '', importCompleted: false });
   }
 }

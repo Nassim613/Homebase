@@ -125,3 +125,33 @@ nav.tabs .label { font-size: 10px; font-weight: 500; }
 .thread-item .note { font-size: 13px; margin: 0 0 4px; }
 
 ::-webkit-scrollbar { display: none; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 38, 64, 0.5);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: fadeInBackdrop 0.2s ease;
+}
+@keyframes fadeInBackdrop { from { opacity: 0; } to { opacity: 1; } }
+.modal-sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 22px 22px 0 0;
+  padding: 10px 20px calc(20px + env(safe-area-inset-bottom));
+  box-shadow: 0 -8px 30px rgba(43, 38, 64, 0.25);
+  animation: slideUpSheet 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes slideUpSheet { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.modal-sheet .sheet-handle {
+  width: 36px; height: 4px; border-radius: 999px; background: var(--line);
+  margin: 6px auto 14px;
+}
