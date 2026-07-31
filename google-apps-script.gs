@@ -26,7 +26,7 @@ function headersFor(sheetName) {
     case 'Finance':
       return ['Date', 'Type', 'Category', 'Store', 'Car', 'Project', 'Amount', 'Description', 'ID', 'Raw JSON'];
     case 'Jazz':
-      return ['Start Date', 'Status', 'Severity', 'Description', 'Med Given', 'Med Cost', 'Vet Visit', 'Vet Cost', 'ID', 'Raw JSON'];
+      return ['Start Date', 'Status', 'Severity', 'Description', 'Weather', 'Snow Covered', 'Stool', 'Med Given', 'Med Cost', 'Vet Visit', 'Vet Cost', 'ID', 'Raw JSON'];
     case 'Weight':
       return ['Date', 'Subject', 'Value (lbs)', 'Note', 'ID', 'Raw JSON'];
     case 'Vehicles':
@@ -36,7 +36,7 @@ function headersFor(sheetName) {
     case 'Categories':
       return ['Name', 'Type', 'Conditional Field', 'ID', 'Raw JSON'];
     case 'Stores':
-      return ['Name', 'ID', 'Raw JSON'];
+      return ['Name', 'Logo Link', 'ID', 'Raw JSON'];
     default:
       return ['Date', 'ID', 'Raw JSON'];
   }
@@ -47,7 +47,7 @@ function rowFor(sheetName, entry) {
     case 'Finance':
       return [entry.date, (entry.type || '').toString().toUpperCase(), (entry.categoryName || entry.categoryId || '').toString().toUpperCase(), entry.storeName || entry.storeId, entry.carName || '', entry.projectName || '', entry.amount, entry.description || '', entry.id, JSON.stringify(entry)];
     case 'Jazz':
-      return [entry.startDate, entry.status, entry.severity, entry.description || '', entry.medGiven ? 'Yes' : 'No', entry.medCost || '', entry.vetVisit ? 'Yes' : 'No', entry.vetCost || '', entry.id, JSON.stringify(entry)];
+      return [entry.startDate, entry.status, entry.severity, entry.description || '', entry.weather || '', entry.snowCovered ? 'Yes' : 'No', entry.stool || '', entry.medGiven ? (entry.medName || 'Yes') : 'No', entry.medCost || '', entry.vetVisit ? 'Yes' : 'No', entry.vetCost || '', entry.id, JSON.stringify(entry)];
     case 'Weight':
       return [entry.date, entry.subject, entry.value, entry.note || '', entry.id, JSON.stringify(entry)];
     case 'Vehicles':
@@ -57,7 +57,7 @@ function rowFor(sheetName, entry) {
     case 'Categories':
       return [(entry.name || '').toString().toUpperCase(), entry.type, entry.conditionalField, entry.id, JSON.stringify(entry)];
     case 'Stores':
-      return [entry.name, entry.id, JSON.stringify(entry)];
+      return [entry.name, entry.logoLink || '', entry.id, JSON.stringify(entry)];
     default:
       return [entry.date || '', entry.id || '', JSON.stringify(entry)];
   }

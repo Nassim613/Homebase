@@ -242,7 +242,6 @@ async function renderEntryDetail() {
       ${car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Car</span><span style="font-size:12px">${esc(car.name)}</span></div>` : ''}
       ${entry.carName && !car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cars</span><span style="font-size:12px">${esc(entry.carName)}</span></div>` : ''}
       ${project ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Project</span><span style="font-size:12px">${esc(project.name)}</span></div>` : ''}
-      ${entry.givenTo ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Given to</span><span style="font-size:12px">${esc(entry.givenTo)}</span></div>` : ''}
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Synced</span><span style="font-size:12px">${entry.synced ? 'Yes' : 'Pending'}</span></div>
     </div>
 
@@ -350,21 +349,12 @@ function onCategoryChange(skipAutofill) {
     area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><select id="f_car" onchange="if(this.value==='__new') promptNewCarInline()">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">+ Add car</option></select></div>`;
   } else if (cat.conditionalField === 'project') {
     area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><select id="f_project" onchange="if(this.value==='__new') promptNewProjectInline()">${(window.__projects || []).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}<option value="__new">+ Add project</option></select></div>`;
-  } else if (cat.conditionalField === 'givenTo') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-user"></i> Given to</label><div class="btn-toggle-row" style="margin-bottom:0"><button type="button" class="btn-toggle active-neutral" onclick="selectGivenTo(this,'You')">You</button><button type="button" class="btn-toggle" onclick="selectGivenTo(this,'Wife')">Wife</button></div></div>`;
-    window.__givenTo = 'You';
   } else if (cat.conditionalField === 'carSplit') {
     carSplitDraft = (window.__cars || []).map((c) => ({ carId: c.id, name: c.name, checked: false, amount: 0 }));
     area.innerHTML = renderCarSplitUI();
   } else {
     area.innerHTML = '';
   }
-}
-
-function selectGivenTo(btn, who) {
-  btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
-  btn.classList.add('active-neutral');
-  window.__givenTo = who;
 }
 
 function renderCarSplitUI() {
@@ -425,7 +415,6 @@ async function renderCategoryForm() {
       <option value="car" ${window.__categoryConditionalDraft === 'car' ? 'selected' : ''}>Car (single)</option>
       <option value="carSplit" ${window.__categoryConditionalDraft === 'carSplit' ? 'selected' : ''}>Cars (split across multiple)</option>
       <option value="project" ${window.__categoryConditionalDraft === 'project' ? 'selected' : ''}>Project</option>
-      <option value="givenTo" ${window.__categoryConditionalDraft === 'givenTo' ? 'selected' : ''}>Given to (You/Wife)</option>
     </select>
 
     <button class="btn btn-primary" onclick="saveCategoryForm()">Save category</button>
@@ -484,6 +473,9 @@ async function renderStoreForm() {
     </div>
     <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
 
+    <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${existing ? esc(existing.logoLink || '') : ''}"></div>
+    <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">A link is text only and syncs to your Sheet; the uploaded photo above stays on this device only.</p>
+
     <button class="btn btn-primary" onclick="saveStoreForm()">Save store</button>
   `;
 }
@@ -499,6 +491,7 @@ async function saveStoreForm() {
   const payee = storeFormEditId ? await DB.get('payees', storeFormEditId) : { id: uid(), defaultCategoryId: null, defaultAmount: null };
   payee.name = name;
   payee.logo = storeLogoDraft;
+  payee.logoLink = document.getElementById('store_logoLink').value.trim();
   payee.synced = false;
   await DB.put('payees', payee);
   const { logo, ...syncablePayee } = payee;
@@ -540,13 +533,12 @@ async function saveEntry() {
     carId, projectId,
     carName: carObj ? carObj.name : carSplitNames,
     projectName: projectObj ? projectObj.name : '',
-    givenTo: window.__givenTo || null,
     carSplit: carSplitFinal,
     synced: false
   };
   await DB.put('entries', entry);
   Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
-  duplicateSource = null; carSplitDraft = []; window.__givenTo = null;
+  duplicateSource = null; carSplitDraft = [];
   currentView = 'main';
   route();
 }
@@ -698,14 +690,23 @@ async function renderAddIssue() {
     </div>
     <div class="field"><label class="field-label">Description</label><textarea id="j_description" placeholder="What's happening, when it started, any pattern..."></textarea></div>
 
+    <div class="field-row" style="margin-bottom:14px">
+      <div><label class="field-label">Weather</label><select id="j_weather"><option value="">—</option><option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Snowing</option></select></div>
+      <div><label class="field-label">Stool</label><select id="j_stool"><option value="">—</option><option>Normal</option><option>Diarrhea</option></select></div>
+    </div>
+    <label class="field-label">Snow covered</label>
+    <div class="btn-toggle-row" id="snowToggle">
+      <button class="btn-toggle" onclick="selectSnow(this,false)">No</button>
+      <button class="btn-toggle" onclick="selectSnow(this,true)">Yes</button>
+    </div>
+
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="field-label" style="margin:0">Medication given</label>
         <button type="button" class="chip" id="medToggle" onclick="toggleMed()">No</button>
       </div>
       <div id="medFields" style="display:none">
-        <input id="j_medName" placeholder="Medication name" style="margin-bottom:8px">
-        <input id="j_medFreq" placeholder="How often" style="margin-bottom:8px">
+        <input id="j_medName" placeholder="Medication name (include dosage/frequency here)" style="margin-bottom:8px">
         <input id="j_medCost" type="number" step="0.01" placeholder="Cost (optional)">
       </div>
     </div>
@@ -735,6 +736,7 @@ async function renderAddIssue() {
 
 function selectSeverity(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__severity = val; }
 function selectStatus(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__status = val; }
+function selectSnow(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__snowCovered = val; }
 function toggleMed() { window.__medGiven = !window.__medGiven; document.getElementById('medToggle').textContent = window.__medGiven ? 'Yes' : 'No'; document.getElementById('medFields').style.display = window.__medGiven ? 'block' : 'none'; }
 function toggleVet() { window.__vetVisit = !window.__vetVisit; document.getElementById('vetToggle').textContent = window.__vetVisit ? 'Yes' : 'No'; document.getElementById('vetFields').style.display = window.__vetVisit ? 'block' : 'none'; }
 
@@ -775,9 +777,11 @@ async function saveIssue() {
     id: uid(), typeId, startDate, endDate: null,
     severity: window.__severity || 'Mild', status: window.__status || 'ongoing',
     description: document.getElementById('j_description').value.trim(),
+    weather: document.getElementById('j_weather').value,
+    snowCovered: !!window.__snowCovered,
+    stool: document.getElementById('j_stool').value,
     medGiven: !!window.__medGiven,
     medName: window.__medGiven ? document.getElementById('j_medName').value : '',
-    medFreq: window.__medGiven ? document.getElementById('j_medFreq').value : '',
     medCost: window.__medGiven ? parseFloat(document.getElementById('j_medCost').value) || 0 : 0,
     vetVisit: !!window.__vetVisit,
     vetClinicId: window.__vetVisit ? document.getElementById('j_vetClinic').value : null,
@@ -788,7 +792,7 @@ async function saveIssue() {
   };
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
-  jazzPhotoDrafts = []; window.__medGiven = false; window.__vetVisit = false;
+  jazzPhotoDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false;
   currentView = 'main'; route();
 }
 
@@ -808,7 +812,7 @@ async function renderIssueDetail() {
     </div>
     <p style="font-size:11px;color:var(--ink-soft);margin-bottom:16px">Started ${fmtDate(issue.startDate)} · ${days} day${days===1?'':'s'} so far</p>
 
-    <div class="thread-item"><p class="meta">${fmtDate(issue.startDate)} · ${issue.severity}</p><p class="note">${esc(issue.description||'')}</p>${issue.medGiven ? `<p class="meta">Medication: ${esc(issue.medName)}, ${esc(issue.medFreq)}</p>` : ''}</div>
+    <div class="thread-item"><p class="meta">${fmtDate(issue.startDate)} · ${issue.severity}</p><p class="note">${esc(issue.description||'')}</p>${issue.medGiven ? `<p class="meta">Medication: ${esc(issue.medName)}</p>` : ''}${issue.weather || issue.stool || issue.snowCovered ? `<p class="meta">${[issue.weather, issue.snowCovered ? 'Snow covered' : '', issue.stool ? 'Stool: ' + issue.stool : ''].filter(Boolean).join(' · ')}</p>` : ''}</div>
     ${(issue.updates||[]).map((u) => `<div class="thread-item"><p class="meta">${fmtDate(u.date)} · ${u.severity}</p><p class="note">${esc(u.note)}</p></div>`).join('')}
 
     <button class="btn" style="margin-bottom:10px" onclick="addIssueUpdate()"><i class="ti ti-plus"></i> Add update</button>
@@ -860,9 +864,9 @@ async function renderJazzReport() {
 }
 
 // ============ WEIGHT MODULE (family) ============
-let weightPerson = 'You'; // internal key, kept for consistency with existing synced data (subject: 'you'/'wife')
+let weightPerson = 'Nassim'; // real names used directly, since multiple people may use the same app/device
 let weightRange = '6m';
-const WEIGHT_LABELS = { You: 'Nassim', Wife: 'Safia' };
+
 let weightChartInstance = null;
 
 function goWeightMain() { currentView = 'main'; route(); }
@@ -879,8 +883,8 @@ async function renderWeightMain() {
 
   $main.innerHTML = `
     <div class="btn-toggle-row">
-      <button class="btn-toggle ${weightPerson==='You'?'active-neutral':''}" onclick="selectWeightPerson('You')">${WEIGHT_LABELS.You}</button>
-      <button class="btn-toggle ${weightPerson==='Wife'?'active-neutral':''}" onclick="selectWeightPerson('Wife')">${WEIGHT_LABELS.Wife}</button>
+      <button class="btn-toggle ${weightPerson==='Nassim'?'active-neutral':''}" onclick="selectWeightPerson('Nassim')">Nassim</button>
+      <button class="btn-toggle ${weightPerson==='Safia'?'active-neutral':''}" onclick="selectWeightPerson('Safia')">Safia</button>
     </div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -923,7 +927,7 @@ async function renderWeightMain() {
 
 async function renderAddWeight() {
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goWeightMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log weight — ${WEIGHT_LABELS[weightPerson]}</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goWeightMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log weight — ${weightPerson}</span></div>
     <div class="field"><label class="field-label">Date</label><input type="date" id="w_date" value="${todayStr()}"></div>
     <div class="field"><label class="field-label">Weight (lbs)</label><input type="number" step="0.1" id="w_value" placeholder="0.0"></div>
     <div class="field"><label class="field-label">Notes</label><input id="w_note" placeholder="Optional"></div>

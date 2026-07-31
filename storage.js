@@ -86,7 +86,7 @@ const DEFAULT_CATEGORIES = [
   { name: 'Dining', type: 'expense', icon: 'ti-tools-kitchen-2', conditionalField: 'none' },
   { name: 'Subscriptions', type: 'expense', icon: 'ti-repeat', conditionalField: 'none' },
   { name: 'Pay', type: 'income', icon: 'ti-building-bank', conditionalField: 'none' },
-  { name: 'Allowance', type: 'transfer', icon: 'ti-user', conditionalField: 'givenTo' },
+  { name: 'Allowance', type: 'transfer', icon: 'ti-user', conditionalField: 'none' },
   { name: 'Credit card payment', type: 'transfer', icon: 'ti-credit-card', conditionalField: 'none' }
 ];
 
