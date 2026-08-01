@@ -12,7 +12,10 @@ function fmtMoney(n) {
   const v = Number(n) || 0;
   return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function fmtDate(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
@@ -94,6 +97,23 @@ async function route() {
 }
 
 // ---------- Finance: main screen ----------
+// ---------- Finance range & type filter state ----------
+let financeRange = 'thisMonth'; // thisMonth | lastMonth | last3Months | lastWeek
+let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
+const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', last3Months: 'Last 3 months', lastWeek: 'Last 7 days' };
+
+function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function getFinanceRangeBounds(range) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  if (range === 'lastMonth') return { start: fmtISO(new Date(y, m - 1, 1)), end: fmtISO(new Date(y, m, 0)) };
+  if (range === 'last3Months') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
+  if (range === 'lastWeek') { const start = new Date(now); start.setDate(start.getDate() - 6); return { start: fmtISO(start), end: fmtISO(now) }; }
+  return { start: fmtISO(new Date(y, m, 1)), end: fmtISO(new Date(y, m + 1, 0)) }; // thisMonth
+}
+function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
+function toggleFinanceTypeFilter(t) { financeTypeFilter = financeTypeFilter === t ? null : t; renderFinanceMain(); }
+
 async function renderFinanceMain() {
   const entries = (await DB.getAll('entries')).sort((a, b) => b.date.localeCompare(a.date));
   const categories = await DB.getAll('categories');
@@ -101,29 +121,38 @@ async function renderFinanceMain() {
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
 
-  const mk = monthKey(todayStr());
-  const monthEntries = entries.filter((e) => monthKey(e.date) === mk && e.type !== 'transfer');
-  const income = monthEntries.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const expense = monthEntries.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const { start, end } = getFinanceRangeBounds(financeRange);
+  const inRange = entries.filter((e) => e.date >= start && e.date <= end);
+  const income = inRange.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const expense = inRange.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const transfer = inRange.filter((e) => e.type === 'transfer').reduce((s, e) => s + e.amount, 0);
   const net = income - expense;
 
+  const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
   const byDay = {};
-  entries.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
+  listSource.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
   const days = Object.keys(byDay).sort().reverse();
 
   $main.innerHTML = `
+    <div class="chip-row">
+      <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">This month</button>
+      <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">Last month</button>
+      <button class="chip ${financeRange==='last3Months'?'active':''}" onclick="setFinanceRange('last3Months')">Last 3 months</button>
+      <button class="chip ${financeRange==='lastWeek'?'active':''}" onclick="setFinanceRange('lastWeek')">Last 7 days</button>
+    </div>
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net this month</p>
+        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${FINANCE_RANGE_LABELS[financeRange]}</p>
         <i class="ti ${net >= 0 ? 'ti-trending-up' : 'ti-trending-down'}" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}"></i>
       </div>
       <p class="big" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</p>
     </div>
-    <div class="stat-grid">
-      <div class="stat"><p class="label">Income</p><p class="value" style="color:#0F6E56">${fmtMoney(income)}</p></div>
-      <div class="stat"><p class="label">Expenses</p><p class="value" style="color:var(--red)">${fmtMoney(expense)}</p></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='income'?'outline:2px solid #0F6E56':''}" onclick="toggleFinanceTypeFilter('income')"><p class="label">Income</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(income)}</p></div>
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='expense'?'outline:2px solid var(--red)':''}" onclick="toggleFinanceTypeFilter('expense')"><p class="label">Expenses</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(expense)}</p></div>
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='transfer'?'outline:2px solid var(--gold)':''}" onclick="toggleFinanceTypeFilter('transfer')"><p class="label">Transfers</p><p class="value" style="font-size:13px">${fmtMoney(transfer)}</p></div>
     </div>
-    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Resets on the 1st of each month</p>
+    ${financeTypeFilter ? `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
 
     <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
 
@@ -132,7 +161,7 @@ async function renderFinanceMain() {
       <button class="btn" style="flex:1" onclick="goReports()"><i class="ti ti-chart-bar"></i> Reports</button>
     </div>
 
-    <div id="entryList">${days.length ? days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join('') : '<div class="empty-state">No entries yet. Tap + to add one.</div>'}</div>
+    <div id="entryList">${days.length ? days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join('') : '<div class="empty-state">No entries in this range.</div>'}</div>
   `;
 
   document.getElementById('financeSearch').addEventListener('input', (e) => filterEntries(e.target.value, days, byDay, catById, payeeById));
