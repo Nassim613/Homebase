@@ -277,7 +277,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
   return `
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
-        ${payee.logo ? `<img src="${payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
+        ${(payee.logoLink || payee.logo) ? `<img src="${payee.logoLink || payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
       </div>
       <div class="entry-body">
@@ -1120,7 +1120,7 @@ async function renderEntryDetail() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="entry-icon" style="width:36px;height:36px">
-            ${payee.logo ? `<img src="${payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
+            ${(payee.logoLink || payee.logo) ? `<img src="${payee.logoLink || payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
           </div>
           <div>
             <p style="font-size:16px;font-weight:600;margin:0">${esc(payee.name || cat.name || 'Entry')}</p>
@@ -1398,13 +1398,15 @@ async function saveCategoryForm() {
 let storeFormEditId = null;
 let storeFormReturnTo = null;
 let storeLogoDraft = null;
+let storeLogoDriveUrl = null;
+let storeLogoUploading = false;
 
-function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; currentView = 'storeForm'; route(); }
-function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; currentView = 'storeForm'; route(); }
+function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
+function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
 
 async function renderStoreForm() {
   const existing = storeFormEditId ? await DB.get('payees', storeFormEditId) : null;
-  if (existing) storeLogoDraft = existing.logo || null;
+  if (existing) { storeLogoDraft = existing.logo || null; storeLogoDriveUrl = existing.logoLink || null; }
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
@@ -1412,13 +1414,14 @@ async function renderStoreForm() {
     <div class="field"><label class="field-label">Name</label><input id="store_name" placeholder="e.g. Costco" value="${existing ? esc(existing.name) : ''}"></div>
 
     <label class="field-label">Logo</label>
-    <div class="photo-slot" style="width:90px;height:90px;margin-bottom:20px" onclick="document.getElementById('storeLogoInput').click()">
-      ${storeLogoDraft ? `<img src="${storeLogoDraft}">` : '<i class="ti ti-building-store" style="font-size:24px"></i>'}
+    <div class="photo-slot" style="width:90px;height:90px;margin-bottom:8px" onclick="document.getElementById('storeLogoInput').click()">
+      ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}">` : storeLogoDraft ? `<img src="${storeLogoDraft}">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
     </div>
+    <p id="storeLogoStatus" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : '')}</p>
     <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
 
-    <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${existing ? esc(existing.logoLink || '') : ''}"></div>
-    <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">A link is text only and syncs to your Sheet; the uploaded photo above stays on this device only.</p>
+    <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${esc(storeLogoDriveUrl || '')}"></div>
+    <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">Photos you pick above upload to your Drive automatically and show up on every device. This field is also editable directly if you'd rather paste a link yourself.</p>
 
     <button class="btn btn-primary" onclick="saveStoreForm()">Save store</button>
   `;
@@ -1426,7 +1429,15 @@ async function renderStoreForm() {
 function handleStoreLogoUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
-  reader.onload = () => { storeLogoDraft = reader.result; renderStoreForm(); };
+  reader.onload = async () => {
+    storeLogoDraft = reader.result;
+    storeLogoUploading = true;
+    renderStoreForm();
+    const url = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (document.getElementById('store_name')?.value || 'logo').trim());
+    storeLogoUploading = false;
+    if (url) storeLogoDriveUrl = url;
+    renderStoreForm();
+  };
   reader.readAsDataURL(f);
 }
 async function saveStoreForm() {
@@ -1434,8 +1445,8 @@ async function saveStoreForm() {
   if (!name) { alert('Store needs a name.'); return; }
   const payee = storeFormEditId ? await DB.get('payees', storeFormEditId) : { id: uid(), defaultCategoryId: null, defaultAmount: null };
   payee.name = name;
-  payee.logo = storeLogoDraft;
-  payee.logoLink = document.getElementById('store_logoLink').value.trim();
+  payee.logo = storeLogoDraft; // local-only instant preview, kept as an offline fallback
+  payee.logoLink = document.getElementById('store_logoLink').value.trim() || storeLogoDriveUrl || '';
   payee.synced = false;
   await DB.put('payees', payee);
   const { logo, ...syncablePayee } = payee;
@@ -1527,7 +1538,7 @@ async function restoreCategory(id) {
 }
 function renderPayeeListRow(p) {
   return `<div class="list-row" onclick="goEditStore('${p.id}')">
-    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${p.logo ? `<img src="${p.logo}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
+    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${(p.logoLink || p.logo) ? `<img src="${p.logoLink || p.logo}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
   </div>`;
 }
 

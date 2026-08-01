@@ -17,7 +17,8 @@ const SYNC_JOBS = [
   { store: 'repairTypes', sheet: 'RepairTypes', strip: [] },
   { store: 'issueTypes', sheet: 'IssueTypes', strip: [] },
   { store: 'vetClinics', sheet: 'VetClinics', strip: [] },
-  { store: 'garagePlaces', sheet: 'Places', strip: [] }
+  { store: 'garagePlaces', sheet: 'Places', strip: [] },
+  { store: 'recurring', sheet: 'Recurring', strip: [] }
 ];
 
 const Sync = {
@@ -175,6 +176,27 @@ const Sync = {
     if (!navigator.onLine) this.setStatus('pending');
     else if (pendingCount > 0) this.setStatus('pending');
     else this.setStatus('synced');
+  },
+
+  // Uploads a photo (base64 data URL) to your Drive via Apps Script, under
+  // "Homebase Photos/<folder>". Returns the embeddable thumbnail URL on success,
+  // or null on failure (offline, no Sheet URL set, etc) — callers should fall back
+  // to the local-only copy in that case, nothing is lost either way.
+  async uploadPhoto(dataUrl, folder, fileName) {
+    const url = await this.getUrl();
+    if (!url || !navigator.onLine) return null;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName })
+      });
+      const data = await res.json();
+      return data.ok ? data.url : null;
+    } catch (err) {
+      console.warn('Photo upload failed:', err.message);
+      return null;
+    }
   },
 
   startPolling() {
