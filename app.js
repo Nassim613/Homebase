@@ -37,7 +37,7 @@ function categoryColor(catId) {
 function renderHeader() {
   const now = new Date();
   document.getElementById('dateLine').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  const titles = { finance: 'Finances', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', more: 'More' };
+  const titles = { finance: 'Finances', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', more: 'Settings' };
   document.getElementById('pageTitle').textContent = titles[currentTab] || '';
 }
 
@@ -865,6 +865,22 @@ function vehicleAmountFor(entries, carId, categoryId, mk2) {
   return total;
 }
 
+let vehicleReportRange = '1y'; // 3m | 6m | 1y | 2y | all
+function setVehicleReportRange(r) { vehicleReportRange = r; renderFinanceVehicleReport(); }
+function vehicleReportRangeBounds(range) {
+  const now = new Date();
+  if (range === 'all') return { start: '0000-01-01', end: '9999-12-31' };
+  const monthsBack = { '3m': 3, '6m': 6, '1y': 12, '2y': 24 }[range] || 12;
+  const start = new Date(now.getFullYear(), now.getMonth() - monthsBack + 1, 1);
+  return { start: fmtISO(start), end: fmtISO(now) };
+}
+
+const VEHICLE_CAR_EXCLUDE = {
+  'Gas': ['all cars', 'tesla'],
+  'Car maintenance': ['tesla'],
+  'Car insurance': ['all cars']
+};
+
 async function renderFinanceVehicleReport() {
   const allEntries = await DB.getAll('entries');
   const categories = await DB.getAll('categories');
@@ -883,14 +899,23 @@ async function renderFinanceVehicleReport() {
     $main.innerHTML = `<div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Vehicles</span></div><div class="empty-state">No Gas / Car Maintenance / Car Insurance entries with a car assigned yet.</div>`;
     return;
   }
-  const monthKeysList = [...new Set(relevant.map((e) => monthKey(e.date)))].sort();
+  // Newest month first, leftmost — right next to the label column
+  const monthKeysList = [...new Set(relevant.map((e) => monthKey(e.date)))].sort().reverse();
   const monthColLabels = monthKeysList.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'2-digit'}));
 
-  const carsUsed = cars.filter((c) => catGroups.some((g) => monthKeysList.some((mk2) => vehicleAmountFor(relevant, c.id, g.cat.id, mk2) > 0)));
+  const allCarsCar = cars.find((c) => c.name.toLowerCase() === 'all cars');
+  const realCars = cars.filter((c) => !['all cars', 'tesla'].includes(c.name.toLowerCase()));
+
+  const gasTotalAllTime = gasCat ? relevant.filter((e) => e.categoryId === gasCat.id).reduce((s,e) => s + e.amount, 0) : 0;
+  const gasMonthsCount = gasCat ? new Set(relevant.filter((e) => e.categoryId === gasCat.id).map((e) => monthKey(e.date))).size : 0;
+  const avgGasPerMonth = gasMonthsCount ? gasTotalAllTime / gasMonthsCount : 0;
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Vehicles</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+
+    ${gasCat ? `<div class="stat" style="margin-bottom:16px"><p class="label">Avg gas / month</p><p class="value" style="font-size:14px">${fmtMoney(avgGasPerMonth)}</p></div>` : ''}
+
     <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
       <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
         <thead><tr>
@@ -898,9 +923,12 @@ async function renderFinanceVehicleReport() {
           ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 10px;color:var(--ink-soft);font-weight:600;min-width:64px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
         </tr></thead>
         <tbody>
-          ${catGroups.map((g) => `
+          ${catGroups.map((g) => {
+            const excludeNames = VEHICLE_CAR_EXCLUDE[g.label] || [];
+            const carsForGroup = cars.filter((c) => !excludeNames.includes(c.name.toLowerCase()));
+            return `
             <tr style="background:var(--gold-soft)"><td colspan="${monthKeysList.length+1}" style="padding:6px 10px;position:sticky;left:0;background:var(--gold-soft);font-weight:700;border-bottom:1px solid var(--line)">${g.label}</td></tr>
-            ${carsUsed.map((car) => `
+            ${carsForGroup.map((car) => `
               <tr>
                 <td style="padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);font-weight:600;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(car.name)}</td>
                 ${monthKeysList.map((mk2) => {
@@ -909,29 +937,71 @@ async function renderFinanceVehicleReport() {
                 }).join('')}
               </tr>
             `).join('')}
-          `).join('')}
+            <tr style="background:var(--surface)">
+              <td style="padding:8px 10px;position:sticky;left:0;background:var(--surface);font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Total</td>
+              ${monthKeysList.map((mk2) => {
+                const total = carsForGroup.reduce((s, car) => s + vehicleAmountFor(relevant, car.id, g.cat.id, mk2), 0);
+                return `<td style="padding:8px 10px;text-align:right;font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${total ? fmtMoney(total) : '–'}</td>`;
+              }).join('')}
+            </tr>
+          `;
+          }).join('')}
         </tbody>
       </table>
     </div>
 
-    <p class="section-label">Cost of ownership</p>
-    ${carsUsed.map((car) => {
-      const gasTotal = gasCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, gasCat.id, mk2), 0) : 0;
-      const maintTotal = maintCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, maintCat.id, mk2), 0) : 0;
-      const insTotal = insCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, insCat.id, mk2), 0) : 0;
-      const withoutGas = maintTotal + insTotal;
-      const withGas = withoutGas + gasTotal;
-      return `
-        <div class="card tight" style="margin-bottom:10px">
-          <p style="font-weight:700;margin-bottom:6px">${esc(car.name)}</p>
-          <div class="stat-grid">
-            <div class="stat"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
-            <div class="stat"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+      <p class="section-label" style="margin:0">Cost of ownership</p>
+    </div>
+    <div class="chip-row" style="margin-bottom:14px">
+      <button class="chip ${vehicleReportRange==='3m'?'active':''}" onclick="setVehicleReportRange('3m')">3M</button>
+      <button class="chip ${vehicleReportRange==='6m'?'active':''}" onclick="setVehicleReportRange('6m')">6M</button>
+      <button class="chip ${vehicleReportRange==='1y'?'active':''}" onclick="setVehicleReportRange('1y')">1Y</button>
+      <button class="chip ${vehicleReportRange==='2y'?'active':''}" onclick="setVehicleReportRange('2y')">2Y</button>
+      <button class="chip ${vehicleReportRange==='all'?'active':''}" onclick="setVehicleReportRange('all')">All time</button>
+    </div>
+    ${(() => {
+      const { start, end } = vehicleReportRangeBounds(vehicleReportRange);
+      const inRange = relevant.filter((e) => e.date >= start && e.date <= end);
+      return realCars.map((car) => {
+        const gasTotal = gasCat ? vehicleOwnershipAmount(inRange, car.id, gasCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
+        const maintTotal = maintCat ? vehicleOwnershipAmount(inRange, car.id, maintCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
+        const insTotal = insCat ? vehicleOwnershipAmount(inRange, car.id, insCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
+        const withoutGas = maintTotal + insTotal;
+        const withGas = withoutGas + gasTotal;
+        return `
+          <div class="card tight" style="margin-bottom:10px">
+            <p style="font-weight:700;margin-bottom:6px">${esc(car.name)}</p>
+            <div class="stat-grid">
+              <div class="stat"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
+              <div class="stat"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
+            </div>
           </div>
-        </div>
-      `;
-    }).join('')}
+        `;
+      }).join('');
+    })()}
   `;
+}
+// Cost-of-ownership specific: a car's own entries, plus an even share of any entry
+// tagged to "All Cars" (since that cost genuinely applies to all real cars, split evenly).
+function vehicleOwnershipAmount(entries, carId, categoryId, allCarsId, realCarsCount) {
+  let total = 0;
+  entries.forEach((e) => {
+    if (e.categoryId !== categoryId) return;
+    if (e.carSplit && e.carSplit.length) {
+      const share = e.carSplit.find((s) => s.carId === carId);
+      if (share) total += share.amount;
+      if (allCarsId) {
+        const allShare = e.carSplit.find((s) => s.carId === allCarsId);
+        if (allShare) total += allShare.amount / realCarsCount;
+      }
+    } else if (e.carId === carId) {
+      total += e.amount;
+    } else if (allCarsId && e.carId === allCarsId) {
+      total += e.amount / realCarsCount;
+    }
+  });
+  return total;
 }
 async function selectVehicleCell(carId, categoryId, mk2) {
   const allEntries = await DB.getAll('entries');
@@ -1197,9 +1267,9 @@ function onCategoryChange(skipAutofill) {
   if (!skipAutofill && cat.defaultAmount) document.getElementById('f_amount').value = cat.defaultAmount;
 
   if (cat.conditionalField === 'car') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><select id="f_car" onchange="if(this.value==='__new') promptNewCarInline()">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}<option value="__new">+ Add car</option></select></div>`;
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><div style="display:flex;gap:6px"><select id="f_car" style="flex:1">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewCarInline()"><i class="ti ti-plus"></i></button></div></div>`;
   } else if (cat.conditionalField === 'project') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><select id="f_project" onchange="if(this.value==='__new') promptNewProjectInline()">${(window.__projects || []).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}<option value="__new">+ Add project</option></select></div>`;
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><div style="display:flex;gap:6px"><select id="f_project" style="flex:1">${(window.__projects || []).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewProjectInline()"><i class="ti ti-plus"></i></button></div></div>`;
   } else if (cat.conditionalField === 'carSplit') {
     carSplitDraft = (window.__cars || []).map((c) => ({ carId: c.id, name: c.name, checked: false, amount: 0 }));
     area.innerHTML = renderCarSplitUI();
@@ -1469,7 +1539,10 @@ async function init() {
   await Sync.refreshStatus();
   route();
   Sync.startPolling();
-  Sync.pullAll().then(() => { if (currentView === 'main') route(); }); // catch up with any existing Sheet data on this device
+  Sync.pullAll().then(async () => {
+    await processRecurringEntries(); // pull first, so we see any occurrence the Apps Script trigger already generated server-side
+    if (currentView === 'main') route();
+  });
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
@@ -1554,16 +1627,20 @@ function filterJazz(q, days, byDay, typeById) {
 async function renderAddIssue() {
   const issueTypes = (await DB.getAll('issueTypes')).filter((t) => !t.hidden);
   const vetClinics = await DB.getAll('vetClinics');
+  const pastIssues = await DB.getAll('jazzIssues');
+  const medHistory = [...new Set(pastIssues.map((i) => i.medName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const src = jazzDuplicate;
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit' : 'Log an'} issue</span></div>
     <div class="field"><label class="field-label">Started</label><input type="date" id="j_date" value="${src ? src.startDate : todayStr()}"></div>
     <div class="field"><label class="field-label">Issue type</label>
-      <select id="j_type" onchange="if(this.value==='__new') openIssueTypeModal(true)">
-        ${issueTypes.map((t) => `<option value="${t.id}" ${src && src.typeId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
-        <option value="__new">+ Add type</option>
-      </select>
+      <div style="display:flex;gap:6px">
+        <select id="j_type" style="flex:1">
+          ${issueTypes.map((t) => `<option value="${t.id}" ${src && src.typeId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
+        </select>
+        <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openIssueTypeModal(true)"><i class="ti ti-plus"></i></button>
+      </div>
     </div>
     <label class="field-label">Severity</label>
     <div class="btn-toggle-row" id="severityToggle">
@@ -1594,7 +1671,13 @@ async function renderAddIssue() {
         <button type="button" class="chip" id="medToggle" onclick="toggleMed()">${src && src.medGiven ? 'Yes' : 'No'}</button>
       </div>
       <div id="medFields" style="display:${src && src.medGiven ? 'block' : 'none'}">
-        <input id="j_medName" placeholder="Medication name (include dosage/frequency here)" style="margin-bottom:8px" value="${src ? esc(src.medName||'') : ''}">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <select id="j_medName" style="flex:1">
+            ${medHistory.map((m) => `<option ${src && src.medName===m?'selected':''}>${esc(m)}</option>`).join('')}
+            ${src && src.medName && !medHistory.includes(src.medName) ? `<option selected>${esc(src.medName)}</option>` : ''}
+          </select>
+          <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openMedicationModal()"><i class="ti ti-plus"></i></button>
+        </div>
         <input id="j_medCost" type="number" step="0.01" placeholder="Cost (optional)" value="${src && src.medCost ? src.medCost : ''}">
       </div>
     </div>
@@ -1605,10 +1688,12 @@ async function renderAddIssue() {
         <button type="button" class="chip" id="vetToggle" onclick="toggleVet()">${src && src.vetVisit ? 'Yes' : 'No'}</button>
       </div>
       <div id="vetFields" style="display:${src && src.vetVisit ? 'block' : 'none'}">
-        <select id="j_vetClinic" style="margin-bottom:8px" onchange="if(this.value==='__new') openVetClinicModal()">
-          ${vetClinics.map((c) => `<option value="${c.id}" ${src && src.vetClinicId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
-          <option value="__new">+ Add clinic</option>
-        </select>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <select id="j_vetClinic" style="flex:1">
+            ${vetClinics.map((c) => `<option value="${c.id}" ${src && src.vetClinicId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
+          </select>
+          <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openVetClinicModal()"><i class="ti ti-plus"></i></button>
+        </div>
         <input id="j_vetCost" type="number" step="0.01" placeholder="Cost (optional)" value="${src && src.vetCost ? src.vetCost : ''}">
       </div>
     </div>
@@ -1638,6 +1723,28 @@ function selectSeverity(btn, val) { btn.parentElement.querySelectorAll('.btn-tog
 function selectStatus(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); if (btn) btn.classList.add('active-neutral'); window.__status = val; }
 function selectSnow(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); if (btn) btn.classList.add('active-neutral'); window.__snowCovered = val; }
 function toggleMed() { window.__medGiven = !window.__medGiven; document.getElementById('medToggle').textContent = window.__medGiven ? 'Yes' : 'No'; document.getElementById('medFields').style.display = window.__medGiven ? 'block' : 'none'; }
+function openMedicationModal() {
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Add medication</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Include dosage/frequency if useful, e.g. "Apoquel (1 tab, twice daily)". It'll be remembered for next time.</p>
+    <div class="field"><label class="field-label">Name</label><input id="med_name" placeholder="Medication name"></div>
+    <button class="btn btn-primary" onclick="saveMedicationInline()">Add</button>
+  `;
+  openModal();
+}
+function saveMedicationInline() {
+  const name = document.getElementById('med_name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  closeModal();
+  const sel = document.getElementById('j_medName');
+  if (sel) {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    sel.appendChild(opt);
+    sel.value = name;
+  }
+}
 function toggleVet() { window.__vetVisit = !window.__vetVisit; document.getElementById('vetToggle').textContent = window.__vetVisit ? 'Yes' : 'No'; document.getElementById('vetFields').style.display = window.__vetVisit ? 'block' : 'none'; }
 
 function openVetClinicModal() {
@@ -2014,6 +2121,7 @@ async function renderMore() {
   if (moreView === 'expenseRepairTypes') return renderExpenseRepairManager();
   if (moreView === 'syncData') return renderSyncDataPage();
   if (moreView === 'issueTypes') return renderIssueTypesManager();
+  if (moreView === 'recurring') return renderRecurringManager();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -2023,6 +2131,7 @@ async function renderMore() {
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Finance</p>
     <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories & stores</span><i class="ti ti-chevron-right"></i></div>
     <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars & projects</span><i class="ti ti-chevron-right"></i></div>
+    <div class="list-row" onclick="moreView='recurring';renderMore()"><span><i class="ti ti-repeat"></i> Recurring entries</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Jazz</p>
     <div class="list-row" onclick="moreView='issueTypes';renderMore()"><span><i class="ti ti-stethoscope"></i> Issue types</span><i class="ti ti-chevron-right"></i></div>
@@ -2185,4 +2294,211 @@ async function runDimensionCleanup() {
     statusEl.innerHTML = `<b>Done:</b><br>${report.join('<br>')}<br>Now clear your Sheet's tabs and run Force full resync below to push the clean version up.`;
   }
   Sync.retryAllPending();
+}
+
+// ============ RECURRING ENTRIES ============
+// Schedule shapes:
+//   everyNDays: { n: number }
+//   weekly:     { weekday: 0-6 (Sun-Sat), interval: number (1=every week, 2=biweekly, ...) }
+//   monthly:    { day: 1-31 (clamped to month length) }
+
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); } // m is 0-indexed
+function addDaysISO(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return fmtISO(d);
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000);
+}
+
+// Returns the next occurrence date strictly after `afterDateStr`, or the first
+// occurrence on/after startDate if afterDateStr is null/undefined.
+function nextOccurrence(rule, afterDateStr) {
+  if (rule.repeatType === 'everyNDays') {
+    const n = rule.n || 1;
+    if (!afterDateStr) return rule.startDate;
+    const diff = daysBetween(rule.startDate, afterDateStr);
+    const k = Math.floor(diff / n) + 1;
+    return addDaysISO(rule.startDate, k * n);
+  }
+  if (rule.repeatType === 'weekly') {
+    const interval = rule.interval || 1;
+    // Find the first date >= startDate matching the target weekday — the "anchor"
+    const start = new Date(rule.startDate + 'T00:00:00');
+    let shift = (rule.weekday - start.getDay() + 7) % 7;
+    const anchor = fmtISO(new Date(start.getFullYear(), start.getMonth(), start.getDate() + shift));
+    if (!afterDateStr) return anchor;
+    const weeksSince = Math.floor(daysBetween(anchor, afterDateStr) / 7);
+    let k = weeksSince + 1;
+    while (k % interval !== 0) k++;
+    return addDaysISO(anchor, k * 7);
+  }
+  if (rule.repeatType === 'monthly') {
+    const day = rule.day || 1;
+    const clampDate = (y, m) => { const d = Math.min(day, daysInMonth(y, m)); return fmtISO(new Date(y, m, d)); };
+    if (!afterDateStr) {
+      const start = new Date(rule.startDate + 'T00:00:00');
+      let candidate = clampDate(start.getFullYear(), start.getMonth());
+      if (candidate < rule.startDate) candidate = clampDate(start.getFullYear(), start.getMonth() + 1);
+      return candidate;
+    }
+    const after = new Date(afterDateStr + 'T00:00:00');
+    let candidate = clampDate(after.getFullYear(), after.getMonth());
+    if (candidate <= afterDateStr) candidate = clampDate(after.getFullYear(), after.getMonth() + 1);
+    return candidate;
+  }
+  return null;
+}
+
+// Generates any occurrences due up to and including today, for every rule. Safe to
+// call repeatedly — only ever moves forward from each rule's own lastGeneratedDate.
+async function processRecurringEntries() {
+  const rules = await DB.getAll('recurring');
+  const today = todayStr();
+  for (const rule of rules) {
+    let cursor = nextOccurrence(rule, rule.lastGeneratedDate || null);
+    let changed = false;
+    while (cursor && cursor <= today) {
+      const entry = {
+        id: uid(), date: cursor, categoryId: rule.categoryId, categoryName: rule.categoryName,
+        storeId: rule.storeId, storeName: rule.storeName, amount: rule.amount, description: rule.description,
+        type: rule.type, carId: null, projectId: null, carName: '', projectName: '',
+        transferDirection: rule.type === 'transfer' ? 'out' : null, carSplit: null,
+        recurringId: rule.id, synced: false
+      };
+      await DB.put('entries', entry);
+      Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
+      rule.lastGeneratedDate = cursor;
+      changed = true;
+      cursor = nextOccurrence(rule, cursor);
+    }
+    if (changed) {
+      rule.synced = false;
+      await DB.put('recurring', rule);
+      Sync.pushEntry('Recurring', rule).then(() => DB.put('recurring', rule));
+    }
+  }
+}
+
+function recurringScheduleLabel(rule) {
+  if (rule.repeatType === 'everyNDays') return `Every ${rule.n} day${rule.n===1?'':'s'}`;
+  if (rule.repeatType === 'weekly') {
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return rule.interval === 1 ? `Every ${days[rule.weekday]}` : `Every ${rule.interval} weeks, ${days[rule.weekday]}`;
+  }
+  if (rule.repeatType === 'monthly') return `Monthly, on the ${rule.day}${['th','st','nd','rd'][(rule.day%10===1&&rule.day!==11)?1:(rule.day%10===2&&rule.day!==12)?2:(rule.day%10===3&&rule.day!==13)?3:0]}`;
+  return '';
+}
+
+async function renderRecurringManager() {
+  const rules = (await DB.getAll('recurring')).sort((a, b) => (a.description||'').localeCompare(b.description||''));
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Recurring entries</span></div>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="openRecurringModal()"><i class="ti ti-plus"></i> Add recurring entry</button>
+    <div>${rules.length ? rules.map((r) => `
+      <div class="list-row" onclick="openRecurringModal('${r.id}')">
+        <div><span style="font-weight:600">${esc(r.categoryName || '')}${r.storeName ? ' · ' + esc(r.storeName) : ''}</span><div class="entry-desc">${esc(recurringScheduleLabel(r))}</div></div>
+        <span style="font-weight:600">${fmtMoney(r.amount)}</span>
+      </div>
+    `).join('') : '<div class="empty-state">No recurring entries yet.</div>'}</div>
+  `;
+}
+
+async function openRecurringModal(editId) {
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a,b) => a.name.localeCompare(b.name));
+  const payees = (await DB.getAll('payees')).sort((a,b) => a.name.localeCompare(b.name));
+  const existing = editId ? await DB.get('recurring', editId) : null;
+  window.__recurringEditId = editId || null;
+  window.__recurringRepeatType = existing ? existing.repeatType : 'monthly';
+
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">${existing ? 'Edit' : 'Add'} recurring entry</p>
+    <div class="field"><label class="field-label">Category</label>
+      <select id="rec_category">${categories.map((c) => `<option value="${c.id}" ${existing && existing.categoryId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label class="field-label">Store</label>
+      <select id="rec_store"><option value="">None</option>${payees.map((p) => `<option value="${p.id}" ${existing && existing.storeId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="rec_amount" value="${existing ? existing.amount : ''}"></div>
+    <div class="field"><label class="field-label">Description</label><input id="rec_description" value="${existing ? esc(existing.description||'') : ''}"></div>
+
+    <label class="field-label">Repeats</label>
+    <div class="btn-toggle-row" id="recRepeatToggle">
+      <button type="button" class="btn-toggle" onclick="selectRecurringRepeat(this,'everyNDays')">Every N days</button>
+      <button type="button" class="btn-toggle" onclick="selectRecurringRepeat(this,'weekly')">Weekly</button>
+      <button type="button" class="btn-toggle" onclick="selectRecurringRepeat(this,'monthly')">Monthly</button>
+    </div>
+    <div id="recScheduleArea" style="margin-bottom:14px"></div>
+
+    <div class="field"><label class="field-label">Starting from</label><input type="date" id="rec_start" value="${existing ? existing.startDate : todayStr()}"></div>
+
+    <button class="btn btn-primary" style="margin-bottom:10px" onclick="saveRecurring()">${existing ? 'Save changes' : 'Save recurring entry'}</button>
+    ${existing ? `<button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteRecurring('${existing.id}')">Delete</button>` : ''}
+  `;
+  const idx = { everyNDays: 1, weekly: 2, monthly: 3 }[window.__recurringRepeatType];
+  selectRecurringRepeat(document.querySelector(`#recRepeatToggle button:nth-child(${idx})`), window.__recurringRepeatType, existing);
+  openModal();
+}
+function selectRecurringRepeat(btn, type, existing) {
+  document.querySelectorAll('#recRepeatToggle .btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
+  if (btn) btn.classList.add('active-neutral');
+  window.__recurringRepeatType = type;
+  const area = document.getElementById('recScheduleArea');
+  if (type === 'everyNDays') {
+    area.innerHTML = `<label class="field-label">Every how many days?</label><input type="number" id="rec_n" value="${existing && existing.n ? existing.n : 30}">`;
+  } else if (type === 'weekly') {
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    area.innerHTML = `
+      <div class="field-row">
+        <div><label class="field-label">Day</label><select id="rec_weekday">${days.map((d,i) => `<option value="${i}" ${existing && existing.weekday===i?'selected':''}>${d}</option>`).join('')}</select></div>
+        <div><label class="field-label">Interval</label><select id="rec_interval">
+          <option value="1" ${existing && existing.interval===1?'selected':''}>Every week</option>
+          <option value="2" ${existing && existing.interval===2?'selected':''}>Every 2 weeks</option>
+          <option value="3" ${existing && existing.interval===3?'selected':''}>Every 3 weeks</option>
+          <option value="4" ${existing && existing.interval===4?'selected':''}>Every 4 weeks</option>
+        </select></div>
+      </div>`;
+  } else if (type === 'monthly') {
+    area.innerHTML = `<label class="field-label">Day of month</label><input type="number" min="1" max="31" id="rec_day" value="${existing && existing.day ? existing.day : 1}">`;
+  }
+}
+async function saveRecurring() {
+  const categoryId = document.getElementById('rec_category').value;
+  const storeId = document.getElementById('rec_store').value;
+  const amount = parseFloat(document.getElementById('rec_amount').value);
+  if (!categoryId || !amount) { alert('Category and amount are required.'); return; }
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const cat = categories.find((c) => c.id === categoryId) || {};
+  const payee = payees.find((p) => p.id === storeId);
+
+  const rule = window.__recurringEditId ? await DB.get('recurring', window.__recurringEditId) : { id: uid(), lastGeneratedDate: null };
+  rule.categoryId = categoryId;
+  rule.categoryName = cat.name || '';
+  rule.storeId = storeId || null;
+  rule.storeName = payee ? payee.name : '';
+  rule.amount = amount;
+  rule.description = document.getElementById('rec_description').value.trim();
+  rule.type = cat.type || 'expense';
+  rule.repeatType = window.__recurringRepeatType;
+  rule.startDate = document.getElementById('rec_start').value || todayStr();
+  if (rule.repeatType === 'everyNDays') rule.n = parseInt(document.getElementById('rec_n').value) || 30;
+  if (rule.repeatType === 'weekly') { rule.weekday = parseInt(document.getElementById('rec_weekday').value); rule.interval = parseInt(document.getElementById('rec_interval').value) || 1; }
+  if (rule.repeatType === 'monthly') rule.day = parseInt(document.getElementById('rec_day').value) || 1;
+  rule.synced = false;
+
+  await DB.put('recurring', rule);
+  Sync.pushEntry('Recurring', rule).then(() => DB.put('recurring', rule));
+  closeModal();
+  window.__recurringEditId = null;
+  await processRecurringEntries(); // catch up immediately if the start date is already due
+  renderRecurringManager();
+}
+async function deleteRecurring(id) {
+  if (!confirm('Delete this recurring entry? Past generated entries stay in your history — this only stops future ones.')) return;
+  await DB.delete('recurring', id);
+  closeModal();
+  renderRecurringManager();
 }
