@@ -79,6 +79,8 @@ async function route() {
     if (currentView === 'categoryForm') return renderCategoryForm();
     if (currentView === 'storeForm') return renderStoreForm();
     if (currentView === 'reports') return renderReportsStub();
+    if (currentView === 'utilitiesReport') return renderUtilitiesReport();
+    if (currentView === 'vehicleReport') return renderFinanceVehicleReport();
     if (currentView === 'foodBudget') return renderFoodBudget();
   } else if (currentTab === 'jazz') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
@@ -659,9 +661,14 @@ async function renderReportsStub() {
       <i class="ti ti-filter"></i> ${activeFilterCount ? `${activeFilterCount} filter${activeFilterCount===1?'':'s'} active` : 'Filters'}
     </button>
 
-    <div class="btn-toggle-row" style="margin-bottom:16px">
+    <div class="btn-toggle-row" style="margin-bottom:14px">
       <button class="btn-toggle ${reportsView==='overview'?'active-neutral':''}" onclick="setReportsView('overview')">Overview</button>
       <button class="btn-toggle ${reportsView==='table'?'active-neutral':''}" onclick="setReportsView('table')">Category table</button>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn" style="flex:1" onclick="currentView='utilitiesReport';route()"><i class="ti ti-bolt"></i> Utilities</button>
+      <button class="btn" style="flex:1" onclick="currentView='vehicleReport';route()"><i class="ti ti-car"></i> Vehicles</button>
     </div>
 
     ${reportsView === 'overview' ? `
@@ -755,6 +762,172 @@ async function renderReportsStub() {
       }
     });
   }
+}
+
+// ---------- Utilities year-over-year report ----------
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function utilityEntriesFor(allEntries, storeId, year, monthNum) {
+  const mk2 = `${year}-${String(monthNum).padStart(2,'0')}`;
+  return allEntries.filter((e) => e.storeId === storeId && monthKey(e.date) === mk2);
+}
+
+async function renderUtilitiesReport() {
+  const allEntries = await DB.getAll('entries');
+  const payees = await DB.getAll('payees');
+  const keywords = ['hydro', 'enbridge', 'water'];
+  const utilityStores = payees.filter((p) => keywords.some((k) => p.name.toLowerCase().includes(k))).sort((a,b) => a.name.localeCompare(b.name));
+  const utilityIds = new Set(utilityStores.map((p) => p.id));
+  const relevant = allEntries.filter((e) => utilityIds.has(e.storeId));
+
+  if (!relevant.length) {
+    $main.innerHTML = `<div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Utilities</span></div><div class="empty-state">No utility entries yet. Store names matched: Hydro, Enbridge, Water.</div>`;
+    return;
+  }
+
+  const years = [...new Set(relevant.map((e) => e.date.slice(0,4)))].sort().reverse();
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Utilities</span></div>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+    ${years.map((year) => {
+      const rowsHtml = utilityStores.map((store) => {
+        const cells = MONTH_ABBR.map((_, i) => {
+          const matches = utilityEntriesFor(relevant, store.id, year, i + 1);
+          const total = matches.reduce((s, e) => s + e.amount, 0);
+          return `<td onclick="selectUtilityCell('${store.id}','${year}',${i+1})" style="padding:8px 10px;text-align:right;cursor:pointer;color:${total?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${total ? fmtMoney(total) : '–'}</td>`;
+        }).join('');
+        return `<tr><td style="padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(store.name)}</td>${cells}</tr>`;
+      }).join('');
+      const totalCells = MONTH_ABBR.map((_, i) => {
+        const total = utilityStores.reduce((s, store) => s + utilityEntriesFor(relevant, store.id, year, i+1).reduce((s2,e)=>s2+e.amount,0), 0);
+        return `<td style="padding:8px 10px;text-align:right;font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${total ? fmtMoney(total) : '–'}</td>`;
+      }).join('');
+      return `
+        <p class="section-label">${year}</p>
+        <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
+          <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
+            <thead><tr>
+              <th style="text-align:left;padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:110px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)"></th>
+              ${MONTH_ABBR.map((m) => `<th style="text-align:right;padding:8px 10px;color:var(--ink-soft);font-weight:600;min-width:64px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${m}</th>`).join('')}
+            </tr></thead>
+            <tbody>
+              ${rowsHtml}
+              <tr style="background:var(--sage-soft)"><td style="padding:8px 10px;position:sticky;left:0;background:var(--sage-soft);font-weight:700;border-right:1px solid var(--line)">Total</td>${totalCells}</tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+async function selectUtilityCell(storeId, year, monthNum) {
+  const allEntries = await DB.getAll('entries');
+  const payees = await DB.getAll('payees');
+  const store = payees.find((p) => p.id === storeId) || {};
+  const matches = utilityEntriesFor(allEntries, storeId, year, monthNum);
+  renderReportsPopup(matches, store.name || '', `${MONTH_ABBR[monthNum-1]} ${year}`);
+}
+
+// ---------- Finance vehicle cost report ----------
+function vehicleEntriesFor(entries, carId, categoryId, mk2) {
+  return entries.filter((e) => {
+    if (e.categoryId !== categoryId) return false;
+    if (mk2 && monthKey(e.date) !== mk2) return false;
+    if (e.carSplit && e.carSplit.length) return e.carSplit.some((s) => s.carId === carId);
+    return e.carId === carId;
+  });
+}
+function vehicleAmountFor(entries, carId, categoryId, mk2) {
+  let total = 0;
+  vehicleEntriesFor(entries, carId, categoryId, mk2).forEach((e) => {
+    if (e.carSplit && e.carSplit.length) {
+      const share = e.carSplit.find((s) => s.carId === carId);
+      if (share) total += share.amount;
+    } else {
+      total += e.amount;
+    }
+  });
+  return total;
+}
+
+async function renderFinanceVehicleReport() {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const cars = (await DB.getAll('cars')).sort((a,b) => a.name.localeCompare(b.name));
+  const gasCat = categories.find((c) => c.name.toLowerCase() === 'gas');
+  const maintCat = categories.find((c) => c.name.toLowerCase().includes('car maintenance'));
+  const insCat = categories.find((c) => c.name.toLowerCase().includes('car insurance'));
+  const catGroups = [
+    { label: 'Gas', cat: gasCat },
+    { label: 'Car maintenance', cat: maintCat },
+    { label: 'Car insurance', cat: insCat }
+  ].filter((g) => g.cat);
+
+  const relevant = allEntries.filter((e) => catGroups.some((g) => e.categoryId === g.cat.id));
+  if (!relevant.length || !cars.length) {
+    $main.innerHTML = `<div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Vehicles</span></div><div class="empty-state">No Gas / Car Maintenance / Car Insurance entries with a car assigned yet.</div>`;
+    return;
+  }
+  const monthKeysList = [...new Set(relevant.map((e) => monthKey(e.date)))].sort();
+  const monthColLabels = monthKeysList.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'2-digit'}));
+
+  const carsUsed = cars.filter((c) => catGroups.some((g) => monthKeysList.some((mk2) => vehicleAmountFor(relevant, c.id, g.cat.id, mk2) > 0)));
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Vehicles</span></div>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+    <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
+      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)"></th>
+          ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 10px;color:var(--ink-soft);font-weight:600;min-width:64px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${catGroups.map((g) => `
+            <tr style="background:var(--gold-soft)"><td colspan="${monthKeysList.length+1}" style="padding:6px 10px;position:sticky;left:0;background:var(--gold-soft);font-weight:700;border-bottom:1px solid var(--line)">${g.label}</td></tr>
+            ${carsUsed.map((car) => `
+              <tr>
+                <td style="padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);font-weight:600;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(car.name)}</td>
+                ${monthKeysList.map((mk2) => {
+                  const val = vehicleAmountFor(relevant, car.id, g.cat.id, mk2);
+                  return `<td onclick="selectVehicleCell('${car.id}','${g.cat.id}','${mk2}')" style="padding:8px 10px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
+                }).join('')}
+              </tr>
+            `).join('')}
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="section-label">Cost of ownership</p>
+    ${carsUsed.map((car) => {
+      const gasTotal = gasCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, gasCat.id, mk2), 0) : 0;
+      const maintTotal = maintCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, maintCat.id, mk2), 0) : 0;
+      const insTotal = insCat ? monthKeysList.reduce((s,mk2) => s + vehicleAmountFor(relevant, car.id, insCat.id, mk2), 0) : 0;
+      const withoutGas = maintTotal + insTotal;
+      const withGas = withoutGas + gasTotal;
+      return `
+        <div class="card tight" style="margin-bottom:10px">
+          <p style="font-weight:700;margin-bottom:6px">${esc(car.name)}</p>
+          <div class="stat-grid">
+            <div class="stat"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
+            <div class="stat"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+async function selectVehicleCell(carId, categoryId, mk2) {
+  const allEntries = await DB.getAll('entries');
+  const cars = await DB.getAll('cars');
+  const categories = await DB.getAll('categories');
+  const car = cars.find((c) => c.id === carId) || {};
+  const cat = categories.find((c) => c.id === categoryId) || {};
+  const matches = vehicleEntriesFor(allEntries, carId, categoryId, mk2);
+  const label = new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'});
+  renderReportsPopup(matches, `${car.name} · ${cat.name}`, label);
 }
 
 async function openReportsCategoryConfig() {
