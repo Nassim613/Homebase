@@ -309,6 +309,9 @@ function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 let reportsCategoryFilter = null;
 let reportsStoreFilter = null;
 let reportsTypeFilter = null;
+let reportsDateRange = 'last6'; // thisMonth | last3 | last6 | thisYear | allTime
+let reportsSelectedCell = null; // { categoryId, monthKey }
+let reportsExcludedCategoryIds = [];
 let reportsIncExpChart = null;
 let reportsCatChart = null;
 
@@ -318,6 +321,49 @@ function setReportsFilter(kind, val) {
   renderReportsStub();
 }
 function setReportsType(t) { reportsTypeFilter = reportsTypeFilter === t ? null : t; renderReportsStub(); }
+function setReportsDateRange(r) { reportsDateRange = r; reportsSelectedCell = null; renderReportsStub(); }
+function selectReportsCell(categoryId, mk2) {
+  if (reportsSelectedCell && reportsSelectedCell.categoryId === categoryId && reportsSelectedCell.monthKey === mk2) reportsSelectedCell = null;
+  else reportsSelectedCell = { categoryId, monthKey: mk2 };
+  renderReportsStub();
+}
+
+function getReportsMonthKeys(range, allEntries) {
+  const now = new Date();
+  if (range === 'thisMonth') return [monthKey(todayStr())];
+  if (range === 'last3' || range === 'last6') {
+    const n = range === 'last3' ? 3 : 6;
+    const keys = [];
+    for (let i = 0; i < n; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    return keys;
+  }
+  if (range === 'thisYear') {
+    const keys = [];
+    for (let m = now.getMonth(); m >= 0; m--) keys.push(`${now.getFullYear()}-${String(m + 1).padStart(2, '0')}`);
+    return keys;
+  }
+  // allTime: derive from actual data extent
+  if (!allEntries.length) return [monthKey(todayStr())];
+  const sorted = [...allEntries].map((e) => monthKey(e.date)).sort();
+  const earliest = sorted[0], latest = sorted[sorted.length - 1];
+  const keys = [];
+  let [y, m] = latest.split('-').map(Number);
+  const [ey, em] = earliest.split('-').map(Number);
+  while (y > ey || (y === ey && m >= em)) {
+    keys.push(`${y}-${String(m).padStart(2, '0')}`);
+    m--; if (m === 0) { m = 12; y--; }
+  }
+  return keys;
+}
+
+async function toggleReportsExcludeCategory(catId) {
+  const idx = reportsExcludedCategoryIds.indexOf(catId);
+  if (idx === -1) reportsExcludedCategoryIds.push(catId); else reportsExcludedCategoryIds.splice(idx, 1);
+  renderReportsStub();
+}
 
 async function renderReportsStub() {
   const allEntries = await DB.getAll('entries');
@@ -331,38 +377,51 @@ async function renderReportsStub() {
   if (reportsStoreFilter) entries = entries.filter((e) => e.storeId === reportsStoreFilter);
   if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
 
+  const monthKeys = getReportsMonthKeys(reportsDateRange, entries); // newest first already for thisMonth/last3/last6/thisYear/allTime
+  const rangeEntries = entries.filter((e) => monthKeys.includes(monthKey(e.date)));
+
   const mk = monthKey(todayStr());
-  const monthEntries = entries.filter((e) => monthKey(e.date) === mk);
-  const mIncome = monthEntries.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const mExpense = monthEntries.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const mIncome = entries.filter((e) => monthKey(e.date) === mk && e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const mExpense = entries.filter((e) => monthKey(e.date) === mk && e.type === 'expense').reduce((s, e) => s + e.amount, 0);
   const mNet = mIncome - mExpense;
 
-  // Last 6 months of income/expense, for the trend chart
-  const now = new Date();
-  const monthKeys = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  const monthLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short' }));
-  const incomeByMonth = monthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
-  const expenseByMonth = monthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
+  const chartMonthKeys = [...monthKeys].reverse().slice(-6); // chronological, last 6 of the selected range
+  const monthLabels = chartMonthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
+  const incomeByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
+  const expenseByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
 
-  // Top categories this month, by spend
   const catSpend = {};
-  monthEntries.filter((e) => e.type === 'expense').forEach((e) => {
+  rangeEntries.filter((e) => e.type === 'expense').forEach((e) => {
     const name = (catById[e.categoryId] || {}).name || 'Other';
     catSpend[name] = (catSpend[name] || 0) + e.amount;
   });
   const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 6);
 
-  // Month-accordion of filtered entries, newest first
-  const byMonth = {};
-  entries.forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
-  const months = Object.keys(byMonth).sort().reverse();
+  // Category x month pivot
+  const tableCats = categories.filter((c) => !c.hidden && !reportsExcludedCategoryIds.includes(c.id)).sort((a, b) => a.name.localeCompare(b.name));
+  const pivot = {}; // catId -> monthKey -> total
+  tableCats.forEach((c) => { pivot[c.id] = {}; });
+  rangeEntries.forEach((e) => {
+    if (!pivot[e.categoryId]) return;
+    pivot[e.categoryId][monthKey(e.date)] = (pivot[e.categoryId][monthKey(e.date)] || 0) + e.amount;
+  });
+  const monthColLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
+
+  let selectedCellEntries = [];
+  if (reportsSelectedCell) {
+    selectedCellEntries = allEntries.filter((e) => e.categoryId === reportsSelectedCell.categoryId && monthKey(e.date) === reportsSelectedCell.monthKey).sort((a, b) => b.date.localeCompare(a.date));
+  }
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
+
+    <div class="chip-row">
+      <button class="chip ${reportsDateRange==='thisMonth'?'active':''}" onclick="setReportsDateRange('thisMonth')">This month</button>
+      <button class="chip ${reportsDateRange==='last3'?'active':''}" onclick="setReportsDateRange('last3')">Last 3 months</button>
+      <button class="chip ${reportsDateRange==='last6'?'active':''}" onclick="setReportsDateRange('last6')">Last 6 months</button>
+      <button class="chip ${reportsDateRange==='thisYear'?'active':''}" onclick="setReportsDateRange('thisYear')">This year</button>
+      <button class="chip ${reportsDateRange==='allTime'?'active':''}" onclick="setReportsDateRange('allTime')">All time</button>
+    </div>
 
     <div class="field-row" style="margin-bottom:10px">
       <select onchange="setReportsFilter('category', this.value)">
@@ -386,25 +445,42 @@ async function renderReportsStub() {
       <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
     </div>
 
-    <p class="section-label">Income vs expense, last 6 months</p>
+    <p class="section-label">Income vs expense</p>
     <div style="position:relative;width:100%;height:180px;margin-bottom:20px"><canvas id="reportsIncExpChart"></canvas></div>
 
-    <p class="section-label">Top categories this month</p>
-    <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses this month yet.</div>'}</div>
+    <p class="section-label">Top categories in range</p>
+    <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses in this range.</div>'}</div>
 
-    <p class="section-label">All entries</p>
-    ${months.length ? months.map((mk2, i) => {
-      const monthEnts = byMonth[mk2].sort((a,b) => b.date.localeCompare(a.date));
-      const netThisMonth = monthEnts.filter((e) => e.type !== 'transfer').reduce((s, e) => s + (e.type === 'income' ? e.amount : -e.amount), 0);
-      const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-      return `
-        <div class="section-title" onclick="toggleMonthSection(this)" style="cursor:pointer">
-          <span>${label} <i class="ti ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-          <span class="amt ${netThisMonth<0?'neg':'pos'}">${netThisMonth>=0?'+':''}${fmtMoney(netThisMonth)}</span>
-        </div>
-        <div class="month-body" style="display:${i===0?'block':'none'}">${monthEnts.map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
-      `;
-    }).join('') : '<div class="empty-state">No entries match these filters.</div>'}
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:16px 0 8px">
+      <p class="section-label" style="margin:0">Category by month</p>
+      <span style="font-size:11px;color:var(--ink-soft);cursor:pointer" onclick="openReportsCategoryConfig()">Configure</span>
+    </div>
+    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Tap a cell to see its entries below</p>
+    <div style="overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch">
+      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap">
+        <thead><tr>
+          <th style="text-align:left;padding:6px 10px 6px 0;position:sticky;left:0;background:var(--surface);color:var(--ink-soft);font-weight:500">Category</th>
+          ${monthColLabels.map((l) => `<th style="text-align:right;padding:6px 10px;color:var(--ink-soft);font-weight:500">${l}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${tableCats.map((c) => `
+            <tr style="border-top:1px solid var(--line)">
+              <td style="padding:6px 10px 6px 0;position:sticky;left:0;background:var(--surface);font-weight:600;color:${categoryColor(c.id)}">${esc(c.name)}</td>
+              ${monthKeys.map((mk2) => {
+                const val = pivot[c.id][mk2];
+                const isSel = reportsSelectedCell && reportsSelectedCell.categoryId === c.id && reportsSelectedCell.monthKey === mk2;
+                return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:6px 10px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};${isSel?'background:var(--gold-soft);border-radius:6px':''}">${val ? fmtMoney(val) : '–'}</td>`;
+              }).join('')}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    ${reportsSelectedCell ? `
+      <p class="section-label">${esc((catById[reportsSelectedCell.categoryId]||{}).name||'')} · ${new Date(reportsSelectedCell.monthKey+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'})}</p>
+      <div>${selectedCellEntries.length ? selectedCellEntries.map((e) => renderEntryRow(e, catById, payeeById, true)).join('') : '<div class="empty-state">No entries.</div>'}</div>
+    ` : ''}
   `;
 
   const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
@@ -425,6 +501,23 @@ async function renderReportsStub() {
       options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: muted } }, y: { grid: { display: false }, ticks: { color: muted } } } }
     });
   }
+}
+
+async function openReportsCategoryConfig() {
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Table categories</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Uncheck any category to remove it from the table above.</p>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
+      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" ${reportsExcludedCategoryIds.includes(c.id) ? '' : 'checked'} onchange="toggleReportsExcludeCategory('${c.id}')">
+        <span style="color:${categoryColor(c.id)};font-weight:600">${esc(c.name)}</span>
+      </label>`).join('')}
+    </div>
+    <button class="btn btn-primary" onclick="closeModal()">Done</button>
+  `;
+  openModal();
 }
 
 // ---------- Add / Edit Entry ----------
