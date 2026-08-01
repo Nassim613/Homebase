@@ -19,8 +19,19 @@ function todayStr() {
 function fmtDate(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+function fmtDateYear(d) {
+  return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 function monthKey(d) { return d.slice(0, 7); }
 function esc(s) { return (s || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+
+const CATEGORY_COLOR_PALETTE = ['#E3A94E', '#7C9473', '#C97B84', '#2A78D6', '#8A6BC9', '#D4783F', '#4A9D8F', '#B5568C'];
+function categoryColor(catId) {
+  if (!catId) return CATEGORY_COLOR_PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < catId.length; i++) hash = (hash * 31 + catId.charCodeAt(i)) | 0;
+  return CATEGORY_COLOR_PALETTE[Math.abs(hash) % CATEGORY_COLOR_PALETTE.length];
+}
 
 // ---------- Header ----------
 function renderHeader() {
@@ -211,14 +222,14 @@ function renderEntryRow(e, catById, payeeById, showDate) {
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
         ${payee.logo ? `<img src="${payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
-        <div class="entry-badge" style="background:var(--gold-soft)"><i class="ti ${cat.icon || 'ti-tag'}" style="color:#8a6412"></i></div>
+        <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
       </div>
       <div class="entry-body">
         <div class="entry-top">
           <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}</span>
           <span class="entry-value ${valClass}">${sign}${fmtMoney(e.amount)}</span>
         </div>
-        <div class="entry-meta">${esc(cat.name || '')}${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
+        <div class="entry-meta"><span style="font-weight:700;color:${categoryColor(e.categoryId)}">${esc(cat.name || '')}</span>${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
         ${e.description ? `<div class="entry-desc">${esc(e.description)}</div>` : ''}
       </div>
     </div>
@@ -376,7 +387,7 @@ async function deleteEntry() {
 }
 
 async function renderAddEntry() {
-  const categories = (await DB.getAll('categories')).sort((a, b) => a.name.localeCompare(b.name));
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
   const cars = await DB.getAll('cars');
   const projects = await DB.getAll('projects');
@@ -547,6 +558,7 @@ async function renderCategoryForm() {
     </select>
 
     <button class="btn btn-primary" onclick="saveCategoryForm()">Save category</button>
+    ${existing ? `<button class="btn" style="margin-top:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideCategory('${existing.id}')">Hide from lists</button>` : ''}
   `;
   setTimeout(() => selectCategoryType(document.querySelector(`#catTypeToggle button:nth-child(${window.__categoryTypeDraft === 'expense' ? 1 : window.__categoryTypeDraft === 'income' ? 2 : 3})`), window.__categoryTypeDraft), 0);
 }
@@ -560,10 +572,19 @@ function selectCategoryIcon(ic, evt) {
   document.querySelectorAll('#catIconPicker button').forEach((b) => { b.style.background = 'var(--surface-raised)'; });
   if (evt && evt.currentTarget) evt.currentTarget.style.background = 'var(--gold-soft)';
 }
+async function hideCategory(id) {
+  if (!confirm('Hide this category from all lists? Past entries that used it are unaffected — this only removes it from pickers going forward. You can restore it later from the manager.')) return;
+  const cat = await DB.get('categories', id);
+  cat.hidden = true;
+  cat.synced = false;
+  await DB.put('categories', cat);
+  Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
+  currentView = 'categories'; route();
+}
 async function saveCategoryForm() {
   const name = document.getElementById('cat_name').value.trim();
   if (!name) { alert('Category needs a name.'); return; }
-  const cat = categoryFormEditId ? await DB.get('categories', categoryFormEditId) : { id: uid(), defaultStoreId: null, defaultAmount: null };
+  const cat = categoryFormEditId ? await DB.get('categories', categoryFormEditId) : { id: uid(), defaultStoreId: null, defaultAmount: null, hidden: false };
   cat.name = name;
   cat.type = window.__categoryTypeDraft || 'expense';
   cat.icon = window.__categoryIconDraft || 'ti-tag';
@@ -675,9 +696,12 @@ async function saveEntry() {
 
 // ---------- Categories & Stores manager ----------
 let managerTab = 'categories';
+let showHiddenCategories = false;
 async function renderCategoriesManager() {
-  const categories = (await DB.getAll('categories')).sort((a, b) => a.name.localeCompare(b.name));
+  const allCategories = (await DB.getAll('categories')).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
+  const categories = showHiddenCategories ? allCategories : allCategories.filter((c) => !c.hidden);
+  const hiddenCount = allCategories.filter((c) => c.hidden).length;
   const list = managerTab === 'categories' ? categories : payees;
 
   $main.innerHTML = `
@@ -687,16 +711,25 @@ async function renderCategoriesManager() {
       <button class="chip ${managerTab === 'payees' ? 'active' : ''}" onclick="switchManagerTab('payees')">Stores</button>
     </div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="${managerTab === 'categories' ? 'goAddCategory()' : 'goAddStore()'}"><i class="ti ti-plus"></i> Add ${managerTab === 'categories' ? 'category' : 'store'}</button>
+    ${managerTab === 'categories' && hiddenCount ? `<div class="list-row" onclick="showHiddenCategories=!showHiddenCategories;renderCategoriesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenCategories ? 'Hide' : 'Show'} ${hiddenCount} hidden categor${hiddenCount===1?'y':'ies'}</span><i class="ti ti-chevron-${showHiddenCategories?'down':'right'}"></i></div>` : ''}
     <div>${list.map((item) => managerTab === 'categories' ? renderCategoryListRow(item) : renderPayeeListRow(item)).join('') || '<div class="empty-state">Nothing yet.</div>'}</div>
   `;
 }
 function switchManagerTab(t) { managerTab = t; renderCategoriesManager(); }
 
 function renderCategoryListRow(c) {
-  return `<div class="list-row" onclick="goEditCategory('${c.id}')">
-    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ${c.icon || 'ti-tag'}"></i></div><span>${esc(c.name)}</span></div>
-    <span style="font-size:11px;color:var(--ink-soft);text-transform:capitalize">${c.type}</span>
+  return `<div class="list-row" onclick="${c.hidden ? `restoreCategory('${c.id}')` : `goEditCategory('${c.id}')`}" style="${c.hidden ? 'opacity:0.55' : ''}">
+    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ${c.icon || 'ti-tag'}"></i></div><span>${esc(c.name)}${c.hidden ? ' (hidden)' : ''}</span></div>
+    <span style="font-size:11px;color:var(--ink-soft);text-transform:capitalize">${c.hidden ? 'Tap to restore' : c.type}</span>
   </div>`;
+}
+async function restoreCategory(id) {
+  const cat = await DB.get('categories', id);
+  cat.hidden = false;
+  cat.synced = false;
+  await DB.put('categories', cat);
+  Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
+  renderCategoriesManager();
 }
 function renderPayeeListRow(p) {
   return `<div class="list-row" onclick="goEditStore('${p.id}')">
@@ -795,7 +828,7 @@ function filterJazz(q, days, byDay, typeById) {
 }
 
 async function renderAddIssue() {
-  const issueTypes = await DB.getAll('issueTypes');
+  const issueTypes = (await DB.getAll('issueTypes')).filter((t) => !t.hidden);
   const vetClinics = await DB.getAll('vetClinics');
   const src = jazzDuplicate;
 
@@ -803,7 +836,7 @@ async function renderAddIssue() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log an issue</span></div>
     <div class="field"><label class="field-label">Started</label><input type="date" id="j_date" value="${todayStr()}"></div>
     <div class="field"><label class="field-label">Issue type</label>
-      <select id="j_type" onchange="if(this.value==='__new') promptNewIssueType()">
+      <select id="j_type" onchange="if(this.value==='__new') openIssueTypeModal(true)">
         ${issueTypes.map((t) => `<option value="${t.id}" ${src && src.typeId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
         <option value="__new">+ Add type</option>
       </select>
@@ -822,8 +855,8 @@ async function renderAddIssue() {
     <div class="field"><label class="field-label">Description</label><textarea id="j_description" placeholder="What's happening, when it started, any pattern..."></textarea></div>
 
     <div class="field-row" style="margin-bottom:14px">
-      <div><label class="field-label">Weather</label><select id="j_weather"><option value="">—</option><option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Snowing</option></select></div>
-      <div><label class="field-label">Stool</label><select id="j_stool"><option value="">—</option><option>Normal</option><option>Diarrhea</option></select></div>
+      <div><label class="field-label">Weather</label><select id="j_weather"><option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Snowing</option></select></div>
+      <div><label class="field-label">Stool</label><select id="j_stool"><option>Normal</option><option>Diarrhea</option></select></div>
     </div>
     <label class="field-label">Snow covered</label>
     <div class="btn-toggle-row" id="snowToggle">
@@ -863,6 +896,7 @@ async function renderAddIssue() {
   `;
   selectSeverity(document.querySelector('#severityToggle .btn-toggle'), 'Mild');
   selectStatus(document.querySelector('#statusToggle .btn-toggle'), 'ongoing');
+  selectSnow(document.querySelector('#snowToggle .btn-toggle'), false);
 }
 
 function selectSeverity(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__severity = val; }
@@ -892,10 +926,94 @@ function handlePhotoUpload(e, prefix) {
   });
 }
 
-function promptNewIssueType() {
-  const name = prompt('New issue type name:'); if (!name) return;
-  DB.put('issueTypes', { id: uid(), name, icon: 'ti-stethoscope' }).then(renderAddIssue);
+const ISSUE_ICON_CHOICES = ['ti-stethoscope', 'ti-droplet', 'ti-brain', 'ti-eye', 'ti-ear', 'ti-bone', 'ti-nose', 'ti-bug'];
+let issueTypeModalEditId = null;
+let issueTypeModalIcon = 'ti-stethoscope';
+let issueTypeModalReturnToAdd = false;
+
+function openIssueTypeModal(returnToAdd) {
+  issueTypeModalEditId = null;
+  issueTypeModalIcon = 'ti-stethoscope';
+  issueTypeModalReturnToAdd = !!returnToAdd;
+  renderIssueTypeModal();
+  openModal();
 }
+async function editIssueTypeModal(id) {
+  issueTypeModalEditId = id;
+  const t = await DB.get('issueTypes', id);
+  issueTypeModalIcon = t.icon || 'ti-stethoscope';
+  issueTypeModalReturnToAdd = false;
+  renderIssueTypeModal();
+  openModal();
+}
+async function renderIssueTypeModal() {
+  const existing = issueTypeModalEditId ? await DB.get('issueTypes', issueTypeModalEditId) : null;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">${existing ? 'Edit' : 'Add'} issue type</p>
+    <div class="field"><label class="field-label">Name</label><input id="itype_name" placeholder="e.g. Skin" value="${existing ? esc(existing.name) : ''}"></div>
+    <label class="field-label">Icon</label>
+    <div id="itypeIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
+      ${ISSUE_ICON_CHOICES.map((ic) => `<button type="button" onclick="selectIssueTypeIcon('${ic}', event)" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === issueTypeModalIcon ? 'var(--rose-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:10px" onclick="saveIssueTypeModal()">Save</button>
+    ${existing ? `<button class="btn" style="margin-bottom:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideIssueTypeModal('${existing.id}')">Hide from list</button>` : ''}
+    <button class="btn" onclick="closeModal()">Cancel</button>
+  `;
+}
+function selectIssueTypeIcon(ic, evt) {
+  issueTypeModalIcon = ic;
+  document.querySelectorAll('#itypeIconPicker button').forEach((b) => { b.style.background = 'var(--surface-raised)'; });
+  if (evt && evt.currentTarget) evt.currentTarget.style.background = 'var(--rose-soft)';
+}
+async function saveIssueTypeModal() {
+  const name = document.getElementById('itype_name').value.trim();
+  if (!name) { alert('Issue type needs a name.'); return; }
+  const t = issueTypeModalEditId ? await DB.get('issueTypes', issueTypeModalEditId) : { id: uid(), hidden: false };
+  t.name = name;
+  t.icon = issueTypeModalIcon;
+  t.synced = false;
+  await DB.put('issueTypes', t);
+  Sync.pushEntry('IssueTypes', t).then(() => DB.put('issueTypes', t));
+  closeModal();
+  if (issueTypeModalReturnToAdd) {
+    renderAddIssue().then(() => { const sel = document.getElementById('j_type'); if (sel) sel.value = t.id; });
+  } else if (moreView === 'issueTypes') {
+    renderIssueTypesManager();
+  }
+}
+async function hideIssueTypeModal(id) {
+  if (!confirm('Hide this issue type from lists? Past issues that used it are unaffected.')) return;
+  const t = await DB.get('issueTypes', id);
+  t.hidden = true;
+  t.synced = false;
+  await DB.put('issueTypes', t);
+  Sync.pushEntry('IssueTypes', t).then(() => DB.put('issueTypes', t));
+  closeModal();
+  if (moreView === 'issueTypes') renderIssueTypesManager();
+}
+
+let showHiddenIssueTypes = false;
+async function renderIssueTypesManager() {
+  const all = (await DB.getAll('issueTypes')).sort((a, b) => a.name.localeCompare(b.name));
+  const list = showHiddenIssueTypes ? all : all.filter((t) => !t.hidden);
+  const hiddenCount = all.filter((t) => t.hidden).length;
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Issue types</span></div>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="openIssueTypeModal(false)"><i class="ti ti-plus"></i> Add issue type</button>
+    ${hiddenCount ? `<div class="list-row" onclick="showHiddenIssueTypes=!showHiddenIssueTypes;renderIssueTypesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenIssueTypes?'Hide':'Show'} ${hiddenCount} hidden</span><i class="ti ti-chevron-${showHiddenIssueTypes?'down':'right'}"></i></div>` : ''}
+    <div>${list.map((t) => `<div class="list-row" style="${t.hidden?'opacity:0.55':''}" onclick="${t.hidden ? `restoreIssueType('${t.id}')` : `editIssueTypeModal('${t.id}')`}"><span><i class="ti ${t.icon||'ti-stethoscope'}"></i> ${esc(t.name)}${t.hidden?' (hidden)':''}</span><i class="ti ti-chevron-right"></i></div>`).join('') || '<div class="empty-state">None yet.</div>'}</div>
+  `;
+}
+async function restoreIssueType(id) {
+  const t = await DB.get('issueTypes', id);
+  t.hidden = false;
+  t.synced = false;
+  await DB.put('issueTypes', t);
+  Sync.pushEntry('IssueTypes', t).then(() => DB.put('issueTypes', t));
+  renderIssueTypesManager();
+}
+
 function promptNewVetClinic() {
   const name = prompt('Vet clinic name:'); if (!name) return;
   DB.put('vetClinics', { id: uid(), name }).then(renderAddIssue);
@@ -1035,7 +1153,7 @@ async function renderWeightMain() {
     </div>
 
     <p class="section-label">History</p>
-    <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" style="cursor:default"><div><span>${fmtDate(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
+    <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" style="cursor:default"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
   `;
 
   if (inRange.length >= 2 && window.Chart) {
@@ -1086,7 +1204,7 @@ async function logJazzWeighIn() {
 }
 
 // ============ MORE / SETTINGS MODULE ============
-let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData
+let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes
 let editingSheetUrl = false;
 
 function goMoreMain() { moreView = 'main'; renderMore(); }
@@ -1095,6 +1213,7 @@ async function renderMore() {
   if (moreView === 'carsProjects') return renderCarsProjectsManager();
   if (moreView === 'expenseRepairTypes') return renderExpenseRepairManager();
   if (moreView === 'syncData') return renderSyncDataPage();
+  if (moreView === 'issueTypes') return renderIssueTypesManager();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -1104,6 +1223,9 @@ async function renderMore() {
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Finance</p>
     <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories & stores</span><i class="ti ti-chevron-right"></i></div>
     <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars & projects</span><i class="ti ti-chevron-right"></i></div>
+
+    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Jazz</p>
+    <div class="list-row" onclick="moreView='issueTypes';renderMore()"><span><i class="ti ti-stethoscope"></i> Issue types</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Garage</p>
     <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>

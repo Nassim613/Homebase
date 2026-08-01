@@ -119,7 +119,7 @@ async function seedIfEmpty() {
   const cats = await DB.getAll('categories');
   if (cats.length === 0) {
     for (const c of DEFAULT_CATEGORIES) {
-      await DB.put('categories', { id: uid(), ...c, defaultStoreId: null, defaultAmount: null });
+      await DB.put('categories', { id: uid(), ...c, defaultStoreId: null, defaultAmount: null, hidden: false });
     }
   }
   const payees = await DB.getAll('payees');
@@ -130,7 +130,7 @@ async function seedIfEmpty() {
   }
   const issueTypes = await DB.getAll('issueTypes');
   if (issueTypes.length === 0) {
-    for (const t of DEFAULT_ISSUE_TYPES) await DB.put('issueTypes', { id: uid(), ...t });
+    for (const t of DEFAULT_ISSUE_TYPES) await DB.put('issueTypes', { id: uid(), ...t, hidden: false });
   }
   const expenseTypes = await DB.getAll('expenseTypes');
   if (expenseTypes.length === 0) {
