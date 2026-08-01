@@ -376,10 +376,10 @@ async function openReportsStoreFilterModal() {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Filter by store</p>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Pick one or more. Leave all unchecked to show everything.</p>
-    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
-      ${payees.map((p) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div class="check-list">
+      ${payees.map((p) => `<label class="check-row">
         <input type="checkbox" ${reportsStoreFilter.includes(p.id) ? 'checked' : ''} onchange="toggleReportsStoreFilter('${p.id}')">
-        <span style="font-weight:600">${esc(p.name)}</span>
+        <span>${esc(p.name)}</span>
       </label>`).join('')}
     </div>
     <button class="btn btn-primary" style="margin-bottom:8px" onclick="closeModal();renderReportsStub();">Apply</button>
@@ -405,10 +405,10 @@ async function openReportsCategoryFilterModal() {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Filter by category</p>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Pick one or more. Leave all unchecked to show everything.</p>
-    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
-      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div class="check-list">
+      ${categories.map((c) => `<label class="check-row">
         <input type="checkbox" ${reportsCategoryFilter.includes(c.id) ? 'checked' : ''} onchange="toggleReportsCategoryFilter('${c.id}')">
-        <span style="color:${categoryColor(c.id)};font-weight:600">${esc(c.name)}</span>
+        <span style="color:${categoryColor(c.id)}">${esc(c.name)}</span>
       </label>`).join('')}
     </div>
     <button class="btn btn-primary" style="margin-bottom:8px" onclick="closeModal();renderReportsStub();">Apply</button>
@@ -569,10 +569,10 @@ async function openReportsFiltersModal() {
     </div>
 
     <label class="field-label">Categories</label>
-    <div style="max-height:22vh;overflow-y:auto;margin-bottom:14px;border:1px solid var(--line);border-radius:10px;padding:0 10px">
-      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div class="check-list" style="max-height:22vh">
+      ${categories.map((c) => `<label class="check-row">
         <input type="checkbox" ${reportsCategoryFilter.includes(c.id) ? 'checked' : ''} onchange="toggleReportsCategoryFilter('${c.id}')">
-        <span style="color:${categoryColor(c.id)};font-weight:600;font-size:13px">${esc(c.name)}</span>
+        <span style="color:${categoryColor(c.id)};font-size:13px">${esc(c.name)}</span>
       </label>`).join('')}
     </div>
 
@@ -580,10 +580,10 @@ async function openReportsFiltersModal() {
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="chip" style="flex:1" onclick="selectUtilitiesFilter();openReportsFiltersModal();"><i class="ti ti-bolt"></i> Utilities</button>
     </div>
-    <div style="max-height:22vh;overflow-y:auto;margin-bottom:20px;border:1px solid var(--line);border-radius:10px;padding:0 10px">
-      ${payees.map((p) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div class="check-list" style="max-height:22vh">
+      ${payees.map((p) => `<label class="check-row">
         <input type="checkbox" ${reportsStoreFilter.includes(p.id) ? 'checked' : ''} onchange="toggleReportsStoreFilter('${p.id}')">
-        <span style="font-weight:600;font-size:13px">${esc(p.name)}</span>
+        <span style="font-size:13px">${esc(p.name)}</span>
       </label>`).join('')}
     </div>
 
@@ -763,10 +763,10 @@ async function openReportsCategoryConfig() {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Table categories</p>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Uncheck any category to remove it from the table above.</p>
-    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
-      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+    <div class="check-list" style="max-height:50vh">
+      ${categories.map((c) => `<label class="check-row">
         <input type="checkbox" ${reportsExcludedCategoryIds.includes(c.id) ? '' : 'checked'} onchange="toggleReportsExcludeCategory('${c.id}')">
-        <span style="color:${categoryColor(c.id)};font-weight:600">${esc(c.name)}</span>
+        <span style="color:${categoryColor(c.id)}">${esc(c.name)}</span>
       </label>`).join('')}
     </div>
     <button class="btn btn-primary" onclick="closeModal()">Done</button>
