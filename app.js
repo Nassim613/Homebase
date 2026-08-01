@@ -555,7 +555,7 @@ function renderReportsInlineEntries(rangeEntries, catById, payeeById) {
 }
 
 async function openReportsFiltersModal() {
-  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden && !['allowance','personal'].some((ex) => c.name.toLowerCase().includes(ex))).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
@@ -609,21 +609,21 @@ async function renderReportsStub() {
   if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
   if (reportsStoreFilter.length) entries = entries.filter((e) => reportsStoreFilter.includes(e.storeId));
   if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
+  const REPORTS_ALWAYS_EXCLUDE = ['allowance', 'personal'];
+  entries = entries.filter((e) => {
+    const name = (catById[e.categoryId] || {}).name || '';
+    return !REPORTS_ALWAYS_EXCLUDE.some((ex) => name.toLowerCase().includes(ex));
+  });
 
   const monthKeys = getReportsMonthKeys(reportsDateRange, entries); // newest first already for thisMonth/last3/last6/thisYear/allTime
   const rangeEntries = entries.filter((e) => monthKeys.includes(monthKey(e.date)));
-
-  const mk = monthKey(todayStr());
-  const mIncome = entries.filter((e) => monthKey(e.date) === mk && e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const mExpense = entries.filter((e) => monthKey(e.date) === mk && e.type === 'expense').reduce((s, e) => s + e.amount, 0);
-  const mNet = mIncome - mExpense;
 
   const chartMonthKeys = [...monthKeys].reverse(); // chronological, follows the selected date range fully
   const monthLabels = chartMonthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
   const incomeByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
   const expenseByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
 
-  const TOP_CATS_EXCLUDE = ['mortgage', 'allowance', 'personal'];
+  const TOP_CATS_EXCLUDE = ['mortgage'];
   const catSpend = {};
   rangeEntries.filter((e) => e.type === 'expense').forEach((e) => {
     const name = (catById[e.categoryId] || {}).name || 'Other';
@@ -633,7 +633,7 @@ async function renderReportsStub() {
   const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 6);
 
   // Category x month pivot
-  const tableCats = categories.filter((c) => !c.hidden && !reportsExcludedCategoryIds.includes(c.id)).sort((a, b) => a.name.localeCompare(b.name));
+  const tableCats = categories.filter((c) => !c.hidden && !reportsExcludedCategoryIds.includes(c.id) && !REPORTS_ALWAYS_EXCLUDE.some((ex) => c.name.toLowerCase().includes(ex))).sort((a, b) => a.name.localeCompare(b.name));
   const pivot = {}; // catId -> monthKey -> total
   tableCats.forEach((c) => { pivot[c.id] = {}; });
   rangeEntries.forEach((e) => {
@@ -665,12 +665,6 @@ async function renderReportsStub() {
     </div>
 
     ${reportsView === 'overview' ? `
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
-        <div class="stat"><p class="label">Income (this mo.)</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(mIncome)}</p></div>
-        <div class="stat"><p class="label">Expenses (this mo.)</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(mExpense)}</p></div>
-        <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
-      </div>
-
       ${reportsStoreFilter.length > 1 ? `
         <p class="section-label">By store, in range</p>
         <div style="display:grid;grid-template-columns:repeat(${Math.min(reportsStoreFilter.length,3)},1fr);gap:8px;margin-bottom:16px">
@@ -764,7 +758,7 @@ async function renderReportsStub() {
 }
 
 async function openReportsCategoryConfig() {
-  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden && !['allowance','personal'].some((ex) => c.name.toLowerCase().includes(ex))).sort((a, b) => a.name.localeCompare(b.name));
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Table categories</p>
@@ -1622,7 +1616,7 @@ async function renderWeightMain() {
     </div>
 
     <p class="section-label">History</p>
-    <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" style="cursor:default"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
+    <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" onclick="openWeightEntryModal('${w.id}')"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
   `;
 
   if (inRange.length >= 2 && window.Chart) {
@@ -1660,6 +1654,41 @@ async function saveWeight() {
   await DB.put('weightEntries', entry);
   Sync.pushEntry('Weight', entry).then(() => DB.put('weightEntries', entry));
   currentView = 'main'; route();
+}
+
+let weightEditId = null;
+async function openWeightEntryModal(id) {
+  weightEditId = id;
+  const w = await DB.get('weightEntries', id);
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Edit weight entry</p>
+    <div class="field"><label class="field-label">Date</label><input type="date" id="we_date" value="${w.date}"></div>
+    <div class="field"><label class="field-label">Weight (lbs)</label><input type="number" step="0.1" id="we_value" value="${w.value}"></div>
+    <div class="field"><label class="field-label">Notes</label><input id="we_note" value="${esc(w.note || '')}" placeholder="Optional"></div>
+    <button class="btn btn-primary" style="margin-bottom:10px" onclick="saveWeightEdit()">Save changes</button>
+    <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteWeightEntry()">Delete entry</button>
+  `;
+  openModal();
+}
+async function saveWeightEdit() {
+  const value = parseFloat(document.getElementById('we_value').value);
+  if (!value) { alert('Enter a weight value.'); return; }
+  const w = await DB.get('weightEntries', weightEditId);
+  w.date = document.getElementById('we_date').value || w.date;
+  w.value = value;
+  w.note = document.getElementById('we_note').value.trim();
+  w.synced = false;
+  await DB.put('weightEntries', w);
+  Sync.pushEntry('Weight', w).then(() => DB.put('weightEntries', w));
+  closeModal();
+  renderWeightMain();
+}
+async function deleteWeightEntry() {
+  if (!confirm('Delete this weight entry? This can\'t be undone locally.')) return;
+  await DB.delete('weightEntries', weightEditId);
+  closeModal();
+  renderWeightMain();
 }
 
 async function logJazzWeighIn() {
