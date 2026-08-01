@@ -305,11 +305,126 @@ async function renderFoodBudget() {
 }
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 
-function renderReportsStub() {
+// ---------- Finance Reports ----------
+let reportsCategoryFilter = null;
+let reportsStoreFilter = null;
+let reportsTypeFilter = null;
+let reportsIncExpChart = null;
+let reportsCatChart = null;
+
+function setReportsFilter(kind, val) {
+  if (kind === 'category') reportsCategoryFilter = val || null;
+  if (kind === 'store') reportsStoreFilter = val || null;
+  renderReportsStub();
+}
+function setReportsType(t) { reportsTypeFilter = reportsTypeFilter === t ? null : t; renderReportsStub(); }
+
+async function renderReportsStub() {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+
+  let entries = allEntries;
+  if (reportsCategoryFilter) entries = entries.filter((e) => e.categoryId === reportsCategoryFilter);
+  if (reportsStoreFilter) entries = entries.filter((e) => e.storeId === reportsStoreFilter);
+  if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
+
+  const mk = monthKey(todayStr());
+  const monthEntries = entries.filter((e) => monthKey(e.date) === mk);
+  const mIncome = monthEntries.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const mExpense = monthEntries.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const mNet = mIncome - mExpense;
+
+  // Last 6 months of income/expense, for the trend chart
+  const now = new Date();
+  const monthKeys = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  const monthLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short' }));
+  const incomeByMonth = monthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
+  const expenseByMonth = monthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
+
+  // Top categories this month, by spend
+  const catSpend = {};
+  monthEntries.filter((e) => e.type === 'expense').forEach((e) => {
+    const name = (catById[e.categoryId] || {}).name || 'Other';
+    catSpend[name] = (catSpend[name] || 0) + e.amount;
+  });
+  const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+  // Month-accordion of filtered entries, newest first
+  const byMonth = {};
+  entries.forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
+  const months = Object.keys(byMonth).sort().reverse();
+
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i></div>
-    <div class="empty-state">Full reports (charts, month grouping, Utilities/Cars/Transfers views) are coming in a later build pass. The core data model already supports everything needed for them.</div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
+
+    <div class="field-row" style="margin-bottom:10px">
+      <select onchange="setReportsFilter('category', this.value)">
+        <option value="">All categories</option>
+        ${categories.filter((c) => !c.hidden).sort((a,b)=>a.name.localeCompare(b.name)).map((c) => `<option value="${c.id}" ${reportsCategoryFilter===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
+      </select>
+      <select onchange="setReportsFilter('store', this.value)">
+        <option value="">All stores</option>
+        ${payees.sort((a,b)=>a.name.localeCompare(b.name)).map((p) => `<option value="${p.id}" ${reportsStoreFilter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="chip-row">
+      <button class="chip ${reportsTypeFilter==='expense'?'active':''}" onclick="setReportsType('expense')">Expense</button>
+      <button class="chip ${reportsTypeFilter==='income'?'active':''}" onclick="setReportsType('income')">Income</button>
+      <button class="chip ${reportsTypeFilter==='transfer'?'active':''}" onclick="setReportsType('transfer')">Transfer</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+      <div class="stat"><p class="label">Income (this mo.)</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(mIncome)}</p></div>
+      <div class="stat"><p class="label">Expenses (this mo.)</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(mExpense)}</p></div>
+      <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
+    </div>
+
+    <p class="section-label">Income vs expense, last 6 months</p>
+    <div style="position:relative;width:100%;height:180px;margin-bottom:20px"><canvas id="reportsIncExpChart"></canvas></div>
+
+    <p class="section-label">Top categories this month</p>
+    <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses this month yet.</div>'}</div>
+
+    <p class="section-label">All entries</p>
+    ${months.length ? months.map((mk2, i) => {
+      const monthEnts = byMonth[mk2].sort((a,b) => b.date.localeCompare(a.date));
+      const netThisMonth = monthEnts.filter((e) => e.type !== 'transfer').reduce((s, e) => s + (e.type === 'income' ? e.amount : -e.amount), 0);
+      const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      return `
+        <div class="section-title" onclick="toggleMonthSection(this)" style="cursor:pointer">
+          <span>${label} <i class="ti ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+          <span class="amt ${netThisMonth<0?'neg':'pos'}">${netThisMonth>=0?'+':''}${fmtMoney(netThisMonth)}</span>
+        </div>
+        <div class="month-body" style="display:${i===0?'block':'none'}">${monthEnts.map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
+      `;
+    }).join('') : '<div class="empty-state">No entries match these filters.</div>'}
   `;
+
+  const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
+  if (reportsIncExpChart) reportsIncExpChart.destroy();
+  reportsIncExpChart = new Chart(document.getElementById('reportsIncExpChart'), {
+    type: 'bar',
+    data: { labels: monthLabels, datasets: [
+      { label: 'Income', data: incomeByMonth, backgroundColor: '#008300', borderRadius: 4 },
+      { label: 'Expense', data: expenseByMonth, backgroundColor: '#C9564F', borderRadius: 4 }
+    ] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { ticks: { color: muted } } } }
+  });
+  if (topCats.length) {
+    if (reportsCatChart) reportsCatChart.destroy();
+    reportsCatChart = new Chart(document.getElementById('reportsCatChart'), {
+      type: 'bar',
+      data: { labels: topCats.map((c) => c[0]), datasets: [{ data: topCats.map((c) => c[1]), backgroundColor: '#E3A94E', borderRadius: 4 }] },
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: muted } }, y: { grid: { display: false }, ticks: { color: muted } } } }
+    });
+  }
 }
 
 // ---------- Add / Edit Entry ----------
