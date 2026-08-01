@@ -16,7 +16,8 @@ const SYNC_JOBS = [
   { store: 'expenseTypes', sheet: 'ExpenseTypes', strip: [] },
   { store: 'repairTypes', sheet: 'RepairTypes', strip: [] },
   { store: 'issueTypes', sheet: 'IssueTypes', strip: [] },
-  { store: 'vetClinics', sheet: 'VetClinics', strip: [] }
+  { store: 'vetClinics', sheet: 'VetClinics', strip: [] },
+  { store: 'garagePlaces', sheet: 'Places', strip: [] }
 ];
 
 const Sync = {

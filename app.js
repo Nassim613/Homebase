@@ -81,6 +81,7 @@ async function route() {
     if (currentView === 'reports') return renderReportsStub();
     if (currentView === 'utilitiesReport') return renderUtilitiesReport();
     if (currentView === 'vehicleReport') return renderFinanceVehicleReport();
+    if (currentView === 'transfersReport') return renderTransfersReport();
     if (currentView === 'foodBudget') return renderFoodBudget();
   } else if (currentTab === 'jazz') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
@@ -472,7 +473,19 @@ async function selectReportsCategoryAll(categoryId) {
   const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
   const matches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= start && e.date <= end);
   const total = matches.reduce((s, e) => s + e.amount, 0);
-  renderReportsPopup(matches, cat.name || '', `${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}`);
+
+  // Same period, one year earlier — a simple, general "vs last year" for any category
+  const shiftYear = (d) => { const dt = new Date(d + 'T00:00:00'); dt.setFullYear(dt.getFullYear() - 1); return fmtISO(dt); };
+  const lastYearStart = shiftYear(start), lastYearEnd = shiftYear(end);
+  const lastYearMatches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= lastYearStart && e.date <= lastYearEnd);
+  const lastYearTotal = lastYearMatches.reduce((s, e) => s + e.amount, 0);
+  const diff = total - lastYearTotal;
+  const diffPct = lastYearTotal ? Math.round((diff / lastYearTotal) * 100) : null;
+  const compareLine = lastYearTotal || lastYearMatches.length
+    ? `Last year same period: ${fmtMoney(lastYearTotal)} <span style="color:${diff<=0?'#0F6E56':'var(--red)'}">(${diff>=0?'+':''}${fmtMoney(diff)}${diffPct!==null?', '+diffPct+'%':''})</span>`
+    : `No entries in this category last year for comparison`;
+
+  renderReportsPopup(matches, cat.name || '', `${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}<br>${compareLine}`);
 }
 
 async function selectReportsChartMonth(mk2, type) {
@@ -669,6 +682,7 @@ async function renderReportsStub() {
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <button class="btn" style="flex:1" onclick="currentView='utilitiesReport';route()"><i class="ti ti-bolt"></i> Utilities</button>
       <button class="btn" style="flex:1" onclick="currentView='vehicleReport';route()"><i class="ti ti-car"></i> Vehicles</button>
+      <button class="btn" style="flex:1" onclick="currentView='transfersReport';route()"><i class="ti ti-arrows-left-right"></i> Transfers</button>
     </div>
 
     ${reportsView === 'overview' ? `
@@ -928,6 +942,67 @@ async function selectVehicleCell(carId, categoryId, mk2) {
   const matches = vehicleEntriesFor(allEntries, carId, categoryId, mk2);
   const label = new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'});
   renderReportsPopup(matches, `${car.name} · ${cat.name}`, label);
+}
+
+// ---------- Transfers report ----------
+async function renderTransfersReport() {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+  const transfers = allEntries.filter((e) => e.type === 'transfer');
+
+  if (!transfers.length) {
+    $main.innerHTML = `<div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Transfers</span></div><div class="empty-state">No transfer entries yet.</div>`;
+    return;
+  }
+
+  const totalIn = transfers.filter((e) => e.transferDirection === 'in').reduce((s, e) => s + e.amount, 0);
+  const totalOut = transfers.filter((e) => e.transferDirection !== 'in').reduce((s, e) => s + e.amount, 0);
+
+  const byCategory = {};
+  transfers.forEach((e) => {
+    const cid = e.categoryId;
+    byCategory[cid] = byCategory[cid] || { in: 0, out: 0 };
+    if (e.transferDirection === 'in') byCategory[cid].in += e.amount; else byCategory[cid].out += e.amount;
+  });
+  const catRows = Object.entries(byCategory).sort((a, b) => (catById[a[0]]||{}).name?.localeCompare((catById[b[0]]||{}).name) || 0);
+
+  const byMonth = {};
+  transfers.slice().sort((a,b) => b.date.localeCompare(a.date)).forEach((e) => { const mk = monthKey(e.date); (byMonth[mk] = byMonth[mk] || []).push(e); });
+  const months = Object.keys(byMonth).sort().reverse();
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Transfers</span></div>
+    <div class="stat-grid">
+      <div class="stat" style="background:var(--sage-soft)"><p class="label">In</p><p class="value" style="color:#0F6E56">${fmtMoney(totalIn)}</p></div>
+      <div class="stat" style="background:var(--rose-soft)"><p class="label">Out</p><p class="value" style="color:var(--red)">${fmtMoney(totalOut)}</p></div>
+    </div>
+    <p class="section-label">By category</p>
+    ${catRows.map(([cid, v]) => `
+      <div class="list-row" onclick="selectReportsCategoryTransfers('${cid}')">
+        <span style="color:${categoryColor(cid)};font-weight:700">${esc((catById[cid]||{}).name || 'Unknown')}</span>
+        <span style="font-size:12px"><span style="color:#0F6E56">+${fmtMoney(v.in)}</span> · <span style="color:var(--red)">-${fmtMoney(v.out)}</span></span>
+      </div>
+    `).join('')}
+
+    <p class="section-label" style="margin-top:16px">All transfers</p>
+    ${months.map((mk, i) => {
+      const monthNet = byMonth[mk].reduce((s, e) => s + (e.transferDirection === 'in' ? e.amount : -e.amount), 0);
+      return `
+      ${collapseHeader('month', new Date(mk+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), monthNet, 0, i===0)}
+      <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
+    `;
+    }).join('')}
+  `;
+}
+async function selectReportsCategoryTransfers(categoryId) {
+  const allEntries = await DB.getAll('entries');
+  const matches = allEntries.filter((e) => e.type === 'transfer' && e.categoryId === categoryId);
+  const categories = await DB.getAll('categories');
+  const cat = categories.find((c) => c.id === categoryId) || {};
+  renderReportsPopup(matches, cat.name || '', `${matches.length} entr${matches.length===1?'y':'ies'}`);
 }
 
 async function openReportsCategoryConfig() {
@@ -1193,6 +1268,17 @@ async function renderCategoryForm() {
       <option value="project" ${window.__categoryConditionalDraft === 'project' ? 'selected' : ''}>Project</option>
     </select>
 
+    <div class="divider"></div>
+    <p class="section-label">Defaults</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px">Pre-fills these when you pick this category on a new entry. Still editable per entry.</p>
+    <div class="field"><label class="field-label">Default store</label>
+      <select id="cat_defaultStore">
+        <option value="">None</option>
+        ${(await DB.getAll('payees')).sort((a,b)=>a.name.localeCompare(b.name)).map((p) => `<option value="${p.id}" ${existing && existing.defaultStoreId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field" style="margin-bottom:20px"><label class="field-label">Default amount</label><input type="number" step="0.01" id="cat_defaultAmount" placeholder="Leave blank if it varies" value="${existing && existing.defaultAmount ? existing.defaultAmount : ''}"></div>
+
     <button class="btn btn-primary" onclick="saveCategoryForm()">Save category</button>
     ${existing ? `<button class="btn" style="margin-top:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideCategory('${existing.id}')">Hide from lists</button>` : ''}
   `;
@@ -1225,6 +1311,8 @@ async function saveCategoryForm() {
   cat.type = window.__categoryTypeDraft || 'expense';
   cat.icon = window.__categoryIconDraft || 'ti-tag';
   cat.conditionalField = document.getElementById('cat_conditional').value;
+  cat.defaultStoreId = document.getElementById('cat_defaultStore').value || null;
+  cat.defaultAmount = parseFloat(document.getElementById('cat_defaultAmount').value) || null;
   cat.synced = false;
   await DB.put('categories', cat);
   Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
@@ -1469,8 +1557,8 @@ async function renderAddIssue() {
   const src = jazzDuplicate;
 
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Log an issue</span></div>
-    <div class="field"><label class="field-label">Started</label><input type="date" id="j_date" value="${todayStr()}"></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit' : 'Log an'} issue</span></div>
+    <div class="field"><label class="field-label">Started</label><input type="date" id="j_date" value="${src ? src.startDate : todayStr()}"></div>
     <div class="field"><label class="field-label">Issue type</label>
       <select id="j_type" onchange="if(this.value==='__new') openIssueTypeModal(true)">
         ${issueTypes.map((t) => `<option value="${t.id}" ${src && src.typeId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
@@ -1488,11 +1576,11 @@ async function renderAddIssue() {
       <button class="btn-toggle" onclick="selectStatus(this,'ongoing')">Ongoing</button>
       <button class="btn-toggle" onclick="selectStatus(this,'resolved')">Resolved</button>
     </div>
-    <div class="field"><label class="field-label">Description</label><textarea id="j_description" placeholder="What's happening, when it started, any pattern..."></textarea></div>
+    <div class="field"><label class="field-label">Description</label><textarea id="j_description" placeholder="What's happening, when it started, any pattern...">${src ? esc(src.description||'') : ''}</textarea></div>
 
     <div class="field-row" style="margin-bottom:14px">
-      <div><label class="field-label">Weather</label><select id="j_weather"><option>Sunny</option><option>Cloudy</option><option>Rainy</option><option>Snowing</option></select></div>
-      <div><label class="field-label">Stool</label><select id="j_stool"><option>Normal</option><option>Diarrhea</option></select></div>
+      <div><label class="field-label">Weather</label><select id="j_weather">${['Sunny','Cloudy','Rainy','Snowing'].map((w) => `<option ${src && src.weather===w?'selected':''}>${w}</option>`).join('')}</select></div>
+      <div><label class="field-label">Stool</label><select id="j_stool">${['Normal','Diarrhea'].map((s) => `<option ${src && src.stool===s?'selected':''}>${s}</option>`).join('')}</select></div>
     </div>
     <label class="field-label">Snow covered</label>
     <div class="btn-toggle-row" id="snowToggle">
@@ -1503,43 +1591,77 @@ async function renderAddIssue() {
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="field-label" style="margin:0">Medication given</label>
-        <button type="button" class="chip" id="medToggle" onclick="toggleMed()">No</button>
+        <button type="button" class="chip" id="medToggle" onclick="toggleMed()">${src && src.medGiven ? 'Yes' : 'No'}</button>
       </div>
-      <div id="medFields" style="display:none">
-        <input id="j_medName" placeholder="Medication name (include dosage/frequency here)" style="margin-bottom:8px">
-        <input id="j_medCost" type="number" step="0.01" placeholder="Cost (optional)">
+      <div id="medFields" style="display:${src && src.medGiven ? 'block' : 'none'}">
+        <input id="j_medName" placeholder="Medication name (include dosage/frequency here)" style="margin-bottom:8px" value="${src ? esc(src.medName||'') : ''}">
+        <input id="j_medCost" type="number" step="0.01" placeholder="Cost (optional)" value="${src && src.medCost ? src.medCost : ''}">
       </div>
     </div>
 
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="field-label" style="margin:0">Vet visit linked</label>
-        <button type="button" class="chip" id="vetToggle" onclick="toggleVet()">No</button>
+        <button type="button" class="chip" id="vetToggle" onclick="toggleVet()">${src && src.vetVisit ? 'Yes' : 'No'}</button>
       </div>
-      <div id="vetFields" style="display:none">
-        <select id="j_vetClinic" style="margin-bottom:8px" onchange="if(this.value==='__new') promptNewVetClinic()">
-          ${vetClinics.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+      <div id="vetFields" style="display:${src && src.vetVisit ? 'block' : 'none'}">
+        <select id="j_vetClinic" style="margin-bottom:8px" onchange="if(this.value==='__new') openVetClinicModal()">
+          ${vetClinics.map((c) => `<option value="${c.id}" ${src && src.vetClinicId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
           <option value="__new">+ Add clinic</option>
         </select>
-        <input id="j_vetCost" type="number" step="0.01" placeholder="Cost (optional)">
+        <input id="j_vetCost" type="number" step="0.01" placeholder="Cost (optional)" value="${src && src.vetCost ? src.vetCost : ''}">
       </div>
     </div>
 
     <label class="field-label">Photos</label>
     <div class="photo-grid" id="jazzPhotoGrid">${renderPhotoGrid(jazzPhotoDrafts, 'jazz')}</div>
 
-    <button class="btn btn-primary" onclick="saveIssue()">Save entry</button>
+    <button class="btn btn-primary" onclick="saveIssue()">${src && src.__editId ? 'Save changes' : 'Save entry'}</button>
   `;
-  selectSeverity(document.querySelector('#severityToggle .btn-toggle'), 'Mild');
-  selectStatus(document.querySelector('#statusToggle .btn-toggle'), 'ongoing');
-  selectSnow(document.querySelector('#snowToggle .btn-toggle'), false);
+  selectSeverity(document.querySelector('#severityToggle .btn-toggle'), src ? src.severity : 'Mild');
+  selectStatus(document.querySelector('#statusToggle .btn-toggle'), src ? src.status : 'ongoing');
+  selectSnow(document.querySelector('#snowToggle .btn-toggle'), src ? !!src.snowCovered : false);
+  window.__medGiven = src ? !!src.medGiven : false;
+  window.__vetVisit = src ? !!src.vetVisit : false;
+  if (src && src.__editId) {
+    // Correctly select the matching toggle button (not always the first) when editing
+    const sevIdx = { Mild: 0, Moderate: 1, Severe: 2 }[src.severity] || 0;
+    selectSeverity(document.querySelectorAll('#severityToggle .btn-toggle')[sevIdx], src.severity);
+    const statIdx = src.status === 'resolved' ? 1 : 0;
+    selectStatus(document.querySelectorAll('#statusToggle .btn-toggle')[statIdx], src.status);
+    const snowIdx = src.snowCovered ? 1 : 0;
+    selectSnow(document.querySelectorAll('#snowToggle .btn-toggle')[snowIdx], !!src.snowCovered);
+  }
 }
 
-function selectSeverity(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__severity = val; }
-function selectStatus(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__status = val; }
-function selectSnow(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__snowCovered = val; }
+function selectSeverity(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); if (btn) btn.classList.add('active-neutral'); window.__severity = val; }
+function selectStatus(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); if (btn) btn.classList.add('active-neutral'); window.__status = val; }
+function selectSnow(btn, val) { btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); if (btn) btn.classList.add('active-neutral'); window.__snowCovered = val; }
 function toggleMed() { window.__medGiven = !window.__medGiven; document.getElementById('medToggle').textContent = window.__medGiven ? 'Yes' : 'No'; document.getElementById('medFields').style.display = window.__medGiven ? 'block' : 'none'; }
 function toggleVet() { window.__vetVisit = !window.__vetVisit; document.getElementById('vetToggle').textContent = window.__vetVisit ? 'Yes' : 'No'; document.getElementById('vetFields').style.display = window.__vetVisit ? 'block' : 'none'; }
+
+function openVetClinicModal() {
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Add vet clinic</p>
+    <div class="field"><label class="field-label">Name</label><input id="vc_name" placeholder="e.g. Carleton Place Veterinary Hospital"></div>
+    <button class="btn btn-primary" onclick="saveVetClinic()">Save</button>
+  `;
+  openModal();
+}
+async function saveVetClinic() {
+  const name = document.getElementById('vc_name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  const c = { id: uid(), name, synced: false };
+  await DB.put('vetClinics', c);
+  Sync.pushEntry('VetClinics', c).then(() => DB.put('vetClinics', c));
+  closeModal();
+  renderAddIssue().then(() => {
+    const btn = document.getElementById('vetToggle');
+    if (btn && btn.textContent !== 'Yes') toggleVet();
+    const sel = document.getElementById('j_vetClinic'); if (sel) sel.value = c.id;
+  });
+}
 
 function renderPhotoGrid(drafts, prefix) {
   let html = drafts.map((d, i) => `<div class="photo-slot"><img src="${d}"></div>`).join('');
@@ -1650,16 +1772,14 @@ async function restoreIssueType(id) {
   renderIssueTypesManager();
 }
 
-function promptNewVetClinic() {
-  const name = prompt('Vet clinic name:'); if (!name) return;
-  DB.put('vetClinics', { id: uid(), name }).then(renderAddIssue);
-}
-
 async function saveIssue() {
   const typeId = document.getElementById('j_type').value;
   const startDate = document.getElementById('j_date').value || todayStr();
+  const isEdit = jazzDuplicate && jazzDuplicate.__editId;
   const issue = {
-    id: uid(), typeId, startDate, endDate: null,
+    id: isEdit ? jazzDuplicate.__editId : uid(),
+    typeId, startDate,
+    endDate: isEdit ? jazzDuplicate.endDate : null,
     severity: window.__severity || 'Mild', status: window.__status || 'ongoing',
     description: document.getElementById('j_description').value.trim(),
     weather: document.getElementById('j_weather').value,
@@ -1672,13 +1792,21 @@ async function saveIssue() {
     vetClinicId: window.__vetVisit ? document.getElementById('j_vetClinic').value : null,
     vetCost: window.__vetVisit ? parseFloat(document.getElementById('j_vetCost').value) || 0 : 0,
     photos: [...jazzPhotoDrafts],
-    updates: [],
+    updates: isEdit ? jazzDuplicate.updates || [] : [],
     synced: false
   };
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
-  jazzPhotoDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false;
-  currentView = 'main'; route();
+  jazzPhotoDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
+  currentView = isEdit ? 'issueDetail' : 'main';
+  if (isEdit) currentIssueId = issue.id;
+  route();
+}
+function editIssue(id) {
+  DB.get('jazzIssues', id).then((issue) => {
+    jazzDuplicate = { ...issue, __editId: issue.id };
+    currentView = 'addIssue'; route();
+  });
 }
 
 let currentIssueId = null;
@@ -1700,6 +1828,7 @@ async function renderIssueDetail() {
     <div class="thread-item"><p class="meta">${fmtDate(issue.startDate)} · ${issue.severity}</p><p class="note">${esc(issue.description||'')}</p>${issue.medGiven ? `<p class="meta">Medication: ${esc(issue.medName)}</p>` : ''}${issue.weather || issue.stool || issue.snowCovered ? `<p class="meta">${[issue.weather, issue.snowCovered ? 'Snow covered' : '', issue.stool ? 'Stool: ' + issue.stool : ''].filter(Boolean).join(' · ')}</p>` : ''}</div>
     ${(issue.updates||[]).map((u) => `<div class="thread-item"><p class="meta">${fmtDate(u.date)} · ${u.severity}</p><p class="note">${esc(u.note)}</p></div>`).join('')}
 
+    <button class="btn" style="margin-bottom:10px" onclick="editIssue('${issue.id}')"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="margin-bottom:10px" onclick="addIssueUpdate()"><i class="ti ti-plus"></i> Add update</button>
     ${issue.status === 'ongoing' ? `<button class="btn" style="background:var(--sage-soft);color:#0F6E56;border-color:var(--sage)" onclick="markIssueResolved()"><i class="ti ti-check"></i> Mark resolved</button>` : ''}
   `;

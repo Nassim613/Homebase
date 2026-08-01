@@ -65,11 +65,15 @@ async function filterGarageVehicles(q) {
   grid.innerHTML = cards.join('') || '<div class="empty-state">No matches.</div>';
 }
 
-// ---------- Add vehicle ----------
-function goAddVehicle() { currentView = 'addVehicle'; route(); }
+// ---------- Add / Edit vehicle ----------
+let vehicleEditId = null;
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
+  const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
+  if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goGarageMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Add vehicle</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${existing ? `openVehicle('${existing.id}')` : 'goGarageMain()'}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} vehicle</span></div>
     <label class="field-label">Photos (up to 6)</label>
     <div class="photo-grid" id="garagePhotoGrid">${renderPhotoGrid(garagePhotoDrafts, 'garage')}</div>
     <label class="field-label">Ownership picture</label>
@@ -78,29 +82,33 @@ async function renderAddVehicle() {
     </div>
     <input type="file" id="ownershipInput" accept="image/*,.pdf" style="display:none" onchange="handleOwnershipUpload(event)">
 
-    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Year</label><input id="v_year" placeholder="2009"></div><div><label class="field-label">Make</label><input id="v_make" placeholder="Honda"></div></div>
-    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Model</label><input id="v_model" placeholder="Ridgeline"></div><div><label class="field-label">Trim</label><input id="v_trim" placeholder="Optional"></div></div>
-    <div class="field"><label class="field-label">VIN</label><input id="v_vin" placeholder="Optional"></div>
+    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Year</label><input id="v_year" placeholder="2009" value="${existing ? esc(existing.year||'') : ''}"></div><div><label class="field-label">Make</label><input id="v_make" placeholder="Honda" value="${existing ? esc(existing.make||'') : ''}"></div></div>
+    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Model</label><input id="v_model" placeholder="Ridgeline" value="${existing ? esc(existing.model||'') : ''}"></div><div><label class="field-label">Trim</label><input id="v_trim" placeholder="Optional" value="${existing ? esc(existing.trim||'') : ''}"></div></div>
+    <div class="field"><label class="field-label">VIN</label><input id="v_vin" placeholder="Optional" value="${existing ? esc(existing.vin||'') : ''}"></div>
     <label class="field-label">US or Canada</label>
-    <div class="btn-toggle-row" id="usCanToggle"><button class="btn-toggle active-neutral" onclick="selectSimpleToggle(this,'usCanToggle','usCan','Canadian')">Canadian</button><button class="btn-toggle" onclick="selectSimpleToggle(this,'usCanToggle','usCan','US')">US</button></div>
+    <div class="btn-toggle-row" id="usCanToggle"><button class="btn-toggle" onclick="selectSimpleToggle(this,'usCanToggle','usCan','Canadian')">Canadian</button><button class="btn-toggle" onclick="selectSimpleToggle(this,'usCanToggle','usCan','US')">US</button></div>
     <label class="field-label">Transmission</label>
-    <div class="btn-toggle-row" id="transToggle"><button class="btn-toggle" onclick="selectSimpleToggle(this,'transToggle','trans','Manual')">Manual</button><button class="btn-toggle active-neutral" onclick="selectSimpleToggle(this,'transToggle','trans','Automatic')">Automatic</button><button class="btn-toggle" onclick="selectSimpleToggle(this,'transToggle','trans','CVT')">CVT</button></div>
-    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Color</label><input id="v_color" placeholder="e.g. Red"></div><div><label class="field-label">Condition</label><input id="v_condition" placeholder="e.g. Rebuilt title"></div></div>
+    <div class="btn-toggle-row" id="transToggle"><button class="btn-toggle" onclick="selectSimpleToggle(this,'transToggle','trans','Manual')">Manual</button><button class="btn-toggle" onclick="selectSimpleToggle(this,'transToggle','trans','Automatic')">Automatic</button><button class="btn-toggle" onclick="selectSimpleToggle(this,'transToggle','trans','CVT')">CVT</button></div>
+    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Color</label><input id="v_color" placeholder="e.g. Red" value="${existing ? esc(existing.color||'') : ''}"></div><div><label class="field-label">Condition</label><input id="v_condition" placeholder="e.g. Rebuilt title" value="${existing ? esc(existing.condition||'') : ''}"></div></div>
 
     <div class="divider"></div>
     <p class="section-label">Bought from</p>
-    <div class="field"><label class="field-label">Seller name</label><input id="v_sellerName" placeholder="Optional"></div>
-    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Seller email</label><input id="v_sellerEmail" placeholder="Optional"></div><div><label class="field-label">Seller phone</label><input id="v_sellerPhone" placeholder="Optional"></div></div>
-    <div class="field"><label class="field-label">Date bought</label><input type="date" id="v_dateBought" value="${todayStr()}"></div>
-    <div class="field-row" style="margin-bottom:20px"><div><label class="field-label">Bought for</label><input type="number" step="0.01" id="v_boughtFor" placeholder="$0.00"></div><div><label class="field-label">Mileage bought at</label><input type="number" id="v_mileageBought" placeholder="km"></div></div>
+    <div class="field"><label class="field-label">Seller name</label><input id="v_sellerName" placeholder="Optional" value="${existing ? esc(existing.sellerName||'') : ''}"></div>
+    <div class="field-row" style="margin-bottom:14px"><div><label class="field-label">Seller email</label><input id="v_sellerEmail" placeholder="Optional" value="${existing ? esc(existing.sellerEmail||'') : ''}"></div><div><label class="field-label">Seller phone</label><input id="v_sellerPhone" placeholder="Optional" value="${existing ? esc(existing.sellerPhone||'') : ''}"></div></div>
+    <div class="field"><label class="field-label">Date bought</label><input type="date" id="v_dateBought" value="${existing ? existing.dateBought : todayStr()}"></div>
+    <div class="field-row" style="margin-bottom:20px"><div><label class="field-label">Bought for</label><input type="number" step="0.01" id="v_boughtFor" placeholder="$0.00" value="${existing ? existing.boughtFor : ''}"></div><div><label class="field-label">Mileage bought at</label><input type="number" id="v_mileageBought" placeholder="km" value="${existing && existing.mileageBoughtAt ? existing.mileageBoughtAt : ''}"></div></div>
 
-    <button class="btn btn-primary" onclick="saveVehicle()">Add vehicle</button>
+    <button class="btn btn-primary" onclick="saveVehicle()">${existing ? 'Save changes' : 'Add vehicle'}</button>
   `;
-  window.__usCan = 'Canadian'; window.__trans = 'Automatic';
+  window.__usCan = existing ? existing.usOrCanada : 'Canadian';
+  window.__trans = existing ? existing.transmission : 'Automatic';
+  selectSimpleToggle(document.querySelector(`#usCanToggle button:nth-child(${window.__usCan==='US'?2:1})`), 'usCanToggle', 'usCan', window.__usCan);
+  const transIdx = window.__trans === 'Manual' ? 1 : window.__trans === 'CVT' ? 3 : 2;
+  selectSimpleToggle(document.querySelector(`#transToggle button:nth-child(${transIdx})`), 'transToggle', 'trans', window.__trans);
 }
 function selectSimpleToggle(btn, groupId, key, val) {
   document.getElementById(groupId).querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
-  btn.classList.add('active-neutral');
+  if (btn) btn.classList.add('active-neutral');
   window['__' + key] = val;
 }
 function handleOwnershipUpload(e) {
@@ -116,8 +124,10 @@ async function saveVehicle() {
   const trim = document.getElementById('v_trim').value.trim();
   const name = [year, make, model, trim].filter(Boolean).join(' ');
   if (!name) { alert('At least year, make, or model is needed.'); return; }
-  const vehicle = {
-    id: uid(), name, year, make, model, trim,
+  const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
+  const vehicle = existing || { id: uid(), status: 'owned', soldFor: null, dateSold: null, buyerName: null, buyerPhone: null };
+  Object.assign(vehicle, {
+    name, year, make, model, trim,
     vin: document.getElementById('v_vin').value.trim(),
     usOrCanada: window.__usCan, transmission: window.__trans,
     color: document.getElementById('v_color').value.trim(),
@@ -129,14 +139,13 @@ async function saveVehicle() {
     dateBought: document.getElementById('v_dateBought').value || todayStr(),
     boughtFor: parseFloat(document.getElementById('v_boughtFor').value) || 0,
     mileageBoughtAt: parseFloat(document.getElementById('v_mileageBought').value) || null,
-    status: 'owned', soldFor: null, dateSold: null, buyerName: null, buyerPhone: null,
     synced: false
-  };
+  });
   await DB.put('vehicles', vehicle);
   const { photos, ownershipDoc, ...syncable } = vehicle; // photos/doc stay local-only; syncing base64 images would blow past Sheet cell limits
   Sync.pushEntry('Vehicles', syncable).then(() => { vehicle.synced = true; DB.put('vehicles', vehicle); });
-  garagePhotoDrafts = []; garageOwnershipDraft = null;
-  currentView = 'main'; route();
+  garagePhotoDrafts = []; garageOwnershipDraft = null; vehicleEditId = null;
+  currentView = existing ? 'vehicleDetail' : 'main'; route();
 }
 
 // ---------- Vehicle detail ----------
@@ -154,6 +163,7 @@ async function renderVehicleDetail() {
   $main.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div class="back" style="cursor:pointer" onclick="goGarageMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:16px;margin-left:6px">${esc(vehicle.name)}</span></div>
+      <i class="ti ti-edit" style="font-size:18px;color:var(--ink-soft);cursor:pointer" onclick="goEditVehicle('${vehicle.id}')"></i>
     </div>
     <div style="width:100%;height:120px;background:var(--surface-raised);border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
       ${vehicle.photos && vehicle.photos[0] ? `<img src="${vehicle.photos[0]}" style="width:100%;height:100%;object-fit:cover;border-radius:12px">` : '<i class="ti ti-car" style="font-size:28px;color:var(--ink-soft)"></i>'}
@@ -184,7 +194,7 @@ async function renderVehicleDetail() {
 function renderCostRow(c, typeById, repairById) {
   const type = typeById[c.expenseTypeId] || {};
   const repair = c.repairTypeId ? (repairById[c.repairTypeId] || {}).name : '';
-  return `<div class="entry-row">
+  return `<div class="entry-row" onclick="openCostDetail('${c.id}')">
     <div class="entry-icon"><i class="ti ${type.icon || 'ti-tool'}" style="color:var(--gold)"></i></div>
     <div class="entry-body">
       <div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}</span><span class="entry-value">${c.totalCost ? fmtMoney(c.totalCost) : '—'}</span></div>
@@ -194,72 +204,164 @@ function renderCostRow(c, typeById, repairById) {
   </div>`;
 }
 
+let costDetailId = null;
+async function openCostDetail(id) {
+  costDetailId = id;
+  const cost = await DB.get('garageCosts', id);
+  const expenseTypes = await DB.getAll('expenseTypes');
+  const repairTypes = await DB.getAll('repairTypes');
+  const type = expenseTypes.find((t) => t.id === cost.expenseTypeId) || {};
+  const repair = cost.repairTypeId ? (repairTypes.find((t) => t.id === cost.repairTypeId) || {}).name : '';
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">${esc(type.name||'')}${repair?' — '+esc(repair):''}</p>
+    <div class="card tight">
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDate(cost.date)}</span></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cost</span><span style="font-size:12px">${cost.totalCost ? fmtMoney(cost.totalCost) : '—'}</span></div>
+      ${cost.mileage ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Mileage</span><span style="font-size:12px">${cost.mileage.toLocaleString()} km</span></div>` : ''}
+      ${cost.comments ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Comments</span><span style="font-size:12px;text-align:right;max-width:60%">${esc(cost.comments)}</span></div>` : ''}
+    </div>
+    <button class="btn" style="margin-bottom:10px" onclick="editCostFromDetail()"><i class="ti ti-edit"></i> Edit</button>
+    <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteCostFromDetail()"><i class="ti ti-trash"></i> Delete</button>
+  `;
+  openModal();
+}
+function editCostFromDetail() {
+  costEditId = costDetailId;
+  closeModal();
+  currentView = 'addCost'; route();
+}
+async function deleteCostFromDetail() {
+  if (!confirm('Delete this cost entry? This can\'t be undone locally.')) return;
+  await DB.delete('garageCosts', costDetailId);
+  closeModal();
+  renderVehicleDetail();
+}
+
 // ---------- Add cost ----------
-function goAddCost() { currentView = 'addCost'; route(); }
+let costEditId = null;
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
   const repairTypes = await DB.getAll('repairTypes');
   const places = await DB.getAll('garagePlaces');
+  const existing = costEditId ? await DB.get('garageCosts', costEditId) : null;
+  if (existing) garagePhotoDrafts = [...(existing.photos || [])];
 
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="openVehicle('${currentVehicleId}')"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Add a cost</span></div>
+    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="${existing ? `openVehicle('${currentVehicleId}')` : `openVehicle('${currentVehicleId}')`}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} a cost</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">${esc(vehicle.name)}</p>
-    <div class="field"><label class="field-label">Date</label><input type="date" id="c_date" value="${todayStr()}"></div>
+    <div class="field"><label class="field-label">Date</label><input type="date" id="c_date" value="${existing ? existing.date : todayStr()}"></div>
     <div class="field"><label class="field-label">Expense type</label>
       <select id="c_expenseType" onchange="onExpenseTypeChange()">
-        ${expenseTypes.map((t) => `<option value="${t.id}" data-repair="${t.hasRepairSubtype?1:0}">${esc(t.name)}</option>`).join('')}
+        ${expenseTypes.map((t) => `<option value="${t.id}" data-repair="${t.hasRepairSubtype?1:0}" ${existing && existing.expenseTypeId===t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
         <option value="__new">+ Add expense type</option>
       </select>
     </div>
     <div id="repairTypeArea"></div>
-    <div class="field"><label class="field-label">Total cost</label><input type="number" step="0.01" id="c_cost" placeholder="$0.00 (optional)"></div>
-    <div class="field"><label class="field-label">Mileage</label><input type="number" id="c_mileage" placeholder="km at time of service"></div>
+    <div class="field"><label class="field-label">Total cost</label><input type="number" step="0.01" id="c_cost" placeholder="$0.00 (optional)" value="${existing && existing.totalCost ? existing.totalCost : ''}"></div>
+    <div class="field"><label class="field-label">Mileage</label><input type="number" id="c_mileage" placeholder="km at time of service" value="${existing && existing.mileage ? existing.mileage : ''}"></div>
     <div class="field"><label class="field-label">Place</label>
-      <select id="c_place" onchange="if(this.value==='__new') promptNewPlace()">
-        ${places.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+      <select id="c_place" onchange="if(this.value==='__new') openGaragePlaceModal()">
+        ${places.map((p) => `<option value="${p.id}" ${existing && existing.place===p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
         <option value="__new">+ Add place</option>
       </select>
     </div>
-    <div class="field"><label class="field-label">Comments</label><textarea id="c_comments" placeholder="What was done, what to check next time..."></textarea></div>
+    <div class="field"><label class="field-label">Comments</label><textarea id="c_comments" placeholder="What was done, what to check next time...">${existing ? esc(existing.comments||'') : ''}</textarea></div>
     <label class="field-label">Receipt & photos</label>
     <div class="photo-grid" id="garage2PhotoGrid">${renderPhotoGrid(garagePhotoDrafts, 'garage2')}</div>
-    <button class="btn btn-primary" onclick="saveCost()">Save cost</button>
+    <button class="btn btn-primary" onclick="saveCost()">${existing ? 'Save changes' : 'Save cost'}</button>
   `;
   window.__repairTypesCache = repairTypes;
   window.__expenseTypesCache = expenseTypes;
   onExpenseTypeChange();
+  if (existing && existing.repairTypeId) setTimeout(() => { const sel = document.getElementById('c_repairType'); if (sel) sel.value = existing.repairTypeId; }, 0);
 }
 function onExpenseTypeChange() {
   const sel = document.getElementById('c_expenseType');
   const val = sel.value;
-  if (val === '__new') { promptNewExpenseType(); return; }
+  if (val === '__new') { openGarageExpenseTypeModal(); return; }
   const opt = sel.selectedOptions[0];
   const area = document.getElementById('repairTypeArea');
   if (opt && opt.dataset.repair === '1') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-settings"></i> Repair type</label><select id="c_repairType">${(window.__repairTypesCache||[]).map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}<option value="__new">+ Add type</option></select></div>`;
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-settings"></i> Repair type</label><select id="c_repairType" onchange="if(this.value==='__new') openGarageRepairTypeModal()">${(window.__repairTypesCache||[]).map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}<option value="__new">+ Add type</option></select></div>`;
   } else {
     area.innerHTML = '';
   }
 }
-function promptNewExpenseType() {
-  const name = prompt('New expense type name:'); if (!name) return;
-  const hasRepair = confirm('Does this type need a repair subtype dropdown (like Mechanical Repairs)?');
-  DB.put('expenseTypes', { id: uid(), name, icon: 'ti-tool', hasRepairSubtype: hasRepair }).then(renderAddCost);
+
+// ---------- Modal forms for expense type / repair type / place ----------
+function openGarageExpenseTypeModal() {
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Add expense type</p>
+    <div class="field"><label class="field-label">Name</label><input id="get_name" placeholder="e.g. Detailing"></div>
+    <label class="field-label">Needs a repair subtype dropdown?</label>
+    <div class="btn-toggle-row" id="getRepairToggle">
+      <button type="button" class="btn-toggle active-neutral" onclick="selectGetRepair(this,false)">No</button>
+      <button type="button" class="btn-toggle" onclick="selectGetRepair(this,true)">Yes</button>
+    </div>
+    <button class="btn btn-primary" onclick="saveGarageExpenseType()">Save</button>
+  `;
+  window.__getHasRepair = false;
+  openModal();
 }
-function promptNewPlace() {
-  const name = prompt('Place name:'); if (!name) return;
-  DB.put('garagePlaces', { id: uid(), name }).then(renderAddCost);
+function selectGetRepair(btn, val) {
+  btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
+  btn.classList.add('active-neutral');
+  window.__getHasRepair = val;
 }
+async function saveGarageExpenseType() {
+  const name = document.getElementById('get_name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  const t = { id: uid(), name, icon: 'ti-tool', hasRepairSubtype: !!window.__getHasRepair, synced: false };
+  await DB.put('expenseTypes', t);
+  Sync.pushEntry('ExpenseTypes', t).then(() => DB.put('expenseTypes', t));
+  closeModal();
+  renderAddCost().then(() => { const sel = document.getElementById('c_expenseType'); if (sel) { sel.value = t.id; onExpenseTypeChange(); } });
+}
+function openGarageRepairTypeModal() {
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Add repair type</p>
+    <div class="field"><label class="field-label">Name</label><input id="grt_name" placeholder="e.g. Timing belt"></div>
+    <button class="btn btn-primary" onclick="saveGarageRepairType()">Save</button>
+  `;
+  openModal();
+}
+async function saveGarageRepairType() {
+  const name = document.getElementById('grt_name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  const t = { id: uid(), name, synced: false };
+  await DB.put('repairTypes', t);
+  Sync.pushEntry('RepairTypes', t).then(() => DB.put('repairTypes', t));
+  closeModal();
+  renderAddCost().then(() => { onExpenseTypeChange(); setTimeout(() => { const sel = document.getElementById('c_repairType'); if (sel) sel.value = t.id; }, 0); });
+}
+function openGaragePlaceModal() {
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Add place</p>
+    <div class="field"><label class="field-label">Name</label><input id="gp_name" placeholder="e.g. Canadian Tire"></div>
+    <button class="btn btn-primary" onclick="saveGaragePlace()">Save</button>
+  `;
+  openModal();
+}
+async function saveGaragePlace() {
+  const name = document.getElementById('gp_name').value.trim();
+  if (!name) { alert('Name is required.'); return; }
+  const p = { id: uid(), name, synced: false };
+  await DB.put('garagePlaces', p);
+  Sync.pushEntry('Places', p).then(() => DB.put('garagePlaces', p));
+  closeModal();
+  renderAddCost().then(() => { const sel = document.getElementById('c_place'); if (sel) sel.value = p.id; });
+}
+
 async function saveCost() {
   const repairSel = document.getElementById('c_repairType');
-  if (repairSel && repairSel.value === '__new') {
-    const name = prompt('New repair type name:');
-    if (name) await DB.put('repairTypes', { id: uid(), name });
-    renderAddCost(); return;
-  }
-  const cost = {
-    id: uid(), vehicleId: currentVehicleId,
+  const cost = costEditId ? await DB.get('garageCosts', costEditId) : { id: uid(), vehicleId: currentVehicleId };
+  Object.assign(cost, {
     date: document.getElementById('c_date').value || todayStr(),
     expenseTypeId: document.getElementById('c_expenseType').value,
     repairTypeId: repairSel ? repairSel.value : null,
@@ -269,11 +371,11 @@ async function saveCost() {
     comments: document.getElementById('c_comments').value.trim(),
     photos: [...garagePhotoDrafts],
     synced: false
-  };
+  });
   await DB.put('garageCosts', cost);
   const { photos, ...syncableCost } = cost;
   Sync.pushEntry('GarageCosts', syncableCost).then(() => { cost.synced = true; DB.put('garageCosts', cost); });
-  garagePhotoDrafts = [];
+  garagePhotoDrafts = []; costEditId = null;
   currentView = 'vehicleDetail'; route();
 }
 
