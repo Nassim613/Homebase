@@ -499,6 +499,54 @@ async function toggleReportsExcludeCategory(catId) {
   renderReportsStub();
 }
 
+let reportsView = 'overview'; // overview | table
+
+function setReportsView(v) { reportsView = v; renderReportsStub(); }
+
+async function openReportsFiltersModal() {
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Filters</p>
+
+    <label class="field-label">Type</label>
+    <div class="chip-row" id="filterTypeChips" style="margin-bottom:14px">
+      <button class="chip ${reportsTypeFilter==='expense'?'active':''}" onclick="setReportsTypeInModal('expense')">Expense</button>
+      <button class="chip ${reportsTypeFilter==='income'?'active':''}" onclick="setReportsTypeInModal('income')">Income</button>
+      <button class="chip ${reportsTypeFilter==='transfer'?'active':''}" onclick="setReportsTypeInModal('transfer')">Transfer</button>
+    </div>
+
+    <label class="field-label">Categories</label>
+    <div style="max-height:22vh;overflow-y:auto;margin-bottom:14px;border:1px solid var(--line);border-radius:10px;padding:0 10px">
+      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" ${reportsCategoryFilter.includes(c.id) ? 'checked' : ''} onchange="toggleReportsCategoryFilter('${c.id}')">
+        <span style="color:${categoryColor(c.id)};font-weight:600;font-size:13px">${esc(c.name)}</span>
+      </label>`).join('')}
+    </div>
+
+    <label class="field-label">Stores</label>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="chip" style="flex:1" onclick="selectUtilitiesFilter();openReportsFiltersModal();"><i class="ti ti-bolt"></i> Utilities</button>
+    </div>
+    <div style="max-height:22vh;overflow-y:auto;margin-bottom:20px;border:1px solid var(--line);border-radius:10px;padding:0 10px">
+      ${payees.map((p) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" ${reportsStoreFilter.includes(p.id) ? 'checked' : ''} onchange="toggleReportsStoreFilter('${p.id}')">
+        <span style="font-weight:600;font-size:13px">${esc(p.name)}</span>
+      </label>`).join('')}
+    </div>
+
+    <button class="btn btn-primary" style="margin-bottom:8px" onclick="closeModal();renderReportsStub();">Apply</button>
+    ${(reportsCategoryFilter.length || reportsStoreFilter.length || reportsTypeFilter) ? `<button class="btn" onclick="reportsCategoryFilter=[];reportsStoreFilter=[];reportsTypeFilter=null;closeModal();renderReportsStub();">Clear all filters</button>` : ''}
+  `;
+  openModal();
+}
+function setReportsTypeInModal(t) {
+  reportsTypeFilter = reportsTypeFilter === t ? null : t;
+  document.querySelectorAll('#filterTypeChips .chip').forEach((b) => b.classList.remove('active'));
+  event.currentTarget.classList.toggle('active', reportsTypeFilter === t);
+}
+
 async function renderReportsStub() {
   const allEntries = await DB.getAll('entries');
   const categories = await DB.getAll('categories');
@@ -543,6 +591,8 @@ async function renderReportsStub() {
   });
   const monthColLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
 
+  const activeFilterCount = reportsCategoryFilter.length + reportsStoreFilter.length + (reportsTypeFilter ? 1 : 0);
+
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
 
@@ -554,83 +604,81 @@ async function renderReportsStub() {
       <button class="chip ${reportsDateRange==='allTime'?'active':''}" onclick="setReportsDateRange('allTime')">All time</button>
     </div>
 
-    <div class="field-row" style="margin-bottom:10px">
-      <button class="btn" style="text-align:left" onclick="openReportsCategoryFilterModal()">
-        <i class="ti ti-tag"></i> ${reportsCategoryFilter.length ? `${reportsCategoryFilter.length} categor${reportsCategoryFilter.length===1?'y':'ies'} selected` : 'All categories'}
-      </button>
-      <button class="btn" style="text-align:left" onclick="openReportsStoreFilterModal()">
-        <i class="ti ti-building-store"></i> ${reportsStoreFilter.length ? `${reportsStoreFilter.length} store${reportsStoreFilter.length===1?'':'s'} selected` : 'All stores'}
-      </button>
-    </div>
-    <div class="chip-row">
-      <button class="chip" onclick="selectUtilitiesFilter()"><i class="ti ti-bolt"></i> Utilities</button>
-      <button class="chip ${reportsTypeFilter==='expense'?'active':''}" onclick="setReportsType('expense')">Expense</button>
-      <button class="chip ${reportsTypeFilter==='income'?'active':''}" onclick="setReportsType('income')">Income</button>
-      <button class="chip ${reportsTypeFilter==='transfer'?'active':''}" onclick="setReportsType('transfer')">Transfer</button>
+    <button class="btn" style="margin-bottom:14px;text-align:left" onclick="openReportsFiltersModal()">
+      <i class="ti ti-filter"></i> ${activeFilterCount ? `${activeFilterCount} filter${activeFilterCount===1?'':'s'} active` : 'Filters'}
+    </button>
+
+    <div class="btn-toggle-row" style="margin-bottom:16px">
+      <button class="btn-toggle ${reportsView==='overview'?'active-neutral':''}" onclick="setReportsView('overview')">Overview</button>
+      <button class="btn-toggle ${reportsView==='table'?'active-neutral':''}" onclick="setReportsView('table')">Category table</button>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
-      <div class="stat"><p class="label">Income (this mo.)</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(mIncome)}</p></div>
-      <div class="stat"><p class="label">Expenses (this mo.)</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(mExpense)}</p></div>
-      <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
-    </div>
-
-    ${reportsStoreFilter.length > 1 ? `
-      <p class="section-label">By store, in range</p>
-      <div style="display:grid;grid-template-columns:repeat(${Math.min(reportsStoreFilter.length,3)},1fr);gap:8px;margin-bottom:16px">
-        ${reportsStoreFilter.map((sid) => {
-          const p = payeeById[sid] || {};
-          const total = rangeEntries.filter((e) => e.storeId === sid).reduce((s, e) => s + e.amount, 0);
-          return `<div class="stat"><p class="label">${esc(p.name || '')}</p><p class="value" style="font-size:13px">${fmtMoney(total)}</p></div>`;
-        }).join('')}
+    ${reportsView === 'overview' ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+        <div class="stat"><p class="label">Income (this mo.)</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(mIncome)}</p></div>
+        <div class="stat"><p class="label">Expenses (this mo.)</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(mExpense)}</p></div>
+        <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
       </div>
-    ` : ''}
 
-    <p class="section-label">Income vs expense</p>
-    <div style="position:relative;width:100%;height:180px;margin-bottom:20px"><canvas id="reportsIncExpChart"></canvas></div>
+      ${reportsStoreFilter.length > 1 ? `
+        <p class="section-label">By store, in range</p>
+        <div style="display:grid;grid-template-columns:repeat(${Math.min(reportsStoreFilter.length,3)},1fr);gap:8px;margin-bottom:16px">
+          ${reportsStoreFilter.map((sid) => {
+            const p = payeeById[sid] || {};
+            const total = rangeEntries.filter((e) => e.storeId === sid).reduce((s, e) => s + e.amount, 0);
+            return `<div class="stat"><p class="label">${esc(p.name || '')}</p><p class="value" style="font-size:13px">${fmtMoney(total)}</p></div>`;
+          }).join('')}
+        </div>
+      ` : ''}
 
-    <p class="section-label">Top categories in range</p>
-    <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses in this range.</div>'}</div>
+      <p class="section-label">Income vs expense</p>
+      <div style="position:relative;width:100%;height:180px;margin-bottom:20px"><canvas id="reportsIncExpChart"></canvas></div>
 
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:16px 0 8px">
-      <p class="section-label" style="margin:0">Category by month</p>
-      <span style="font-size:11px;color:var(--ink-soft);cursor:pointer" onclick="openReportsCategoryConfig()">Configure</span>
-    </div>
-    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Tap a category name for its full range, or a cell for just that month</p>
-    <div style="overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
-      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
-        <thead><tr>
-          <th style="text-align:left;padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Category</th>
-          ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
-        </tr></thead>
-        <tbody>
-          ${tableCats.map((c) => `
-            <tr>
-              <td onclick="selectReportsCategoryAll('${c.id}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
-              ${monthKeys.map((mk2) => {
-                const val = pivot[c.id][mk2];
-                return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
-              }).join('')}
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
+      <p class="section-label">Top categories in range</p>
+      <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses in this range.</div>'}</div>
+    ` : `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+        <p class="section-label" style="margin:0">Category by month</p>
+        <span style="font-size:11px;color:var(--ink-soft);cursor:pointer" onclick="openReportsCategoryConfig()">Configure</span>
+      </div>
+      <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Tap a category name for its full range, or a cell for just that month</p>
+      <div style="overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
+        <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
+          <thead><tr>
+            <th style="text-align:left;padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Category</th>
+            ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
+          </tr></thead>
+          <tbody>
+            ${tableCats.map((c) => `
+              <tr>
+                <td onclick="selectReportsCategoryAll('${c.id}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
+                ${monthKeys.map((mk2) => {
+                  const val = pivot[c.id][mk2];
+                  return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
+                }).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
 
-    ${reportsCategoryFilter.length ? `
-      <p class="section-label">Entries for selected categories</p>
-      <div id="reportsEntriesList">${(() => {
-        const byMonth = {};
-        rangeEntries.slice().sort((a,b)=>b.date.localeCompare(a.date)).forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
-        const monthsList = Object.keys(byMonth).sort().reverse();
-        if (!monthsList.length) return '<div class="empty-state">No entries for these categories in this range.</div>';
-        return monthsList.map((mk2, i) => `
-          ${collapseHeader('month', new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), netOf(byMonth[mk2]), 0, i===0)}
-          <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk2].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
-        `).join('');
-      })()}</div>
-    ` : ''}
+      ${reportsCategoryFilter.length ? `
+        <p class="section-label">Entries for selected categories</p>
+        <div id="reportsEntriesList">${(() => {
+          const byMonth = {};
+          rangeEntries.slice().sort((a,b)=>b.date.localeCompare(a.date)).forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
+          const monthsList = Object.keys(byMonth).sort().reverse();
+          if (!monthsList.length) return '<div class="empty-state">No entries for these categories in this range.</div>';
+          return monthsList.map((mk2, i) => `
+            ${collapseHeader('month', new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), netOf(byMonth[mk2]), 0, i===0)}
+            <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk2].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
+          `).join('');
+        })()}</div>
+      ` : ''}
+    `}
   `;
+
+  if (reportsView !== 'overview') return; // no charts to draw on the Table tab
 
   const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
   if (reportsIncExpChart) reportsIncExpChart.destroy();
