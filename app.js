@@ -245,7 +245,7 @@ function renderMonthGroup(mk, monthEntries, catById, payeeById, openByDefault) {
   return `
     ${collapseHeader('month', label, netOf(monthEntries), 14, openByDefault)}
     <div class="collapse-body" style="display:${openByDefault ? 'block' : 'none'}">
-      ${days.map((d, di) => renderDayGroup(d, byDay[d], catById, payeeById, openByDefault && di === 0)).join('')}
+      ${days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById, openByDefault)).join('')}
     </div>
   `;
 }
@@ -421,42 +421,77 @@ function toggleReportsCategoryFilter(id) {
   if (idx === -1) reportsCategoryFilter.push(id); else reportsCategoryFilter.splice(idx, 1);
 }
 
-async function selectReportsCell(categoryId, mk2) {
-  const allEntries = await DB.getAll('entries');
+// ---------- Shared popup entry list (used by charts, table cells, category rows) ----------
+let reportsPopupState = null; // { entries, title, subtitle }
+let reportsPopupSortBy = 'date'; // date | amount
+
+function setReportsPopupSort(s) { reportsPopupSortBy = s; renderReportsPopupContent(); }
+
+async function renderReportsPopup(entries, title, subtitle) {
+  reportsPopupState = { entries, title, subtitle };
+  await renderReportsPopupContent();
+  openModal();
+}
+async function renderReportsPopupContent() {
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
-  const cat = catById[categoryId] || {};
-  const matches = allEntries.filter((e) => e.categoryId === categoryId && monthKey(e.date) === mk2).sort((a, b) => b.date.localeCompare(a.date));
-  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const { entries, title, subtitle } = reportsPopupState;
+  const sorted = reportsPopupSortBy === 'amount' ? [...entries].sort((a, b) => b.amount - a.amount) : [...entries].sort((a, b) => b.date.localeCompare(a.date));
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
-    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:2px">${esc(cat.name || '')}</p>
-    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">${label}</p>
-    <div>${matches.length ? matches.map((e) => renderEntryRow(e, catById, payeeById, false)).join('') : '<div class="empty-state">No entries.</div>'}</div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:2px">${esc(title)}</p>
+    ${subtitle ? `<p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">${subtitle}</p>` : ''}
+    <div class="chip-row" style="margin-bottom:12px">
+      <button class="chip ${reportsPopupSortBy==='date'?'active':''}" onclick="setReportsPopupSort('date')">Date</button>
+      <button class="chip ${reportsPopupSortBy==='amount'?'active':''}" onclick="setReportsPopupSort('amount')">Amount (highest first)</button>
+    </div>
+    <div>${sorted.length ? sorted.map((e) => renderEntryRow(e, catById, payeeById, true)).join('') : '<div class="empty-state">No entries.</div>'}</div>
   `;
-  openModal();
+  modalBackStack = renderReportsPopupContent;
+}
+
+async function selectReportsCell(categoryId, mk2) {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const cat = catById[categoryId] || {};
+  const matches = allEntries.filter((e) => e.categoryId === categoryId && monthKey(e.date) === mk2);
+  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  renderReportsPopup(matches, cat.name || '', label);
 }
 
 async function selectReportsCategoryAll(categoryId) {
   const allEntries = await DB.getAll('entries');
   const categories = await DB.getAll('categories');
-  const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
   const cat = catById[categoryId] || {};
   const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
-  const matches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= start && e.date <= end).sort((a, b) => b.date.localeCompare(a.date));
+  const matches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= start && e.date <= end);
   const total = matches.reduce((s, e) => s + e.amount, 0);
-  document.getElementById('modalSheet').innerHTML = `
-    <div class="sheet-handle"></div>
-    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:2px">${esc(cat.name || '')}</p>
-    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}</p>
-    <div>${matches.length ? matches.map((e) => renderEntryRow(e, catById, payeeById, true)).join('') : '<div class="empty-state">No entries.</div>'}</div>
-  `;
-  openModal();
+  renderReportsPopup(matches, cat.name || '', `${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}`);
 }
+
+async function selectReportsChartMonth(mk2, type) {
+  const allEntries = await DB.getAll('entries');
+  let entries = allEntries;
+  if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
+  if (reportsStoreFilter.length) entries = entries.filter((e) => reportsStoreFilter.includes(e.storeId));
+  const matches = entries.filter((e) => monthKey(e.date) === mk2 && e.type === type);
+  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  renderReportsPopup(matches, type[0].toUpperCase() + type.slice(1), label);
+}
+
+async function selectReportsChartCategory(categoryName) {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const catByName = Object.fromEntries(categories.map((c) => [c.name, c]));
+  const cat = catByName[categoryName];
+  if (!cat) return;
+  selectReportsCategoryAll(cat.id);
+}
+
 function getFinanceRangeBoundsForKeys(keys) {
   const sorted = [...keys].sort();
   return { start: sorted[0] + '-01', end: fmtISO(new Date(new Date(sorted[sorted.length - 1] + '-01').getFullYear(), new Date(sorted[sorted.length - 1] + '-01').getMonth() + 1, 0)) };
@@ -500,8 +535,24 @@ async function toggleReportsExcludeCategory(catId) {
 }
 
 let reportsView = 'overview'; // overview | table
+let reportsInlineSortBy = 'date'; // date | amount
 
 function setReportsView(v) { reportsView = v; renderReportsStub(); }
+function setReportsInlineSort(s) { reportsInlineSortBy = s; renderReportsStub(); }
+function renderReportsInlineEntries(rangeEntries, catById, payeeById) {
+  if (!rangeEntries.length) return '<div class="empty-state">No entries for these categories in this range.</div>';
+  if (reportsInlineSortBy === 'amount') {
+    const sorted = [...rangeEntries].sort((a, b) => b.amount - a.amount);
+    return sorted.map((e) => renderEntryRow(e, catById, payeeById, true)).join('');
+  }
+  const byMonth = {};
+  rangeEntries.slice().sort((a, b) => b.date.localeCompare(a.date)).forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
+  const monthsList = Object.keys(byMonth).sort().reverse();
+  return monthsList.map((mk2, i) => `
+    ${collapseHeader('month', new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), netOf(byMonth[mk2]), 0, i===0)}
+    <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk2].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
+  `).join('');
+}
 
 async function openReportsFiltersModal() {
   const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
@@ -663,17 +714,14 @@ async function renderReportsStub() {
       </div>
 
       ${reportsCategoryFilter.length ? `
-        <p class="section-label">Entries for selected categories</p>
-        <div id="reportsEntriesList">${(() => {
-          const byMonth = {};
-          rangeEntries.slice().sort((a,b)=>b.date.localeCompare(a.date)).forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
-          const monthsList = Object.keys(byMonth).sort().reverse();
-          if (!monthsList.length) return '<div class="empty-state">No entries for these categories in this range.</div>';
-          return monthsList.map((mk2, i) => `
-            ${collapseHeader('month', new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), netOf(byMonth[mk2]), 0, i===0)}
-            <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk2].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
-          `).join('');
-        })()}</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+          <p class="section-label" style="margin:0">Entries for selected categories</p>
+        </div>
+        <div class="chip-row" style="margin-bottom:12px">
+          <button class="chip ${reportsInlineSortBy==='date'?'active':''}" onclick="setReportsInlineSort('date')">Date</button>
+          <button class="chip ${reportsInlineSortBy==='amount'?'active':''}" onclick="setReportsInlineSort('amount')">Amount (highest first)</button>
+        </div>
+        <div id="reportsEntriesList">${renderReportsInlineEntries(rangeEntries, catById, payeeById)}</div>
       ` : ''}
     `}
   `;
@@ -688,14 +736,29 @@ async function renderReportsStub() {
       { label: 'Income', data: incomeByMonth, backgroundColor: '#008300', borderRadius: 4 },
       { label: 'Expense', data: expenseByMonth, backgroundColor: '#C9564F', borderRadius: 4 }
     ] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { ticks: { color: muted } } } }
+    options: {
+      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { ticks: { color: muted } } },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        const type = els[0].datasetIndex === 0 ? 'income' : 'expense';
+        selectReportsChartMonth(chartMonthKeys[els[0].index], type);
+      }
+    }
   });
   if (topCats.length) {
     if (reportsCatChart) reportsCatChart.destroy();
     reportsCatChart = new Chart(document.getElementById('reportsCatChart'), {
       type: 'bar',
       data: { labels: topCats.map((c) => c[0]), datasets: [{ data: topCats.map((c) => c[1]), backgroundColor: '#E3A94E', borderRadius: 4 }] },
-      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: muted } }, y: { grid: { display: false }, ticks: { color: muted } } } }
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { x: { ticks: { color: muted } }, y: { grid: { display: false }, ticks: { color: muted } } },
+        onClick: (evt, els) => {
+          if (!els.length) return;
+          selectReportsChartCategory(topCats[els[0].index][0]);
+        }
+      }
     });
   }
 }
@@ -721,8 +784,9 @@ async function openReportsCategoryConfig() {
 let currentEntryId = null;
 function openEntryDetail(id) { currentEntryId = id; renderEntryDetail(); }
 
+let modalBackStack = null;
 function openModal() { document.getElementById('modalOverlay').style.display = 'flex'; }
-function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; document.getElementById('modalSheet').innerHTML = ''; }
+function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; document.getElementById('modalSheet').innerHTML = ''; modalBackStack = null; }
 
 async function renderEntryDetail() {
   const entry = await DB.get('entries', currentEntryId);
@@ -766,7 +830,7 @@ async function renderEntryDetail() {
     <button class="btn" style="margin-bottom:10px" onclick="editEntry()"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="margin-bottom:10px" onclick="duplicateEntry()"><i class="ti ti-copy"></i> Duplicate</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-bottom:10px" onclick="deleteEntry()"><i class="ti ti-trash"></i> Delete</button>
-    <button class="btn" onclick="closeModal()">Close</button>
+    <button class="btn" onclick="if(modalBackStack){modalBackStack();}else{closeModal();}">${modalBackStack ? 'Back' : 'Close'}</button>
   `;
   openModal();
 }
