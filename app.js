@@ -110,10 +110,10 @@ async function route() {
 
 // ---------- Finance: main screen ----------
 // ---------- Finance range & type filter state ----------
-let financeRange = 'thisMonth'; // thisMonth | lastMonth | last3Months | lastWeek
+let financeRange = 'thisMonth'; // thisMonth | lastMonth | last3Months | lastWeek | last6Months | lastYear | last2Years | allTime
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
-const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', last3Months: 'Last 3 months', lastWeek: 'Last 7 days' };
+const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', last3Months: 'Last 3 months', lastWeek: 'Last 7 days', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
 
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function getFinanceRangeBounds(range) {
@@ -122,11 +122,25 @@ function getFinanceRangeBounds(range) {
   if (range === 'lastMonth') return { start: fmtISO(new Date(y, m - 1, 1)), end: fmtISO(new Date(y, m, 0)) };
   if (range === 'last3Months') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
   if (range === 'lastWeek') { const start = new Date(now); start.setDate(start.getDate() - 6); return { start: fmtISO(start), end: fmtISO(now) }; }
+  if (range === 'last6Months') return { start: fmtISO(new Date(y, m - 5, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
+  if (range === 'lastYear') return { start: fmtISO(new Date(y - 1, m, 1)), end: fmtISO(now) };
+  if (range === 'last2Years') return { start: fmtISO(new Date(y - 2, m, 1)), end: fmtISO(now) };
+  if (range === 'allTime') return { start: '0000-01-01', end: '9999-12-31' };
   return { start: fmtISO(new Date(y, m, 1)), end: fmtISO(new Date(y, m + 1, 0)) }; // thisMonth
 }
 function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
 function toggleFinanceTypeFilter(t) { financeTypeFilter = financeTypeFilter === t ? null : t; renderFinanceMain(); }
 function setFinanceSort(s) { financeSortBy = s; renderFinanceMain(); }
+function toggleCollapse(el) {
+  const body = el.nextElementSibling;
+  const icon = el.querySelector('.collapse-chevron');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (icon) icon.className = 'ti collapse-chevron ti-chevron-' + (open ? 'right' : 'down');
+}
+function netOf(list) {
+  return list.filter((e) => e.type !== 'transfer').reduce((s, e) => s + (e.type === 'income' ? e.amount : -e.amount), 0);
+}
 
 async function renderFinanceMain() {
   const entries = (await DB.getAll('entries')).sort((a, b) => b.date.localeCompare(a.date));
@@ -150,6 +164,10 @@ async function renderFinanceMain() {
       <button class="chip ${financeRange==='lastWeek'?'active':''}" onclick="setFinanceRange('lastWeek')">Last 7 days</button>
       <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">Last month</button>
       <button class="chip ${financeRange==='last3Months'?'active':''}" onclick="setFinanceRange('last3Months')">Last 3 months</button>
+      <button class="chip ${financeRange==='last6Months'?'active':''}" onclick="setFinanceRange('last6Months')">Last 6 months</button>
+      <button class="chip ${financeRange==='lastYear'?'active':''}" onclick="setFinanceRange('lastYear')">Last year</button>
+      <button class="chip ${financeRange==='last2Years'?'active':''}" onclick="setFinanceRange('last2Years')">Last 2 years</button>
+      <button class="chip ${financeRange==='allTime'?'active':''}" onclick="setFinanceRange('allTime')">All time</button>
     </div>
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -191,18 +209,53 @@ function renderFinanceList(list, catById, payeeById) {
     const sorted = [...list].sort((a, b) => b.amount - a.amount);
     return sorted.map((e) => renderEntryRow(e, catById, payeeById, true)).join('');
   }
-  const byDay = {};
-  list.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
-  const days = Object.keys(byDay).sort().reverse();
-  return days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join('');
+  const byYear = {};
+  list.forEach((e) => {
+    const y = e.date.slice(0, 4);
+    (byYear[y] = byYear[y] || []).push(e);
+  });
+  const years = Object.keys(byYear).sort().reverse();
+  return years.map((y, yi) => renderYearGroup(y, byYear[y], catById, payeeById, yi === 0)).join('');
 }
 
-function renderDayGroup(date, dayEntries, catById, payeeById) {
-  const relevant = dayEntries.filter((e) => e.type !== 'transfer');
-  const dayNet = relevant.reduce((s, e) => s + (e.type === 'income' ? e.amount : -e.amount), 0);
+function collapseHeader(level, label, netVal, indent, openByDefault) {
+  return `<div class="section-title" style="cursor:pointer;padding-left:${indent}px" onclick="toggleCollapse(this)">
+    <span>${label} <i class="ti collapse-chevron ti-chevron-${openByDefault ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+    <span class="amt ${netVal < 0 ? 'neg' : 'pos'}">${netVal >= 0 ? '+' : ''}${fmtMoney(netVal)}</span>
+  </div>`;
+}
+
+function renderYearGroup(year, yearEntries, catById, payeeById, openByDefault) {
+  const byMonth = {};
+  yearEntries.forEach((e) => { const mk = monthKey(e.date); (byMonth[mk] = byMonth[mk] || []).push(e); });
+  const months = Object.keys(byMonth).sort().reverse();
   return `
-    <div class="section-title"><span>${fmtDate(date)}</span>${relevant.length ? `<span class="amt ${dayNet < 0 ? 'neg' : 'pos'}">${dayNet >= 0 ? '+' : ''}${fmtMoney(dayNet)}</span>` : ''}</div>
-    ${dayEntries.map((e) => renderEntryRow(e, catById, payeeById)).join('')}
+    ${collapseHeader('year', year, netOf(yearEntries), 0, openByDefault)}
+    <div class="collapse-body" style="display:${openByDefault ? 'block' : 'none'}">
+      ${months.map((mk, mi) => renderMonthGroup(mk, byMonth[mk], catById, payeeById, openByDefault && mi === 0)).join('')}
+    </div>
+  `;
+}
+
+function renderMonthGroup(mk, monthEntries, catById, payeeById, openByDefault) {
+  const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long' });
+  const byDay = {};
+  monthEntries.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
+  const days = Object.keys(byDay).sort().reverse();
+  return `
+    ${collapseHeader('month', label, netOf(monthEntries), 14, openByDefault)}
+    <div class="collapse-body" style="display:${openByDefault ? 'block' : 'none'}">
+      ${days.map((d, di) => renderDayGroup(d, byDay[d], catById, payeeById, openByDefault && di === 0)).join('')}
+    </div>
+  `;
+}
+
+function renderDayGroup(date, dayEntries, catById, payeeById, openByDefault) {
+  return `
+    ${collapseHeader('day', fmtDate(date), netOf(dayEntries), 28, openByDefault !== false)}
+    <div class="collapse-body" style="display:${openByDefault !== false ? 'block' : 'none'}">
+      ${dayEntries.map((e) => renderEntryRow(e, catById, payeeById)).join('')}
+    </div>
   `;
 }
 
@@ -306,26 +359,82 @@ async function renderFoodBudget() {
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 
 // ---------- Finance Reports ----------
-let reportsCategoryFilter = null;
+let reportsCategoryFilter = []; // array of category IDs; empty = all
 let reportsStoreFilter = null;
 let reportsTypeFilter = null;
 let reportsDateRange = 'last6'; // thisMonth | last3 | last6 | thisYear | allTime
-let reportsSelectedCell = null; // { categoryId, monthKey }
 let reportsExcludedCategoryIds = [];
 let reportsIncExpChart = null;
 let reportsCatChart = null;
 
 function setReportsFilter(kind, val) {
-  if (kind === 'category') reportsCategoryFilter = val || null;
   if (kind === 'store') reportsStoreFilter = val || null;
   renderReportsStub();
 }
 function setReportsType(t) { reportsTypeFilter = reportsTypeFilter === t ? null : t; renderReportsStub(); }
-function setReportsDateRange(r) { reportsDateRange = r; reportsSelectedCell = null; renderReportsStub(); }
-function selectReportsCell(categoryId, mk2) {
-  if (reportsSelectedCell && reportsSelectedCell.categoryId === categoryId && reportsSelectedCell.monthKey === mk2) reportsSelectedCell = null;
-  else reportsSelectedCell = { categoryId, monthKey: mk2 };
-  renderReportsStub();
+function setReportsDateRange(r) { reportsDateRange = r; renderReportsStub(); }
+
+async function openReportsCategoryFilterModal() {
+  const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Filter by category</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Pick one or more. Leave all unchecked to show everything.</p>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
+      ${categories.map((c) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" ${reportsCategoryFilter.includes(c.id) ? 'checked' : ''} onchange="toggleReportsCategoryFilter('${c.id}')">
+        <span style="color:${categoryColor(c.id)};font-weight:600">${esc(c.name)}</span>
+      </label>`).join('')}
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:8px" onclick="closeModal();renderReportsStub();">Apply</button>
+    ${reportsCategoryFilter.length ? `<button class="btn" onclick="reportsCategoryFilter=[];closeModal();renderReportsStub();">Clear selection</button>` : ''}
+  `;
+  openModal();
+}
+function toggleReportsCategoryFilter(id) {
+  const idx = reportsCategoryFilter.indexOf(id);
+  if (idx === -1) reportsCategoryFilter.push(id); else reportsCategoryFilter.splice(idx, 1);
+}
+
+async function selectReportsCell(categoryId, mk2) {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+  const cat = catById[categoryId] || {};
+  const matches = allEntries.filter((e) => e.categoryId === categoryId && monthKey(e.date) === mk2).sort((a, b) => b.date.localeCompare(a.date));
+  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:2px">${esc(cat.name || '')}</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">${label}</p>
+    <div>${matches.length ? matches.map((e) => renderEntryRow(e, catById, payeeById, false)).join('') : '<div class="empty-state">No entries.</div>'}</div>
+  `;
+  openModal();
+}
+
+async function selectReportsCategoryAll(categoryId) {
+  const allEntries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const payees = await DB.getAll('payees');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+  const cat = catById[categoryId] || {};
+  const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
+  const matches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= start && e.date <= end).sort((a, b) => b.date.localeCompare(a.date));
+  const total = matches.reduce((s, e) => s + e.amount, 0);
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:2px">${esc(cat.name || '')}</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}</p>
+    <div>${matches.length ? matches.map((e) => renderEntryRow(e, catById, payeeById, true)).join('') : '<div class="empty-state">No entries.</div>'}</div>
+  `;
+  openModal();
+}
+function getFinanceRangeBoundsForKeys(keys) {
+  const sorted = [...keys].sort();
+  return { start: sorted[0] + '-01', end: fmtISO(new Date(new Date(sorted[sorted.length - 1] + '-01').getFullYear(), new Date(sorted[sorted.length - 1] + '-01').getMonth() + 1, 0)) };
 }
 
 function getReportsMonthKeys(range, allEntries) {
@@ -373,7 +482,7 @@ async function renderReportsStub() {
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
 
   let entries = allEntries;
-  if (reportsCategoryFilter) entries = entries.filter((e) => e.categoryId === reportsCategoryFilter);
+  if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
   if (reportsStoreFilter) entries = entries.filter((e) => e.storeId === reportsStoreFilter);
   if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
 
@@ -385,14 +494,16 @@ async function renderReportsStub() {
   const mExpense = entries.filter((e) => monthKey(e.date) === mk && e.type === 'expense').reduce((s, e) => s + e.amount, 0);
   const mNet = mIncome - mExpense;
 
-  const chartMonthKeys = [...monthKeys].reverse().slice(-6); // chronological, last 6 of the selected range
+  const chartMonthKeys = [...monthKeys].reverse(); // chronological, follows the selected date range fully
   const monthLabels = chartMonthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
   const incomeByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
   const expenseByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
 
+  const TOP_CATS_EXCLUDE = ['mortgage', 'allowance', 'personal'];
   const catSpend = {};
   rangeEntries.filter((e) => e.type === 'expense').forEach((e) => {
     const name = (catById[e.categoryId] || {}).name || 'Other';
+    if (TOP_CATS_EXCLUDE.some((ex) => name.toLowerCase().includes(ex))) return;
     catSpend[name] = (catSpend[name] || 0) + e.amount;
   });
   const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -407,11 +518,6 @@ async function renderReportsStub() {
   });
   const monthColLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
 
-  let selectedCellEntries = [];
-  if (reportsSelectedCell) {
-    selectedCellEntries = allEntries.filter((e) => e.categoryId === reportsSelectedCell.categoryId && monthKey(e.date) === reportsSelectedCell.monthKey).sort((a, b) => b.date.localeCompare(a.date));
-  }
-
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
 
@@ -424,10 +530,9 @@ async function renderReportsStub() {
     </div>
 
     <div class="field-row" style="margin-bottom:10px">
-      <select onchange="setReportsFilter('category', this.value)">
-        <option value="">All categories</option>
-        ${categories.filter((c) => !c.hidden).sort((a,b)=>a.name.localeCompare(b.name)).map((c) => `<option value="${c.id}" ${reportsCategoryFilter===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
-      </select>
+      <button class="btn" style="text-align:left" onclick="openReportsCategoryFilterModal()">
+        <i class="ti ti-tag"></i> ${reportsCategoryFilter.length ? `${reportsCategoryFilter.length} categor${reportsCategoryFilter.length===1?'y':'ies'} selected` : 'All categories'}
+      </button>
       <select onchange="setReportsFilter('store', this.value)">
         <option value="">All stores</option>
         ${payees.sort((a,b)=>a.name.localeCompare(b.name)).map((p) => `<option value="${p.id}" ${reportsStoreFilter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
@@ -455,21 +560,20 @@ async function renderReportsStub() {
       <p class="section-label" style="margin:0">Category by month</p>
       <span style="font-size:11px;color:var(--ink-soft);cursor:pointer" onclick="openReportsCategoryConfig()">Configure</span>
     </div>
-    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Tap a cell to see its entries below</p>
-    <div style="overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch">
-      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap">
+    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Tap a category name for its full range, or a cell for just that month</p>
+    <div style="overflow-x:auto;margin-bottom:16px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
+      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
         <thead><tr>
-          <th style="text-align:left;padding:6px 10px 6px 0;position:sticky;left:0;background:var(--surface);color:var(--ink-soft);font-weight:500">Category</th>
-          ${monthColLabels.map((l) => `<th style="text-align:right;padding:6px 10px;color:var(--ink-soft);font-weight:500">${l}</th>`).join('')}
+          <th style="text-align:left;padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Category</th>
+          ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
         </tr></thead>
         <tbody>
           ${tableCats.map((c) => `
-            <tr style="border-top:1px solid var(--line)">
-              <td style="padding:6px 10px 6px 0;position:sticky;left:0;background:var(--surface);font-weight:600;color:${categoryColor(c.id)}">${esc(c.name)}</td>
+            <tr>
+              <td onclick="selectReportsCategoryAll('${c.id}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
               ${monthKeys.map((mk2) => {
                 const val = pivot[c.id][mk2];
-                const isSel = reportsSelectedCell && reportsSelectedCell.categoryId === c.id && reportsSelectedCell.monthKey === mk2;
-                return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:6px 10px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};${isSel?'background:var(--gold-soft);border-radius:6px':''}">${val ? fmtMoney(val) : '–'}</td>`;
+                return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
               }).join('')}
             </tr>
           `).join('')}
@@ -477,9 +581,18 @@ async function renderReportsStub() {
       </table>
     </div>
 
-    ${reportsSelectedCell ? `
-      <p class="section-label">${esc((catById[reportsSelectedCell.categoryId]||{}).name||'')} · ${new Date(reportsSelectedCell.monthKey+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'})}</p>
-      <div>${selectedCellEntries.length ? selectedCellEntries.map((e) => renderEntryRow(e, catById, payeeById, true)).join('') : '<div class="empty-state">No entries.</div>'}</div>
+    ${reportsCategoryFilter.length ? `
+      <p class="section-label">Entries for selected categories</p>
+      <div id="reportsEntriesList">${(() => {
+        const byMonth = {};
+        rangeEntries.slice().sort((a,b)=>b.date.localeCompare(a.date)).forEach((e) => { const mk2 = monthKey(e.date); (byMonth[mk2] = byMonth[mk2] || []).push(e); });
+        const monthsList = Object.keys(byMonth).sort().reverse();
+        if (!monthsList.length) return '<div class="empty-state">No entries for these categories in this range.</div>';
+        return monthsList.map((mk2, i) => `
+          ${collapseHeader('month', new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}), netOf(byMonth[mk2]), 0, i===0)}
+          <div class="collapse-body" style="display:${i===0?'block':'none'}">${byMonth[mk2].map((e) => renderEntryRow(e, catById, payeeById, true)).join('')}</div>
+        `).join('');
+      })()}</div>
     ` : ''}
   `;
 
@@ -1469,6 +1582,12 @@ async function renderSyncDataPage() {
       <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderSyncDataPage)">Retry sync</button>
     </div>
     <div class="card tight">
+      <label class="field-label">Clean up duplicate categories, stores, etc.</label>
+      <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">If the same category or store shows up more than once with a different color (this can happen from testing on multiple devices before sync was set up), run this once. It merges duplicates by name, keeps everything's history intact, and re-syncs the fix.</p>
+      <button class="btn" id="cleanupBtn" onclick="runDimensionCleanup()">Find & merge duplicates</button>
+      <p id="cleanupStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
+    </div>
+    <div class="card tight">
       <label class="field-label">Force full resync</label>
       <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this after manually clearing all rows from your Sheet's tabs. This re-sends every record from scratch, guaranteeing exactly one clean copy of each — but it will create duplicates again if the Sheet still has old rows in it.</p>
       <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderSyncDataPage();}">Force full resync</button>
@@ -1575,4 +1694,16 @@ function promptNewCarInline() {
 function promptNewProjectInline() {
   const name = prompt('New project name:'); if (!name) { document.getElementById('f_project').value = ''; return; }
   DB.put('projects', { id: uid(), name }).then((p) => { window.__projects.push(p); onCategoryChange(true); document.getElementById('f_project').value = p.id; });
+}
+
+async function runDimensionCleanup() {
+  const statusEl = document.getElementById('cleanupStatus');
+  statusEl.textContent = 'Scanning for duplicates…';
+  const report = await cleanupDuplicateDimensions((msg) => { statusEl.textContent = msg; });
+  if (!report.length) {
+    statusEl.textContent = 'No duplicates found.';
+  } else {
+    statusEl.innerHTML = `<b>Done:</b><br>${report.join('<br>')}<br>Now clear your Sheet's tabs and run Force full resync below to push the clean version up.`;
+  }
+  Sync.retryAllPending();
 }

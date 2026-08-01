@@ -93,6 +93,67 @@ async function importBundle(bundle, onProgress) {
   return report;
 }
 
+// One-time cleanup for duplicate categories/stores/etc that can build up when multiple
+// devices independently created the "same" item (by name) before two-way sync existed.
+// Merges by name, keeps the oldest record as canonical, repoints every reference to it
+// across entries/jazzIssues/garageCosts, and marks everything touched as unsynced so the
+// fix pushes back up to the Sheet on the next sync.
+const DIMENSION_CLEANUP_TARGETS = [
+  { store: 'categories', refs: [{ store: 'entries', field: 'categoryId' }] },
+  { store: 'payees', refs: [{ store: 'entries', field: 'storeId' }] },
+  { store: 'cars', refs: [{ store: 'entries', field: 'carId' }] },
+  { store: 'projects', refs: [{ store: 'entries', field: 'projectId' }] },
+  { store: 'expenseTypes', refs: [{ store: 'garageCosts', field: 'expenseTypeId' }] },
+  { store: 'repairTypes', refs: [{ store: 'garageCosts', field: 'repairTypeId' }] },
+  { store: 'issueTypes', refs: [{ store: 'jazzIssues', field: 'typeId' }] },
+  { store: 'vetClinics', refs: [{ store: 'jazzIssues', field: 'vetClinicId' }] }
+];
+
+async function cleanupDuplicateDimensions(onProgress) {
+  const report = [];
+  for (const target of DIMENSION_CLEANUP_TARGETS) {
+    const items = await DB.getAll(target.store);
+    const groups = new Map(); // lowercase name -> array of items
+    items.forEach((item) => {
+      const key = (item.name || '').trim().toLowerCase();
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    });
+
+    let mergedCount = 0;
+    for (const [name, group] of groups) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => a.id.localeCompare(b.id)); // stable, deterministic pick
+      const canonical = group[0];
+      const duplicates = group.slice(1);
+      mergedCount += duplicates.length;
+
+      // Repoint every entry that references a duplicate ID over to the canonical one
+      for (const ref of target.refs) {
+        const refItems = await DB.getAll(ref.store);
+        for (const item of refItems) {
+          if (duplicates.some((d) => d.id === item[ref.field])) {
+            item[ref.field] = canonical.id;
+            item.synced = false;
+            await DB.put(ref.store, item);
+          }
+        }
+      }
+
+      // Remove the duplicate dimension records locally
+      for (const dup of duplicates) {
+        await DB.delete(target.store, dup.id);
+      }
+    }
+    if (mergedCount > 0) {
+      report.push(`${target.store}: merged ${mergedCount} duplicate(s)`);
+      onProgress && onProgress(`Cleaned up ${target.store}…`);
+    }
+  }
+  return report;
+}
+
 function handleImportFile(e) {
   const file = e.target.files[0];
   if (!file) return;
