@@ -68,6 +68,7 @@ async function route() {
     if (currentView === 'categoryForm') return renderCategoryForm();
     if (currentView === 'storeForm') return renderStoreForm();
     if (currentView === 'reports') return renderReportsStub();
+    if (currentView === 'foodBudget') return renderFoodBudget();
   } else if (currentTab === 'jazz') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderJazzMain();
@@ -100,6 +101,7 @@ async function route() {
 // ---------- Finance range & type filter state ----------
 let financeRange = 'thisMonth'; // thisMonth | lastMonth | last3Months | lastWeek
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
+let financeSortBy = 'date'; // date | amount
 const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', last3Months: 'Last 3 months', lastWeek: 'Last 7 days' };
 
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -113,6 +115,7 @@ function getFinanceRangeBounds(range) {
 }
 function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
 function toggleFinanceTypeFilter(t) { financeTypeFilter = financeTypeFilter === t ? null : t; renderFinanceMain(); }
+function setFinanceSort(s) { financeSortBy = s; renderFinanceMain(); }
 
 async function renderFinanceMain() {
   const entries = (await DB.getAll('entries')).sort((a, b) => b.date.localeCompare(a.date));
@@ -129,16 +132,13 @@ async function renderFinanceMain() {
   const net = income - expense;
 
   const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
-  const byDay = {};
-  listSource.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
-  const days = Object.keys(byDay).sort().reverse();
 
   $main.innerHTML = `
     <div class="chip-row">
       <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">This month</button>
+      <button class="chip ${financeRange==='lastWeek'?'active':''}" onclick="setFinanceRange('lastWeek')">Last 7 days</button>
       <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">Last month</button>
       <button class="chip ${financeRange==='last3Months'?'active':''}" onclick="setFinanceRange('last3Months')">Last 3 months</button>
-      <button class="chip ${financeRange==='lastWeek'?'active':''}" onclick="setFinanceRange('lastWeek')">Last 7 days</button>
     </div>
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -160,11 +160,30 @@ async function renderFinanceMain() {
       <button class="btn" style="flex:1" onclick="goCategories()"><i class="ti ti-tag"></i> Categories & stores</button>
       <button class="btn" style="flex:1" onclick="goReports()"><i class="ti ti-chart-bar"></i> Reports</button>
     </div>
+    <button class="btn" style="margin-bottom:14px" onclick="goFoodBudget()"><i class="ti ti-shopping-cart"></i> Food budget by week</button>
 
-    <div id="entryList">${days.length ? days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join('') : '<div class="empty-state">No entries in this range.</div>'}</div>
+    <div class="chip-row">
+      <span style="font-size:11px;color:var(--ink-soft);align-self:center;margin-right:2px">Sort:</span>
+      <button class="chip ${financeSortBy==='date'?'active':''}" onclick="setFinanceSort('date')">Date</button>
+      <button class="chip ${financeSortBy==='amount'?'active':''}" onclick="setFinanceSort('amount')">Amount (highest first)</button>
+    </div>
+
+    <div id="entryList">${renderFinanceList(listSource, catById, payeeById)}</div>
   `;
 
-  document.getElementById('financeSearch').addEventListener('input', (e) => filterEntries(e.target.value, days, byDay, catById, payeeById));
+  document.getElementById('financeSearch').addEventListener('input', (e) => filterEntriesLive(e.target.value, listSource, catById, payeeById));
+}
+
+function renderFinanceList(list, catById, payeeById) {
+  if (!list.length) return '<div class="empty-state">No entries in this range.</div>';
+  if (financeSortBy === 'amount') {
+    const sorted = [...list].sort((a, b) => b.amount - a.amount);
+    return sorted.map((e) => renderEntryRow(e, catById, payeeById, true)).join('');
+  }
+  const byDay = {};
+  list.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
+  const days = Object.keys(byDay).sort().reverse();
+  return days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join('');
 }
 
 function renderDayGroup(date, dayEntries, catById, payeeById) {
@@ -176,12 +195,18 @@ function renderDayGroup(date, dayEntries, catById, payeeById) {
   `;
 }
 
-function renderEntryRow(e, catById, payeeById) {
+function renderEntryRow(e, catById, payeeById, showDate) {
   const cat = catById[e.categoryId] || {};
   const payee = payeeById[e.storeId] || {};
-  const isNeg = e.type === 'expense';
-  const valClass = e.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
-  const sign = e.type === 'transfer' ? '' : (isNeg ? '' : '+');
+  let valClass, sign;
+  if (e.type === 'transfer') {
+    valClass = e.transferDirection === 'in' ? 'pos' : 'neg';
+    sign = e.transferDirection === 'in' ? '+' : '-';
+  } else {
+    const isNeg = e.type === 'expense';
+    valClass = isNeg ? 'neg' : 'pos';
+    sign = isNeg ? '' : '+';
+  }
   return `
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
@@ -193,33 +218,80 @@ function renderEntryRow(e, catById, payeeById) {
           <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}</span>
           <span class="entry-value ${valClass}">${sign}${fmtMoney(e.amount)}</span>
         </div>
-        <div class="entry-meta">${esc(cat.name || '')}${e.recurringId ? ' · Recurring' : ''}</div>
+        <div class="entry-meta">${esc(cat.name || '')}${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
         ${e.description ? `<div class="entry-desc">${esc(e.description)}</div>` : ''}
       </div>
     </div>
   `;
 }
 
-function filterEntries(q, days, byDay, catById, payeeById) {
+function filterEntriesLive(q, listSource, catById, payeeById) {
   q = q.trim().toLowerCase();
   const list = document.getElementById('entryList');
-  if (!q) { list.innerHTML = days.map((d) => renderDayGroup(d, byDay[d], catById, payeeById)).join(''); return; }
-  const filteredByDay = {};
-  days.forEach((d) => {
-    const matches = byDay[d].filter((e) => {
-      const cat = catById[e.categoryId] || {};
-      const payee = payeeById[e.storeId] || {};
-      const hay = `${cat.name || ''} ${payee.name || ''} ${e.description || ''} ${e.amount}`.toLowerCase();
-      return hay.includes(q);
-    });
-    if (matches.length) filteredByDay[d] = matches;
+  if (!q) { list.innerHTML = renderFinanceList(listSource, catById, payeeById); return; }
+  const matches = listSource.filter((e) => {
+    const cat = catById[e.categoryId] || {};
+    const payee = payeeById[e.storeId] || {};
+    const hay = `${cat.name || ''} ${payee.name || ''} ${e.description || ''} ${e.amount}`.toLowerCase();
+    return hay.includes(q);
   });
-  const keys = Object.keys(filteredByDay);
-  list.innerHTML = keys.length ? keys.map((d) => renderDayGroup(d, filteredByDay[d], catById, payeeById)).join('') : '<div class="empty-state">No matches.</div>';
+  list.innerHTML = matches.length ? renderFinanceList(matches, catById, payeeById) : '<div class="empty-state">No matches.</div>';
 }
 
 function goCategories() { currentView = 'categories'; route(); }
 function goReports() { currentView = 'reports'; route(); }
+function goFoodBudget() { currentView = 'foodBudget'; route(); }
+
+function getWeekStart(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day; // shift back to Monday
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  return fmtISO(monday);
+}
+function getWeekLabel(weekStartStr) {
+  const start = new Date(weekStartStr + 'T00:00:00');
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  const f = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${f(start)} – ${f(end)}`;
+}
+
+async function renderFoodBudget() {
+  const entries = await DB.getAll('entries');
+  const categories = await DB.getAll('categories');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const payees = await DB.getAll('payees');
+  const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+
+  const relevant = entries.filter((e) => {
+    if (e.type !== 'expense') return false;
+    const cat = catById[e.categoryId];
+    if (!cat) return false;
+    const n = cat.name.toLowerCase();
+    return n.includes('groceries') || n.includes('meal kit');
+  });
+
+  const byWeek = {};
+  relevant.forEach((e) => { const wk = getWeekStart(e.date); (byWeek[wk] = byWeek[wk] || []).push(e); });
+  const weeks = Object.keys(byWeek).sort().reverse();
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Food budget</span></div>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Groceries + Meal Kit, grouped by week (Monday–Sunday)</p>
+    ${weeks.length ? weeks.map((wk, i) => {
+      const weekEntries = byWeek[wk].sort((a, b) => b.date.localeCompare(a.date));
+      const total = weekEntries.reduce((s, e) => s + e.amount, 0);
+      return `
+        <div class="section-title" onclick="toggleMonthSection(this)" style="cursor:pointer">
+          <span>${getWeekLabel(wk)} <i class="ti ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+          <span class="amt neg">${fmtMoney(total)}</span>
+        </div>
+        <div class="month-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
+      `;
+    }).join('') : '<div class="empty-state">No Groceries or Meal Kit expenses logged yet.</div>'}
+  `;
+}
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 
 function renderReportsStub() {
@@ -267,7 +339,7 @@ async function renderEntryDetail() {
       </div>
       <div class="divider"></div>
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDate(entry.date)}</span></div>
-      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Type</span><span style="font-size:12px;text-transform:capitalize">${entry.type}</span></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Type</span><span style="font-size:12px;text-transform:capitalize">${entry.type}${entry.type === 'transfer' ? (entry.transferDirection === 'in' ? ' (in)' : ' (out)') : ''}</span></div>
       ${entry.description ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Description</span><span style="font-size:12px;text-align:right;max-width:60%">${esc(entry.description)}</span></div>` : ''}
       ${car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Car</span><span style="font-size:12px">${esc(car.name)}</span></div>` : ''}
       ${entry.carName && !car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cars</span><span style="font-size:12px">${esc(entry.carName)}</span></div>` : ''}
@@ -334,6 +406,7 @@ async function renderAddEntry() {
       <button class="btn-toggle" data-type="income" onclick="setType('income')">Income</button>
       <button class="btn-toggle" data-type="transfer" onclick="setType('transfer')">Transfer</button>
     </div>
+    <div id="transferDirectionArea"></div>
 
     <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="f_amount" placeholder="$0.00" value="${src ? src.amount : ''}"></div>
 
@@ -353,6 +426,7 @@ async function renderAddEntry() {
   if (src && src.categoryId) { document.getElementById('f_category').value = src.categoryId; onCategoryChange(true); }
   if (src && src.storeId) document.getElementById('f_store').value = src.storeId;
   setType(src ? src.type : 'expense');
+  if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
 
   document.getElementById('f_category').addEventListener('change', (e) => {
     if (e.target.value === '__new') return goAddCategory('add');
@@ -368,6 +442,26 @@ function setType(t) {
     if (b.dataset.type === t) b.classList.add('active-' + t);
   });
   window.__currentType = t;
+  const area = document.getElementById('transferDirectionArea');
+  if (t === 'transfer') {
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label">Direction</label><div class="btn-toggle-row" id="transferDirToggle" style="margin-bottom:0">
+      <button type="button" class="btn-toggle" onclick="selectTransferDirection('out')"><i class="ti ti-arrow-up-right" style="vertical-align:-2px"></i> Money out</button>
+      <button type="button" class="btn-toggle" onclick="selectTransferDirection('in')"><i class="ti ti-arrow-down-left" style="vertical-align:-2px"></i> Money in</button>
+    </div></div>`;
+    selectTransferDirection(window.__transferDirection || 'out');
+  } else {
+    area.innerHTML = '';
+  }
+}
+function selectTransferDirection(dir) {
+  window.__transferDirection = dir;
+  const wrap = document.getElementById('transferDirToggle');
+  if (!wrap) return;
+  wrap.querySelectorAll('.btn-toggle').forEach((b, i) => {
+    b.classList.remove('active-expense', 'active-income');
+    const isOut = i === 0;
+    if ((isOut && dir === 'out') || (!isOut && dir === 'in')) b.classList.add(isOut ? 'active-expense' : 'active-income');
+  });
 }
 
 function onCategoryChange(skipAutofill) {
@@ -568,12 +662,13 @@ async function saveEntry() {
     carId, projectId,
     carName: carObj ? carObj.name : carSplitNames,
     projectName: projectObj ? projectObj.name : '',
+    transferDirection: type === 'transfer' ? (window.__transferDirection || 'out') : null,
     carSplit: carSplitFinal,
     synced: false
   };
   await DB.put('entries', entry);
   Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
-  duplicateSource = null; carSplitDraft = [];
+  duplicateSource = null; carSplitDraft = []; window.__transferDirection = null;
   currentView = 'main';
   route();
 }
