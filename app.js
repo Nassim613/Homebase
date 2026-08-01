@@ -61,7 +61,6 @@ async function route() {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderFinanceMain();
     if (currentView === 'add') return renderAddEntry();
-    if (currentView === 'entryDetail') return renderEntryDetail();
     if (currentView === 'categories') return renderCategoriesManager();
     if (currentView === 'categoryForm') return renderCategoryForm();
     if (currentView === 'storeForm') return renderStoreForm();
@@ -203,11 +202,14 @@ function renderReportsStub() {
 
 // ---------- Add / Edit Entry ----------
 let currentEntryId = null;
-function openEntryDetail(id) { currentEntryId = id; currentView = 'entryDetail'; route(); }
+function openEntryDetail(id) { currentEntryId = id; renderEntryDetail(); }
+
+function openModal() { document.getElementById('modalOverlay').style.display = 'flex'; }
+function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; document.getElementById('modalSheet').innerHTML = ''; }
 
 async function renderEntryDetail() {
   const entry = await DB.get('entries', currentEntryId);
-  if (!entry) { goMain(); return; }
+  if (!entry) return;
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const cars = await DB.getAll('cars');
@@ -219,9 +221,8 @@ async function renderEntryDetail() {
   const isNeg = entry.type === 'expense';
   const valClass = entry.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
 
-  $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Entry</span></div>
-
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px">
@@ -247,25 +248,30 @@ async function renderEntryDetail() {
 
     <button class="btn" style="margin-bottom:10px" onclick="editEntry()"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="margin-bottom:10px" onclick="duplicateEntry()"><i class="ti ti-copy"></i> Duplicate</button>
-    <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteEntry()"><i class="ti ti-trash"></i> Delete</button>
+    <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-bottom:10px" onclick="deleteEntry()"><i class="ti ti-trash"></i> Delete</button>
+    <button class="btn" onclick="closeModal()">Close</button>
   `;
+  openModal();
 }
 
 async function editEntry() {
   const entry = await DB.get('entries', currentEntryId);
   duplicateSource = { ...entry, __editId: entry.id };
+  closeModal();
   currentView = 'add'; route();
 }
 async function duplicateEntry() {
   const entry = await DB.get('entries', currentEntryId);
   duplicateSource = { ...entry };
   delete duplicateSource.__editId;
+  closeModal();
   currentView = 'add'; route();
 }
 async function deleteEntry() {
   if (!confirm('Delete this entry? This can\'t be undone locally (though it may still exist as a row in your Sheet history).')) return;
   await DB.delete('entries', currentEntryId);
-  goMain();
+  closeModal();
+  renderFinanceMain();
 }
 
 async function renderAddEntry() {
@@ -956,16 +962,15 @@ async function logJazzWeighIn() {
 }
 
 // ============ MORE / SETTINGS MODULE ============
-let moreView = 'main'; // main | carsProjects | expenseRepairTypes
+let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData
+let editingSheetUrl = false;
 
 function goMoreMain() { moreView = 'main'; renderMore(); }
 
 async function renderMore() {
   if (moreView === 'carsProjects') return renderCarsProjectsManager();
   if (moreView === 'expenseRepairTypes') return renderExpenseRepairManager();
-
-  const meta = await DB.get('settings', 'meta');
-  const sheetUrl = meta ? meta.sheetUrl : '';
+  if (moreView === 'syncData') return renderSyncDataPage();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -980,29 +985,63 @@ async function renderMore() {
     <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Sync & data</p>
+    <div class="list-row" onclick="moreView='syncData';renderMore()"><span><i class="ti ti-cloud"></i> Google Sheet sync & import</span><span class="status-pill ${Sync.status}" style="font-size:11px"><i class="ti ti-cloud"></i></span></div>
+  `;
+}
+
+async function renderSyncDataPage() {
+  const meta = await DB.get('settings', 'meta');
+  const sheetUrl = meta ? meta.sheetUrl : '';
+  const importCompleted = meta ? !!meta.importCompleted : false;
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Sync & data</span></div>
+
     <div class="card tight">
-      <label class="field-label">Google Sheet Web App URL</label>
-      <input id="sheetUrlInput" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(sheetUrl)}" style="margin-bottom:8px">
-      <button class="btn btn-primary" onclick="saveSheetUrl()">Save</button>
+      <label class="field-label">Google Sheet</label>
+      ${sheetUrl && !editingSheetUrl ? `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-link"></i> <span>Linked to a Sheet</span></span>
+          <button class="btn" style="width:auto;padding:8px 14px" onclick="editingSheetUrl=true;renderSyncDataPage()">Change</button>
+        </div>
+      ` : `
+        <input id="sheetUrlInput" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(sheetUrl)}" style="margin-bottom:8px">
+        <button class="btn btn-primary" onclick="saveSheetUrl()">Save</button>
+        ${sheetUrl ? `<button class="btn" style="margin-top:8px" onclick="editingSheetUrl=false;renderSyncDataPage()">Cancel</button>` : ''}
+      `}
     </div>
     <div class="card tight" style="display:flex;justify-content:space-between;align-items:center">
       <span class="status-pill ${Sync.status}" id="moreSyncPill"><i class="ti ti-cloud"></i> <span id="moreSyncText"></span></span>
-      <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderMore)">Retry sync</button>
+      <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderSyncDataPage)">Retry sync</button>
     </div>
     <div class="card tight">
       <label class="field-label">Force full resync</label>
       <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this after manually clearing all rows from your Sheet's tabs. This re-sends every record from scratch, guaranteeing exactly one clean copy of each — but it will create duplicates again if the Sheet still has old rows in it.</p>
-      <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderMore();}">Force full resync</button>
+      <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderSyncDataPage();}">Force full resync</button>
     </div>
     <div class="card tight">
       <label class="field-label">Import historical data</label>
-      <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Upload a converted <code>import-data.json</code> file to bring in past entries. This file never leaves your device except to sync to your own Sheet afterward.</p>
-      <input type="file" accept=".json" onchange="handleImportFile(event)" style="margin-bottom:8px">
+      ${importCompleted ? `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-check"></i> <span>Already imported</span></span>
+          <button class="btn" style="width:auto;padding:8px 14px;font-size:12px" onclick="if(confirm('Only do this if you specifically need to re-import — it could create duplicate records if the same data is already in your app or Sheet.')){resetImportLock();}">Unlock</button>
+        </div>
+      ` : `
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Upload a converted <code>import-data.json</code> file to bring in past entries, once. This file never leaves your device except to sync to your own Sheet afterward.</p>
+        <input type="file" accept=".json" onchange="handleImportFile(event)" style="margin-bottom:8px">
+      `}
       <p id="importStatus" style="font-size:12px;color:var(--ink-soft)"></p>
     </div>
   `;
   updateMoreSyncPill();
 }
+async function resetImportLock() {
+  const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
+  meta.importCompleted = false;
+  await DB.put('settings', meta);
+  renderSyncDataPage();
+}
+
 function updateMoreSyncPill() {
   const pill = document.getElementById('moreSyncPill');
   if (!pill) return;
@@ -1016,13 +1055,14 @@ async function saveSheetUrl() {
   const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
   meta.sheetUrl = url;
   await DB.put('settings', meta);
+  editingSheetUrl = false;
   try {
     await Sync.refreshStatus();
-    Sync.fullSync().then(renderMore);
+    Sync.fullSync().then(renderSyncDataPage);
   } catch (err) {
     console.warn('Sync status/retry hit an error, but the URL was saved:', err.message);
   }
-  renderMore();
+  renderSyncDataPage();
 }
 
 // ---------- Cars & Projects manager ----------
