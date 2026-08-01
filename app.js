@@ -360,19 +360,44 @@ function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 
 // ---------- Finance Reports ----------
 let reportsCategoryFilter = []; // array of category IDs; empty = all
-let reportsStoreFilter = null;
+let reportsStoreFilter = []; // array of payee IDs; empty = all
 let reportsTypeFilter = null;
 let reportsDateRange = 'last6'; // thisMonth | last3 | last6 | thisYear | allTime
 let reportsExcludedCategoryIds = [];
 let reportsIncExpChart = null;
 let reportsCatChart = null;
 
-function setReportsFilter(kind, val) {
-  if (kind === 'store') reportsStoreFilter = val || null;
-  renderReportsStub();
-}
 function setReportsType(t) { reportsTypeFilter = reportsTypeFilter === t ? null : t; renderReportsStub(); }
 function setReportsDateRange(r) { reportsDateRange = r; renderReportsStub(); }
+
+async function openReportsStoreFilterModal() {
+  const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:6px">Filter by store</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Pick one or more. Leave all unchecked to show everything.</p>
+    <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px">
+      ${payees.map((p) => `<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)">
+        <input type="checkbox" ${reportsStoreFilter.includes(p.id) ? 'checked' : ''} onchange="toggleReportsStoreFilter('${p.id}')">
+        <span style="font-weight:600">${esc(p.name)}</span>
+      </label>`).join('')}
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:8px" onclick="closeModal();renderReportsStub();">Apply</button>
+    ${reportsStoreFilter.length ? `<button class="btn" onclick="reportsStoreFilter=[];closeModal();renderReportsStub();">Clear selection</button>` : ''}
+  `;
+  openModal();
+}
+function toggleReportsStoreFilter(id) {
+  const idx = reportsStoreFilter.indexOf(id);
+  if (idx === -1) reportsStoreFilter.push(id); else reportsStoreFilter.splice(idx, 1);
+}
+async function selectUtilitiesFilter() {
+  const payees = await DB.getAll('payees');
+  const keywords = ['hydro', 'enbridge', 'water'];
+  const matches = payees.filter((p) => keywords.some((k) => p.name.toLowerCase().includes(k)));
+  reportsStoreFilter = matches.map((p) => p.id);
+  renderReportsStub();
+}
 
 async function openReportsCategoryFilterModal() {
   const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
@@ -483,7 +508,7 @@ async function renderReportsStub() {
 
   let entries = allEntries;
   if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
-  if (reportsStoreFilter) entries = entries.filter((e) => e.storeId === reportsStoreFilter);
+  if (reportsStoreFilter.length) entries = entries.filter((e) => reportsStoreFilter.includes(e.storeId));
   if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
 
   const monthKeys = getReportsMonthKeys(reportsDateRange, entries); // newest first already for thisMonth/last3/last6/thisYear/allTime
@@ -533,12 +558,12 @@ async function renderReportsStub() {
       <button class="btn" style="text-align:left" onclick="openReportsCategoryFilterModal()">
         <i class="ti ti-tag"></i> ${reportsCategoryFilter.length ? `${reportsCategoryFilter.length} categor${reportsCategoryFilter.length===1?'y':'ies'} selected` : 'All categories'}
       </button>
-      <select onchange="setReportsFilter('store', this.value)">
-        <option value="">All stores</option>
-        ${payees.sort((a,b)=>a.name.localeCompare(b.name)).map((p) => `<option value="${p.id}" ${reportsStoreFilter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
-      </select>
+      <button class="btn" style="text-align:left" onclick="openReportsStoreFilterModal()">
+        <i class="ti ti-building-store"></i> ${reportsStoreFilter.length ? `${reportsStoreFilter.length} store${reportsStoreFilter.length===1?'':'s'} selected` : 'All stores'}
+      </button>
     </div>
     <div class="chip-row">
+      <button class="chip" onclick="selectUtilitiesFilter()"><i class="ti ti-bolt"></i> Utilities</button>
       <button class="chip ${reportsTypeFilter==='expense'?'active':''}" onclick="setReportsType('expense')">Expense</button>
       <button class="chip ${reportsTypeFilter==='income'?'active':''}" onclick="setReportsType('income')">Income</button>
       <button class="chip ${reportsTypeFilter==='transfer'?'active':''}" onclick="setReportsType('transfer')">Transfer</button>
@@ -549,6 +574,17 @@ async function renderReportsStub() {
       <div class="stat"><p class="label">Expenses (this mo.)</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(mExpense)}</p></div>
       <div class="stat" style="background:${mNet>=0?'var(--sage-soft)':'var(--rose-soft)'}"><p class="label">Net</p><p class="value" style="color:${mNet>=0?'#0F6E56':'var(--red)'};font-size:13px">${mNet>=0?'+':''}${fmtMoney(mNet)}</p></div>
     </div>
+
+    ${reportsStoreFilter.length > 1 ? `
+      <p class="section-label">By store, in range</p>
+      <div style="display:grid;grid-template-columns:repeat(${Math.min(reportsStoreFilter.length,3)},1fr);gap:8px;margin-bottom:16px">
+        ${reportsStoreFilter.map((sid) => {
+          const p = payeeById[sid] || {};
+          const total = rangeEntries.filter((e) => e.storeId === sid).reduce((s, e) => s + e.amount, 0);
+          return `<div class="stat"><p class="label">${esc(p.name || '')}</p><p class="value" style="font-size:13px">${fmtMoney(total)}</p></div>`;
+        }).join('')}
+      </div>
+    ` : ''}
 
     <p class="section-label">Income vs expense</p>
     <div style="position:relative;width:100%;height:180px;margin-bottom:20px"><canvas id="reportsIncExpChart"></canvas></div>
