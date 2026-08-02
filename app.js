@@ -302,7 +302,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
   return `
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
-        ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
+        ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised)">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
       </div>
       <div class="entry-body">
@@ -1143,7 +1143,7 @@ async function renderEntryDetail() {
     <div class="sheet-handle"></div>
     ${payeeLogoUrl(payee) ? `
       <div style="width:76px;height:76px;border-radius:18px;overflow:hidden;margin:0 auto 14px;box-shadow:var(--shadow)">
-        <img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">
+        <img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised)">
       </div>
     ` : ''}
     <div class="card">
@@ -1233,7 +1233,7 @@ function openStorePickerModal() {
       ${payees.map((p) => `
         <div class="list-row" onclick="selectStoreFromPicker('${p.id}')" style="${currentVal===p.id?'background:var(--gold-soft);border-radius:10px':''}">
           <div style="display:flex;align-items:center;gap:10px">
-            <div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div>
+            <div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised);border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div>
             <span>${esc(p.name)}</span>
           </div>
         </div>
@@ -1526,7 +1526,7 @@ async function renderStoreForm() {
 
     <label class="field-label">Logo</label>
     <div class="photo-slot" style="width:90px;height:90px;margin-bottom:8px" onclick="document.getElementById('storeLogoInput').click()">
-      ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}">` : storeLogoDraft ? `<img src="${storeLogoDraft}">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
+      ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}" style="object-fit:contain">` : storeLogoDraft ? `<img src="${storeLogoDraft}" style="object-fit:contain">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
     </div>
     <p id="storeLogoStatus" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : '')}</p>
     <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
@@ -1671,7 +1671,7 @@ async function restoreCategory(id) {
 }
 function renderPayeeListRow(p) {
   return `<div class="list-row" onclick="goEditStore('${p.id}')">
-    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
+    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised);border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
   </div>`;
 }
 
@@ -1741,8 +1741,9 @@ function renderJazzItem(it, typeById) {
   }
   const issue = it.data;
   const type = typeById[issue.typeId] || {};
+  const firstPhoto = issue.photoLinks && issue.photoLinks.find((p) => p.isImage);
   return `<div class="entry-row" onclick="openIssue('${issue.id}')">
-    <div class="entry-icon"><i class="ti ${type.icon || 'ti-stethoscope'}" style="color:var(--rose)"></i></div>
+    <div class="entry-icon">${firstPhoto ? `<img src="${firstPhoto.url}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${type.icon || 'ti-stethoscope'}" style="color:var(--rose)"></i>`}</div>
     <div class="entry-body">
       <div class="entry-top"><span class="entry-title">${esc(type.name || 'Issue')}</span><span class="pill-sm ${issue.status === 'ongoing' ? 'pill-ongoing' : 'pill-resolved'}">${issue.status === 'ongoing' ? 'Ongoing' : 'Resolved'}</span></div>
       <div class="entry-meta">${issue.severity}${issue.medGiven ? ' · meds given' : ''}${issue.vetVisit ? ' · vet visit' : ''}${issue.medCost || issue.vetCost ? ' · ' + fmtMoney((issue.medCost||0)+(issue.vetCost||0)) : ''}</div>
