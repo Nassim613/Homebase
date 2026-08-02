@@ -1141,12 +1141,15 @@ async function renderEntryDetail() {
 
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
+    ${payeeLogoUrl(payee) ? `
+      <div style="width:76px;height:76px;border-radius:18px;overflow:hidden;margin:0 auto 14px;box-shadow:var(--shadow)">
+        <img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">
+      </div>
+    ` : ''}
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px">
-          <div class="entry-icon" style="width:36px;height:36px">
-            ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
-          </div>
+          ${!payeeLogoUrl(payee) ? `<div class="entry-icon" style="width:36px;height:36px"><i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i></div>` : ''}
           <div>
             <p style="font-size:16px;font-weight:600;margin:0">${esc(payee.name || cat.name || 'Entry')}</p>
             <p style="font-size:12px;color:var(--ink-soft);margin:2px 0 0">${esc(cat.name || '')}</p>
@@ -1219,6 +1222,43 @@ let entryReceiptDraft = null; // local base64 preview while uploading
 let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
 let entryReceiptUploading = false;
 
+function openStorePickerModal() {
+  const payees = (window.__payeesCache || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const currentVal = document.getElementById('f_store').value;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select store</p>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddStore('add')"><i class="ti ti-plus"></i> Add new store</button>
+    <div class="check-list" style="max-height:55vh">
+      ${payees.map((p) => `
+        <div class="list-row" onclick="selectStoreFromPicker('${p.id}')" style="${currentVal===p.id?'background:var(--gold-soft);border-radius:10px':''}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div>
+            <span>${esc(p.name)}</span>
+          </div>
+        </div>
+      `).join('') || '<div class="empty-state">No stores yet.</div>'}
+    </div>
+  `;
+  openModal();
+}
+function selectStoreFromPicker(id) {
+  document.getElementById('f_store').value = id;
+  closeModal();
+  updateStoreButtonDisplay();
+}
+async function updateStoreButtonDisplay() {
+  const el = document.getElementById('f_storeButtonContent');
+  if (!el) return;
+  const id = document.getElementById('f_store').value;
+  if (!id) { el.textContent = 'Select…'; return; }
+  const payees = window.__payeesCache || (await DB.getAll('payees'));
+  const p = payees.find((x) => x.id === id);
+  if (!p) { el.textContent = 'Select…'; return; }
+  const logo = payeeLogoUrl(p);
+  el.innerHTML = `${logo ? `<img src="${logo}" style="width:22px;height:22px;border-radius:6px;object-fit:cover;vertical-align:-6px;margin-right:8px">` : ''}${esc(p.name)}`;
+}
+
 async function renderAddEntry() {
   const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
@@ -1263,10 +1303,8 @@ async function renderAddEntry() {
     <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="f_amount" placeholder="$0.00" value="${src ? src.amount : ''}"></div>
 
     <div class="field"><label class="field-label">Store</label>
-      <select id="f_store">
-        <option value="">Select…</option>${payeeOptions}
-        <option value="__new">+ Add store</option>
-      </select>
+      <button type="button" class="btn" style="text-align:left" onclick="openStorePickerModal()"><span id="f_storeButtonContent">Select…</span></button>
+      <input type="hidden" id="f_store" value="${src && src.storeId ? src.storeId : ''}">
     </div>
 
     <div class="field"><label class="field-label">Description</label><input id="f_description" placeholder="What was this for?" value="${src ? esc(src.description || '') : ''}"></div>
@@ -1290,17 +1328,14 @@ async function renderAddEntry() {
     <button class="btn btn-primary" onclick="saveEntry()">Save entry</button>
   `;
 
-  window.__cars = cars; window.__projects = projects; window.__categories = categories;
+  window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
   if (src && src.categoryId) { document.getElementById('f_category').value = src.categoryId; onCategoryChange(true); }
-  if (src && src.storeId) document.getElementById('f_store').value = src.storeId;
   setType(src ? src.type : 'expense');
   if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
+  updateStoreButtonDisplay();
 
   document.getElementById('f_category').addEventListener('change', (e) => {
     if (e.target.value === '__new') return goAddCategory('add');
-  });
-  document.getElementById('f_store').addEventListener('change', (e) => {
-    if (e.target.value === '__new') return goAddStore('add');
   });
 }
 
@@ -1549,7 +1584,7 @@ async function saveStoreForm() {
   Sync.pushEntry('Stores', syncablePayee).then(() => { payee.synced = true; DB.put('payees', payee); });
   if (storeFormReturnTo === 'add') {
     currentView = 'add'; route();
-    setTimeout(() => { const sel = document.getElementById('f_store'); if (sel) sel.value = payee.id; }, 0);
+    setTimeout(() => { const sel = document.getElementById('f_store'); if (sel) { sel.value = payee.id; updateStoreButtonDisplay(); } }, 0);
   } else {
     currentView = 'categories'; route();
   }
