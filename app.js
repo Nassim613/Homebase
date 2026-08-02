@@ -32,6 +32,17 @@ function categoryColor(catId) {
   for (let i = 0; i < catId.length; i++) hash = (hash * 31 + catId.charCodeAt(i)) | 0;
   return CATEGORY_COLOR_PALETTE[Math.abs(hash) % CATEGORY_COLOR_PALETTE.length];
 }
+// Store logos can hold either a real uploaded photo (base64 data: URL), a real
+// resolved link (https://...), or a leftover raw path from the original spreadsheet
+// import (e.g. "-Payee Logo/xyz.png") that was never a working link. Only the first
+// two should ever be rendered as an <img> — the third just shows as a broken image.
+function payeeLogoUrl(payee) {
+  const candidates = [payee.logoLink, payee.logo];
+  for (const c of candidates) {
+    if (c && (c.startsWith('http://') || c.startsWith('https://') || c.startsWith('data:'))) return c;
+  }
+  return null;
+}
 
 // ---------- Header ----------
 function renderHeader() {
@@ -277,7 +288,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
   return `
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
-        ${(payee.logoLink || payee.logo) ? `<img src="${payee.logoLink || payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
+        ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
       </div>
       <div class="entry-body">
@@ -1120,7 +1131,7 @@ async function renderEntryDetail() {
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="entry-icon" style="width:36px;height:36px">
-            ${(payee.logoLink || payee.logo) ? `<img src="${payee.logoLink || payee.logo}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
+            ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft);font-size:18px"></i>`}
           </div>
           <div>
             <p style="font-size:16px;font-weight:600;margin:0">${esc(payee.name || cat.name || 'Entry')}</p>
@@ -1424,7 +1435,7 @@ function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; store
 
 async function renderStoreForm() {
   const existing = storeFormEditId ? await DB.get('payees', storeFormEditId) : null;
-  if (existing) { storeLogoDraft = existing.logo || null; storeLogoDriveUrl = existing.logoLink || null; }
+  if (existing) { storeLogoDraft = existing.logo || null; storeLogoDriveUrl = payeeLogoUrl({ logoLink: existing.logoLink }) || null; }
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
@@ -1556,7 +1567,7 @@ async function restoreCategory(id) {
 }
 function renderPayeeListRow(p) {
   return `<div class="list-row" onclick="goEditStore('${p.id}')">
-    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${(p.logoLink || p.logo) ? `<img src="${p.logoLink || p.logo}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
+    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
   </div>`;
 }
 
@@ -2174,10 +2185,19 @@ async function renderMore() {
   `;
 }
 
+const SYNC_PLAIN_LABEL = {
+  synced: { text: 'Up to date', icon: 'ti-check', color: '#0F6E56', bg: 'var(--sage-soft)' },
+  syncing: { text: 'Saving your changes…', icon: 'ti-refresh', color: 'var(--red)', bg: 'var(--rose-soft)' },
+  pending: { text: 'Saving your changes…', icon: 'ti-clock', color: 'var(--red)', bg: 'var(--rose-soft)' },
+  offline: { text: 'Not connected yet', icon: 'ti-cloud-off', color: 'var(--ink-soft)', bg: 'var(--line)' }
+};
+
 async function renderSyncDataPage() {
   const meta = await DB.get('settings', 'meta');
   const sheetUrl = meta ? meta.sheetUrl : '';
   const importCompleted = meta ? !!meta.importCompleted : false;
+  const importedAt = meta ? meta.importedAt : null;
+  const s = SYNC_PLAIN_LABEL[Sync.status] || SYNC_PLAIN_LABEL.offline;
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Sync & data</span></div>
@@ -2185,8 +2205,8 @@ async function renderSyncDataPage() {
     <div class="card tight">
       <label class="field-label">Google Sheet</label>
       ${sheetUrl && !editingSheetUrl ? `
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-link"></i> <span>Linked to a Sheet</span></span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-link"></i> <span>Connected</span></span>
           <button class="btn" style="width:auto;padding:8px 14px" onclick="editingSheetUrl=true;renderSyncDataPage()">Change</button>
         </div>
       ` : `
@@ -2194,34 +2214,45 @@ async function renderSyncDataPage() {
         <button class="btn btn-primary" onclick="saveSheetUrl()">Save</button>
         ${sheetUrl ? `<button class="btn" style="margin-top:8px" onclick="editingSheetUrl=false;renderSyncDataPage()">Cancel</button>` : ''}
       `}
+      <div class="divider" style="margin:14px 0"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="status-pill" id="moreSyncPill" style="background:${s.bg};color:${s.color}"><i class="ti ${s.icon}"></i> <span id="moreSyncText">${s.text}</span></span>
+        <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderSyncDataPage)">Retry now</button>
+      </div>
     </div>
-    <div class="card tight" style="display:flex;justify-content:space-between;align-items:center">
-      <span class="status-pill ${Sync.status}" id="moreSyncPill"><i class="ti ti-cloud"></i> <span id="moreSyncText"></span></span>
-      <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderSyncDataPage)">Retry sync</button>
-    </div>
+
     <div class="card tight">
-      <label class="field-label">Clean up duplicate categories, stores, etc.</label>
-      <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">If the same category or store shows up more than once with a different color (this can happen from testing on multiple devices before sync was set up), run this once. It merges duplicates by name, keeps everything's history intact, and re-syncs the fix.</p>
-      <button class="btn" id="cleanupBtn" onclick="runDimensionCleanup()">Find & merge duplicates</button>
-      <p id="cleanupStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
-    </div>
-    <div class="card tight">
-      <label class="field-label">Force full resync</label>
-      <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this after manually clearing all rows from your Sheet's tabs. This re-sends every record from scratch, guaranteeing exactly one clean copy of each — but it will create duplicates again if the Sheet still has old rows in it.</p>
-      <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderSyncDataPage();}">Force full resync</button>
-    </div>
-    <div class="card tight">
-      <label class="field-label">Import historical data</label>
+      <label class="field-label">Bring in your old spreadsheet data</label>
       ${importCompleted ? `
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-check"></i> <span>Already imported</span></span>
-          <button class="btn" style="width:auto;padding:8px 14px;font-size:12px" onclick="if(confirm('Only do this if you specifically need to re-import — it could create duplicate records if the same data is already in your app or Sheet.')){resetImportLock();}">Unlock</button>
+          <span class="status-pill" style="background:var(--sage-soft);color:#0F6E56"><i class="ti ti-check"></i> <span>Already done${importedAt ? ' · ' + fmtDate(importedAt) : ''}</span></span>
+          <button class="btn" style="width:auto;padding:8px 14px;font-size:12px" onclick="if(confirm('Only do this if you specifically need to re-import a corrected file — it could create duplicates if the same data is already here.')){resetImportLock();}">Unlock</button>
         </div>
+        <p style="font-size:11px;color:var(--ink-soft);margin-top:8px">This status is shared across every device you use — if you did this on your phone, your laptop will show the same "Already done" here too. You don't need to repeat it per device.</p>
       ` : `
-        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Upload a converted <code>import-data.json</code> file to bring in past entries, once. This file never leaves your device except to sync to your own Sheet afterward.</p>
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">If you have an old spreadsheet's worth of history to bring in, upload the converted file here. This is a one-time thing — do it on just one device, and it'll show up everywhere automatically from then on.</p>
         <input type="file" accept=".json" onchange="handleImportFile(event)" style="margin-bottom:8px">
       `}
       <p id="importStatus" style="font-size:12px;color:var(--ink-soft)"></p>
+    </div>
+
+    <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer">
+      <span>Advanced / troubleshooting <i class="ti collapse-chevron ti-chevron-right" style="font-size:11px;vertical-align:-1px"></i></span>
+      <span></span>
+    </div>
+    <div class="collapse-body" style="display:none">
+      <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 12px">You shouldn't need anything below this line for normal use — these are fix-it tools, only if something looks wrong.</p>
+      <div class="card tight">
+        <label class="field-label">Duplicate categories or stores</label>
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">If the same category or store shows up twice with different colors (can happen after testing on multiple devices), this merges the duplicates and fixes the sync — safe to run anytime.</p>
+        <button class="btn" id="cleanupBtn" onclick="runDimensionCleanup()">Find & merge duplicates</button>
+        <p id="cleanupStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
+      </div>
+      <div class="card tight">
+        <label class="field-label">Rebuild the Sheet from scratch</label>
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this right after you've manually deleted all the data rows in your Sheet's tabs. It re-sends everything fresh. If the Sheet still has old rows in it, this will create duplicates instead of fixing anything.</p>
+        <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderSyncDataPage();}">Force full resync</button>
+      </div>
     </div>
   `;
   updateMoreSyncPill();
@@ -2236,10 +2267,10 @@ async function resetImportLock() {
 function updateMoreSyncPill() {
   const pill = document.getElementById('moreSyncPill');
   if (!pill) return;
-  const map = { synced: ['ti-check', 'Synced'], syncing: ['ti-refresh', 'Syncing…'], pending: ['ti-clock', 'Pending'], offline: ['ti-cloud-off', 'Not connected'] };
-  const [icon, label] = map[Sync.status] || map.offline;
-  pill.className = 'status-pill ' + Sync.status;
-  pill.innerHTML = `<i class="ti ${icon}"></i> <span>${label}</span>`;
+  const s = SYNC_PLAIN_LABEL[Sync.status] || SYNC_PLAIN_LABEL.offline;
+  pill.style.background = s.bg;
+  pill.style.color = s.color;
+  pill.innerHTML = `<i class="ti ${s.icon}"></i> <span>${s.text}</span>`;
 }
 async function saveSheetUrl() {
   const url = document.getElementById('sheetUrlInput').value.trim();

@@ -173,8 +173,9 @@ function handleImportFile(e) {
       statusEl.innerHTML = `<b>Import complete.</b><br>${Object.entries(report.inserted).map(([k, v]) => `${v} ${k}`).join(', ')}.<br>Everything is saved locally now — it'll sync to your Sheet automatically in the background (this may take a while for a large import; watch the sync pill).`;
       const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
       meta.importCompleted = true;
+      meta.importedAt = todayStr();
       await DB.put('settings', meta);
-      Sync.pushEntry('Meta', { id: 'importFlag', key: 'importCompleted', value: true });
+      Sync.pushEntry('Meta', { id: 'importFlag', key: 'importCompleted', value: true, importedAt: meta.importedAt });
       Sync.retryAllPending();
       setTimeout(() => { if (typeof renderMore === 'function') renderMore(); }, 1500); // brief pause so the success message is visible before the screen switches to the locked state
     } catch (err) {

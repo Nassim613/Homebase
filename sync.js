@@ -98,10 +98,10 @@ const Sync = {
           const remoteFlag = JSON.parse(rawJson);
           if (remoteFlag.key === 'importCompleted' && remoteFlag.value === true) {
             const localMeta = (await DB.get('settings', 'meta')) || { id: 'meta' };
-            if (!localMeta.importCompleted) {
-              localMeta.importCompleted = true;
-              await DB.put('settings', localMeta);
-            }
+            let changed = false;
+            if (!localMeta.importCompleted) { localMeta.importCompleted = true; changed = true; }
+            if (remoteFlag.importedAt && !localMeta.importedAt) { localMeta.importedAt = remoteFlag.importedAt; changed = true; }
+            if (changed) await DB.put('settings', localMeta);
           }
         } catch (e) { /* ignore malformed row */ }
       }
