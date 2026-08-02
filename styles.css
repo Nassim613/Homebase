@@ -86,7 +86,7 @@ input[type="checkbox"] {
 .btn-toggle.active-transfer { background: var(--gold-soft); color: #8a6412; border-color: var(--gold); }
 .btn-toggle.active-neutral { background: var(--line); border-color: var(--ink-soft); }
 
-.chip-row { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .chip { font-size: 12px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-raised); white-space: nowrap; cursor: pointer; }
 .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 

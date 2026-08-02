@@ -67,14 +67,15 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${existing ? `openVehicle('${existing.id}')` : 'goGarageMain()'}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} vehicle</span></div>
-    <label class="field-label">Photos (up to 6)</label>
+    ${renderExistingLinksGrid(existing && existing.photoLinks, 'vehicle', 'Existing photos (tap × to remove)')}
+    <label class="field-label">Add photos (up to 6)</label>
     <div class="photo-grid" id="garagePhotoGrid">${renderPhotoGrid(garagePhotoDrafts, 'garage')}</div>
     <label class="field-label">Ownership picture</label>
     <div class="photo-slot" style="width:100%;height:70px;margin-bottom:14px" onclick="document.getElementById('ownershipInput').click()">
@@ -133,7 +134,7 @@ async function saveVehicle() {
     color: document.getElementById('v_color').value.trim(),
     condition: document.getElementById('v_condition').value.trim(),
     photos: [...garagePhotoDrafts], ownershipDoc: garageOwnershipDraft,
-    photoLinks: [...(existing && existing.photoLinks ? existing.photoLinks : []), ...garagePhotoLinkDrafts],
+    photoLinks: [...keptExistingLinks(existing && existing.photoLinks ? existing.photoLinks : [], 'vehicle'), ...garagePhotoLinkDrafts],
     sellerName: document.getElementById('v_sellerName').value.trim(),
     sellerEmail: document.getElementById('v_sellerEmail').value.trim(),
     sellerPhone: document.getElementById('v_sellerPhone').value.trim(),
@@ -145,7 +146,7 @@ async function saveVehicle() {
   await DB.put('vehicles', vehicle);
   const { photos, ownershipDoc, ...syncable } = vehicle; // photos/doc stay local-only; syncing base64 images would blow past Sheet cell limits
   Sync.pushEntry('Vehicles', syncable).then(() => { vehicle.synced = true; DB.put('vehicles', vehicle); });
-  garagePhotoDrafts = []; garagePhotoLinkDrafts = []; garageOwnershipDraft = null; vehicleEditId = null;
+  garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; vehicleEditId = null;
   currentView = existing ? 'vehicleDetail' : 'main'; route();
 }
 
@@ -167,7 +168,11 @@ async function renderVehicleDetail() {
       <i class="ti ti-edit" style="font-size:18px;color:var(--ink-soft);cursor:pointer" onclick="goEditVehicle('${vehicle.id}')"></i>
     </div>
     <div style="width:100%;height:120px;background:var(--surface-raised);border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:14px">
-      ${vehicle.photos && vehicle.photos[0] ? `<img src="${vehicle.photos[0]}" style="width:100%;height:100%;object-fit:cover;border-radius:12px">` : '<i class="ti ti-car" style="font-size:28px;color:var(--ink-soft)"></i>'}
+      ${(() => {
+        const heroLink = vehicle.photoLinks && vehicle.photoLinks.find((p) => p.isImage);
+        const heroSrc = heroLink ? heroLink.url : (vehicle.photos && vehicle.photos[0]);
+        return heroSrc ? `<img src="${heroSrc}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised);border-radius:12px">` : '<i class="ti ti-car" style="font-size:28px;color:var(--ink-soft)"></i>';
+      })()}
     </div>
     <span class="pill-sm ${vehicle.status==='owned'?'pill-resolved':''}" style="background:${vehicle.status==='owned'?'var(--sage-soft)':'var(--surface-raised)'};display:inline-block;margin-bottom:14px">${vehicle.status==='owned'?'Owned':'Sold'}</span>
 
@@ -190,7 +195,25 @@ async function renderVehicleDetail() {
     <button class="btn btn-primary" style="margin-bottom:16px" onclick="goAddCost()"><i class="ti ti-plus"></i> Add a cost</button>
 
     <p class="section-label">Related costs (${sortedCosts.length})</p>
-    ${sortedCosts.length ? sortedCosts.map((c) => renderCostRow(c, typeById, repairById)).join('') : '<div class="empty-state">No costs logged yet.</div>'}
+    ${sortedCosts.length ? (() => {
+      const byMonth = {};
+      sortedCosts.forEach((c) => { const mk = monthKey(c.date); (byMonth[mk] = byMonth[mk] || []).push(c); });
+      const months = Object.keys(byMonth).sort().reverse();
+      const controls = months.length > 1 ? collapseAllControls('relatedCostsList') : '';
+      const body = months.map((mk, i) => {
+        const monthCosts = byMonth[mk];
+        const total = monthCosts.reduce((s, c) => s + (c.totalCost || 0), 0);
+        const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        return `
+          <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+            <span>${label} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+            <span class="amt neg">${fmtMoney(total)}</span>
+          </div>
+          <div class="collapse-body" style="display:${i===0?'block':'none'}">${monthCosts.map((c) => renderCostRow(c, typeById, repairById)).join('')}</div>
+        `;
+      }).join('');
+      return controls + `<div id="relatedCostsList">${body}</div>`;
+    })() : '<div class="empty-state">No costs logged yet.</div>'}
   `;
 }
 function renderCostRow(c, typeById, repairById) {
@@ -231,7 +254,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = [];
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -249,7 +272,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
@@ -280,7 +303,8 @@ async function renderAddCost() {
       </div>
     </div>
     <div class="field"><label class="field-label">Comments</label><textarea id="c_comments" placeholder="What was done, what to check next time...">${existing ? esc(existing.comments||'') : ''}</textarea></div>
-    <label class="field-label">Receipt & photos</label>
+    ${renderExistingLinksGrid(existing && existing.receiptLinks, 'cost', 'Existing receipts (tap × to remove)')}
+    <label class="field-label">Add receipt & photos</label>
     <div class="photo-grid" id="garage2PhotoGrid">${renderPhotoGrid(garagePhotoDrafts, 'garage2')}</div>
     <button class="btn btn-primary" onclick="saveCost()">${existing ? 'Save changes' : 'Save cost'}</button>
   `;
@@ -381,13 +405,13 @@ async function saveCost() {
     place: document.getElementById('c_place').value,
     comments: document.getElementById('c_comments').value.trim(),
     photos: [...garagePhotoDrafts],
-    receiptLinks: [...(cost.receiptLinks || []), ...garage2PhotoLinkDrafts],
+    receiptLinks: [...keptExistingLinks(cost.receiptLinks || [], 'cost'), ...garage2PhotoLinkDrafts],
     synced: false
   });
   await DB.put('garageCosts', cost);
   const { photos, ...syncableCost } = cost;
   Sync.pushEntry('GarageCosts', syncableCost).then(() => { cost.synced = true; DB.put('garageCosts', cost); });
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; costEditId = null;
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = []; costEditId = null;
   currentView = 'vehicleDetail'; route();
 }
 
@@ -442,25 +466,34 @@ async function renderAllRepairs() {
   const typeById = Object.fromEntries(expenseTypes.map((t) => [t.id, t]));
   const repairById = Object.fromEntries(repairTypes.map((r) => [r.id, r]));
 
-  const byMonth = {};
-  costs.forEach((c) => { (byMonth[monthKey(c.date)] = byMonth[monthKey(c.date)] || []).push(c); });
-  const months = Object.keys(byMonth).sort().reverse();
+  const byCar = {};
+  costs.forEach((c) => { (byCar[c.vehicleId] = byCar[c.vehicleId] || []).push(c); });
+  const carIds = Object.keys(byCar).sort((a, b) => (vById[a]?.name||'').localeCompare(vById[b]?.name||''));
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goGarageMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">All repairs</span></div>
     <div class="search-box"><i class="ti ti-search"></i><input placeholder="Search comments, place, type..." oninput="filterAllRepairs(this.value)"></div>
-    <div id="allRepairsList">${months.map((m, i) => `
-      <div class="section-title" onclick="toggleMonthSection(this)"><span>${m}</span><i class="ti ti-chevron-${i===0?'down':'right'}" style="font-size:12px"></i></div>
-      <div class="month-body" style="display:${i===0?'block':'none'}">${byMonth[m].map((c) => renderAllRepairsRow(c, vById[c.vehicleId], typeById, repairById)).join('')}</div>
-    `).join('') || '<div class="empty-state">No costs logged yet.</div>'}</div>
+    ${collapseAllControls('allRepairsList')}
+    <div id="allRepairsList">${carIds.map((vid, i) => {
+      const carCosts = byCar[vid];
+      const total = carCosts.reduce((s, c) => s + (c.totalCost || 0), 0);
+      const vehicle = vById[vid];
+      return `
+        <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+          <span>${esc(vehicle ? vehicle.name : 'Unknown vehicle')} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+          <span class="amt neg">${fmtMoney(total)}</span>
+        </div>
+        <div class="collapse-body" style="display:${i===0?'block':'none'}">${carCosts.map((c) => renderAllRepairsRow(c, vehicle, typeById, repairById)).join('')}</div>
+      `;
+    }).join('') || '<div class="empty-state">No costs logged yet.</div>'}</div>
   `;
 }
 function renderAllRepairsRow(c, vehicle, typeById, repairById) {
   const type = typeById[c.expenseTypeId] || {};
   const repair = c.repairTypeId ? (repairById[c.repairTypeId]||{}).name : '';
-  return `<div class="entry-row"><div class="entry-icon"><i class="ti ${type.icon||'ti-tool'}" style="color:var(--gold)"></i></div>
-    <div class="entry-body"><div class="entry-top"><span class="entry-title">${esc(vehicle?vehicle.name:'')}</span><span class="entry-value">${c.totalCost?fmtMoney(c.totalCost):'—'}</span></div>
-    <div class="entry-meta">${fmtDate(c.date)} · ${esc(type.name||'')}${repair?' · '+esc(repair):''}</div>
+  return `<div class="entry-row" onclick="openCostDetail('${c.id}')"><div class="entry-icon"><i class="ti ${type.icon||'ti-tool'}" style="color:var(--gold)"></i></div>
+    <div class="entry-body"><div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}${c.receiptLinks && c.receiptLinks.length ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span><span class="entry-value">${c.totalCost?fmtMoney(c.totalCost):'—'}</span></div>
+    <div class="entry-meta">${fmtDate(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
     ${c.comments ? `<div class="entry-desc">${esc(c.comments)}</div>` : ''}</div></div>`;
 }
 function toggleMonthSection(el) {

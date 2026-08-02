@@ -89,7 +89,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -169,6 +169,21 @@ function toggleCollapse(el) {
 function netOf(list) {
   return list.filter((e) => e.type !== 'transfer').reduce((s, e) => s + (e.type === 'income' ? e.amount : -e.amount), 0);
 }
+// Generic collapse-all / expand-all for any list built from the collapseHeader +
+// .collapse-body pattern (Finance, Jazz, Reports, Garage's All Repairs, etc.) — just
+// give it the id of the wrapping container and it handles everything inside.
+function collapseAllIn(containerId, collapse) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll('.collapse-body').forEach((body) => { body.style.display = collapse ? 'none' : 'block'; });
+  container.querySelectorAll('.collapse-chevron').forEach((icon) => { icon.className = 'ti collapse-chevron ti-chevron-' + (collapse ? 'right' : 'down'); });
+}
+function collapseAllControls(containerId) {
+  return `<div style="display:flex;gap:8px;margin-bottom:10px">
+    <button class="btn" style="flex:1;padding:8px;font-size:12px" onclick="collapseAllIn('${containerId}', false)"><i class="ti ti-chevrons-down"></i> Show all</button>
+    <button class="btn" style="flex:1;padding:8px;font-size:12px" onclick="collapseAllIn('${containerId}', true)"><i class="ti ti-chevrons-up"></i> Collapse all</button>
+  </div>`;
+}
 
 async function renderFinanceMain() {
   const entries = (await getActiveEntries()).sort((a, b) => b.date.localeCompare(a.date));
@@ -225,6 +240,7 @@ async function renderFinanceMain() {
       <button class="chip ${financeSortBy==='amount'?'active':''}" onclick="setFinanceSort('amount')">Amount (highest first)</button>
     </div>
 
+    ${financeSortBy === 'date' ? collapseAllControls('entryList') : ''}
     <div id="entryList">${renderFinanceList(listSource, catById, payeeById)}</div>
   `;
 
@@ -371,17 +387,18 @@ async function renderFoodBudget() {
   $main.innerHTML = `
     <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Food budget</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Groceries + Meal Kit, grouped by week (Monday–Sunday)</p>
-    ${weeks.length ? weeks.map((wk, i) => {
+    ${weeks.length ? collapseAllControls('foodBudgetList') : ''}
+    <div id="foodBudgetList">${weeks.length ? weeks.map((wk, i) => {
       const weekEntries = byWeek[wk].sort((a, b) => b.date.localeCompare(a.date));
       const total = weekEntries.reduce((s, e) => s + e.amount, 0);
       return `
-        <div class="section-title" onclick="toggleMonthSection(this)" style="cursor:pointer">
-          <span>${getWeekLabel(wk)} <i class="ti ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer">
+          <span>${getWeekLabel(wk)} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
           <span class="amt neg">${fmtMoney(total)}</span>
         </div>
-        <div class="month-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
+        <div class="collapse-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
       `;
-    }).join('') : '<div class="empty-state">No Groceries or Meal Kit expenses logged yet.</div>'}
+    }).join('') : '<div class="empty-state">No Groceries or Meal Kit expenses logged yet.</div>'}</div>
   `;
 }
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
@@ -761,6 +778,7 @@ async function renderReportsStub() {
           <button class="chip ${reportsInlineSortBy==='date'?'active':''}" onclick="setReportsInlineSort('date')">Date</button>
           <button class="chip ${reportsInlineSortBy==='amount'?'active':''}" onclick="setReportsInlineSort('amount')">Amount (highest first)</button>
         </div>
+        ${reportsInlineSortBy === 'date' ? collapseAllControls('reportsEntriesList') : ''}
         <div id="reportsEntriesList">${renderReportsInlineEntries(rangeEntries, catById, payeeById)}</div>
       ` : ''}
     `}
@@ -1222,6 +1240,117 @@ let entryReceiptDraft = null; // local base64 preview while uploading
 let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
 let entryReceiptUploading = false;
 
+function openCategoryPickerModal() {
+  const categories = (window.__categories || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const currentVal = document.getElementById('f_category').value;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select category</p>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddCategory('add')"><i class="ti ti-plus"></i> Add new category</button>
+    <div class="check-list" style="max-height:55vh">
+      ${categories.map((c) => `
+        <div class="list-row" onclick="selectCategoryFromPicker('${c.id}')" style="${currentVal===c.id?'background:var(--gold-soft);border-radius:10px':''}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="icon-badge" style="background:${categoryColor(c.id)}22"><i class="ti ${c.icon || 'ti-tag'}" style="color:${categoryColor(c.id)}"></i></div>
+            <span style="color:${categoryColor(c.id)};font-weight:600">${esc(c.name)}</span>
+          </div>
+        </div>
+      `).join('') || '<div class="empty-state">No categories yet.</div>'}
+    </div>
+  `;
+  openModal();
+}
+function selectCategoryFromPicker(id) {
+  document.getElementById('f_category').value = id;
+  closeModal();
+  onCategoryChange();
+  updateCategoryButtonDisplay();
+}
+function updateCategoryButtonDisplay() {
+  const el = document.getElementById('f_categoryButtonContent');
+  if (!el) return;
+  const id = document.getElementById('f_category').value;
+  const categories = window.__categories || [];
+  const c = categories.find((x) => x.id === id);
+  if (!c) { el.textContent = 'Select…'; return; }
+  el.innerHTML = `<i class="ti ${c.icon || 'ti-tag'}" style="color:${categoryColor(c.id)};margin-right:8px"></i>${esc(c.name)}`;
+}
+
+// A small bundled cartoon illustration — a trembling, wide-eyed dog — auto-attached
+// to every "Behavior" issue so you don't have to find/upload the same image each time.
+// It's a plain SVG data URI, not an upload, so it works offline and needs no Drive round-trip.
+const JAZZ_BEHAVIOR_ILLUSTRATION_URL = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 220">
+  <rect width="300" height="220" fill="#F4EFE4"/>
+  <g stroke="#C97B84" stroke-width="2.5" stroke-linecap="round" opacity="0.55">
+    <path d="M60 40 Q64 50 58 58"/><path d="M50 46 Q56 54 52 64"/>
+    <path d="M230 44 Q226 54 232 62"/><path d="M242 38 Q236 48 240 58"/>
+  </g>
+  <ellipse cx="150" cy="176" rx="70" ry="14" fill="#2B2640" opacity="0.08"/>
+  <path d="M100 178 Q95 130 108 108 Q95 100 96 82 Q108 76 118 92 Q132 78 150 78 Q168 78 182 92 Q192 76 204 82 Q205 100 192 108 Q205 130 200 178 Z" fill="#D4783F"/>
+  <path d="M112 90 Q100 60 90 66 Q92 92 108 100 Z" fill="#B5568C"/>
+  <path d="M188 90 Q200 60 210 66 Q208 92 192 100 Z" fill="#B5568C"/>
+  <circle cx="128" cy="112" r="13" fill="#fff"/>
+  <circle cx="172" cy="112" r="13" fill="#fff"/>
+  <circle cx="128" cy="114" r="6.5" fill="#2B2640"/>
+  <circle cx="172" cy="114" r="6.5" fill="#2B2640"/>
+  <circle cx="125.5" cy="111.5" r="2" fill="#fff"/>
+  <circle cx="169.5" cy="111.5" r="2" fill="#fff"/>
+  <ellipse cx="150" cy="130" rx="7" ry="5" fill="#2B2640"/>
+  <path d="M138 142 Q150 136 162 142" stroke="#2B2640" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M104 122 Q98 128 104 134" stroke="#2B2640" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
+  <path d="M196 122 Q202 128 196 134" stroke="#2B2640" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.4"/>
+  <path d="M188 172 Q205 160 198 145" stroke="#D4783F" stroke-width="10" fill="none" stroke-linecap="round"/>
+</svg>
+`.trim());
+
+function openIssueTypePickerModal() {
+  const issueTypes = (window.__issueTypesCache || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const currentVal = document.getElementById('j_type').value;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select issue type</p>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();openIssueTypeModal(true)"><i class="ti ti-plus"></i> Add new type</button>
+    <div class="check-list" style="max-height:55vh">
+      ${issueTypes.map((t) => `
+        <div class="list-row" onclick="selectIssueTypeFromPicker('${t.id}')" style="${currentVal===t.id?'background:var(--gold-soft);border-radius:10px':''}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="icon-badge" style="background:var(--rose-soft)"><i class="ti ${t.icon || 'ti-stethoscope'}" style="color:var(--rose)"></i></div>
+            <span>${esc(t.name)}</span>
+          </div>
+        </div>
+      `).join('') || '<div class="empty-state">No issue types yet.</div>'}
+    </div>
+  `;
+  openModal();
+}
+function selectIssueTypeFromPicker(id) {
+  document.getElementById('j_type').value = id;
+  closeModal();
+  updateIssueTypeButtonDisplay();
+  attachBehaviorIllustrationIfNeeded(id);
+}
+function updateIssueTypeButtonDisplay() {
+  const el = document.getElementById('j_typeButtonContent');
+  if (!el) return;
+  const id = document.getElementById('j_type').value;
+  const t = (window.__issueTypesCache || []).find((x) => x.id === id);
+  if (!t) { el.textContent = 'Select…'; return; }
+  el.innerHTML = `<i class="ti ${t.icon || 'ti-stethoscope'}" style="color:var(--rose);margin-right:8px"></i>${esc(t.name)}`;
+}
+// If the chosen type is "Behavior" and no photo is attached yet this session, auto-add
+// the bundled illustration so you don't have to hunt for the same image every time.
+function attachBehaviorIllustrationIfNeeded(typeId) {
+  const t = (window.__issueTypesCache || []).find((x) => x.id === typeId);
+  if (!t || t.name.trim().toLowerCase() !== 'behavior') return;
+  const alreadyHasOne = jazzPhotoDrafts.includes(JAZZ_BEHAVIOR_ILLUSTRATION_URL);
+  if (alreadyHasOne) return;
+  jazzPhotoDrafts.push(JAZZ_BEHAVIOR_ILLUSTRATION_URL);
+  jazzPhotoLinkDrafts.push({ url: JAZZ_BEHAVIOR_ILLUSTRATION_URL, viewUrl: JAZZ_BEHAVIOR_ILLUSTRATION_URL, isImage: true });
+  const grid = document.getElementById('jazzPhotoGrid');
+  if (grid) grid.innerHTML = renderPhotoGrid(jazzPhotoDrafts, 'jazz');
+}
+
 function openStorePickerModal() {
   const payees = (window.__payeesCache || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const currentVal = document.getElementById('f_store').value;
@@ -1285,10 +1414,8 @@ async function renderAddEntry() {
     <div class="field"><label class="field-label">Date</label><input type="date" id="f_date" value="${src ? (src.__editId ? src.date : todayStr()) : todayStr()}"></div>
 
     <div class="field"><label class="field-label">Category</label>
-      <select id="f_category" onchange="onCategoryChange()">
-        <option value="">Select…</option>${catOptions}
-        <option value="__new">+ Add category</option>
-      </select>
+      <button type="button" class="btn" style="text-align:left" onclick="openCategoryPickerModal()"><span id="f_categoryButtonContent">Select…</span></button>
+      <input type="hidden" id="f_category" value="${src && src.categoryId ? src.categoryId : ''}">
     </div>
 
     <div id="conditionalFieldArea"></div>
@@ -1329,14 +1456,11 @@ async function renderAddEntry() {
   `;
 
   window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
-  if (src && src.categoryId) { document.getElementById('f_category').value = src.categoryId; onCategoryChange(true); }
+  if (src && src.categoryId) { onCategoryChange(true); }
   setType(src ? src.type : 'expense');
   if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
   updateStoreButtonDisplay();
-
-  document.getElementById('f_category').addEventListener('change', (e) => {
-    if (e.target.value === '__new') return goAddCategory('add');
-  });
+  updateCategoryButtonDisplay();
 }
 
 function setType(t) {
@@ -1499,7 +1623,7 @@ async function saveCategoryForm() {
   Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
   if (categoryFormReturnTo === 'add') {
     currentView = 'add'; route();
-    setTimeout(() => { const sel = document.getElementById('f_category'); if (sel) { sel.value = cat.id; onCategoryChange(); } }, 0);
+    setTimeout(() => { const sel = document.getElementById('f_category'); if (sel) { sel.value = cat.id; onCategoryChange(); updateCategoryButtonDisplay(); } }, 0);
   } else {
     currentView = 'categories'; route();
   }
@@ -1525,8 +1649,11 @@ async function renderStoreForm() {
     <div class="field"><label class="field-label">Name</label><input id="store_name" placeholder="e.g. Costco" value="${existing ? esc(existing.name) : ''}"></div>
 
     <label class="field-label">Logo</label>
-    <div class="photo-slot" style="width:90px;height:90px;margin-bottom:8px" onclick="document.getElementById('storeLogoInput').click()">
-      ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}" style="object-fit:contain">` : storeLogoDraft ? `<img src="${storeLogoDraft}" style="object-fit:contain">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div class="photo-slot" style="width:90px;height:90px" onclick="document.getElementById('storeLogoInput').click()">
+        ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}" style="object-fit:contain">` : storeLogoDraft ? `<img src="${storeLogoDraft}" style="object-fit:contain">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
+      </div>
+      ${(storeLogoDriveUrl || storeLogoDraft) && !storeLogoUploading ? `<button type="button" class="btn" style="width:auto;padding:8px 14px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeStoreLogo()">Remove</button>` : ''}
     </div>
     <p id="storeLogoStatus" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : '')}</p>
     <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
@@ -1557,6 +1684,11 @@ function removeEntryReceipt() {
   renderAddEntry();
 }
 
+function removeStoreLogo() {
+  storeLogoDraft = null;
+  storeLogoDriveUrl = null;
+  renderStoreForm();
+}
 function handleStoreLogoUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
@@ -1725,13 +1857,20 @@ async function renderJazzMain() {
     </div>
     <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn" style="flex:1" onclick="goJazzReport()"><i class="ti ti-chart-bar"></i> Report</button><button class="btn" style="flex:1" onclick="logJazzWeighIn()"><i class="ti ti-scale"></i> Log weigh-in</button></div>
     <div class="search-box"><i class="ti ti-search"></i><input id="jazzSearch" placeholder="Search issues, meds, notes..."></div>
-    <div id="jazzList">${days.length ? days.map((d) => renderJazzDayGroup(d, byDay[d], typeById)).join('') : '<div class="empty-state">Nothing logged yet. Tap + to add an issue or weigh-in.</div>'}</div>
+    ${collapseAllControls('jazzList')}
+    <div id="jazzList">${days.length ? days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, i === 0)).join('') : '<div class="empty-state">Nothing logged yet. Tap + to add an issue or weigh-in.</div>'}</div>
   `;
   document.getElementById('jazzSearch').addEventListener('input', (e) => filterJazz(e.target.value, days, byDay, typeById));
 }
 
-function renderJazzDayGroup(date, dayItems, typeById) {
-  return `<div class="section-title"><span>${fmtDate(date)}</span></div>${dayItems.map((it) => renderJazzItem(it, typeById)).join('')}`;
+function renderJazzDayGroup(date, dayItems, typeById, openByDefault) {
+  return `
+    <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+      <span>${fmtDateYear(date)} <i class="ti collapse-chevron ti-chevron-${openByDefault !== false ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+      <span></span>
+    </div>
+    <div class="collapse-body" style="display:${openByDefault !== false ? 'block' : 'none'}">${dayItems.map((it) => renderJazzItem(it, typeById)).join('')}</div>
+  `;
 }
 
 function renderJazzItem(it, typeById) {
@@ -1743,7 +1882,7 @@ function renderJazzItem(it, typeById) {
   const type = typeById[issue.typeId] || {};
   const firstPhoto = issue.photoLinks && issue.photoLinks.find((p) => p.isImage);
   return `<div class="entry-row" onclick="openIssue('${issue.id}')">
-    <div class="entry-icon">${firstPhoto ? `<img src="${firstPhoto.url}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${type.icon || 'ti-stethoscope'}" style="color:var(--rose)"></i>`}</div>
+    <div class="entry-icon" style="width:60px;height:60px;border-radius:12px">${firstPhoto ? `<img src="${firstPhoto.url}" style="width:100%;height:100%;object-fit:cover;border-radius:12px">` : `<i class="ti ${type.icon || 'ti-stethoscope'}" style="color:var(--rose);font-size:22px"></i>`}</div>
     <div class="entry-body">
       <div class="entry-top"><span class="entry-title">${esc(type.name || 'Issue')}</span><span class="pill-sm ${issue.status === 'ongoing' ? 'pill-ongoing' : 'pill-resolved'}">${issue.status === 'ongoing' ? 'Ongoing' : 'Resolved'}</span></div>
       <div class="entry-meta">${issue.severity}${issue.medGiven ? ' · meds given' : ''}${issue.vetVisit ? ' · vet visit' : ''}${issue.medCost || issue.vetCost ? ' · ' + fmtMoney((issue.medCost||0)+(issue.vetCost||0)) : ''}</div>
@@ -1755,7 +1894,7 @@ function renderJazzItem(it, typeById) {
 function filterJazz(q, days, byDay, typeById) {
   q = q.trim().toLowerCase();
   const list = document.getElementById('jazzList');
-  if (!q) { list.innerHTML = days.map((d) => renderJazzDayGroup(d, byDay[d], typeById)).join(''); return; }
+  if (!q) { list.innerHTML = days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, i === 0)).join(''); return; }
   const filtered = {};
   days.forEach((d) => {
     const m = byDay[d].filter((it) => {
@@ -1766,7 +1905,7 @@ function filterJazz(q, days, byDay, typeById) {
     if (m.length) filtered[d] = m;
   });
   const keys = Object.keys(filtered);
-  list.innerHTML = keys.length ? keys.map((d) => renderJazzDayGroup(d, filtered[d], typeById)).join('') : '<div class="empty-state">No matches.</div>';
+  list.innerHTML = keys.length ? keys.map((d, i) => renderJazzDayGroup(d, filtered[d], typeById, true)).join('') : '<div class="empty-state">No matches.</div>';
 }
 
 async function renderAddIssue() {
@@ -1780,12 +1919,8 @@ async function renderAddIssue() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit' : 'Log an'} issue</span></div>
     <div class="field"><label class="field-label">Started</label><input type="date" id="j_date" value="${src ? src.startDate : todayStr()}"></div>
     <div class="field"><label class="field-label">Issue type</label>
-      <div style="display:flex;gap:6px">
-        <select id="j_type" style="flex:1">
-          ${issueTypes.map((t) => `<option value="${t.id}" ${src && src.typeId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}
-        </select>
-        <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openIssueTypeModal(true)"><i class="ti ti-plus"></i></button>
-      </div>
+      <button type="button" class="btn" style="text-align:left" onclick="openIssueTypePickerModal()"><span id="j_typeButtonContent">Select…</span></button>
+      <input type="hidden" id="j_type" value="${src && src.typeId ? src.typeId : ''}">
     </div>
     <label class="field-label">Severity</label>
     <div class="btn-toggle-row" id="severityToggle">
@@ -1843,7 +1978,8 @@ async function renderAddIssue() {
       </div>
     </div>
 
-    <label class="field-label">Photos</label>
+    ${renderExistingLinksGrid(src && src.photoLinks, 'jazz', 'Existing photos (tap × to remove)')}
+    <label class="field-label">Add photos</label>
     <div class="photo-grid" id="jazzPhotoGrid">${renderPhotoGrid(jazzPhotoDrafts, 'jazz')}</div>
 
     <button class="btn btn-primary" onclick="saveIssue()">${src && src.__editId ? 'Save changes' : 'Save entry'}</button>
@@ -1853,6 +1989,8 @@ async function renderAddIssue() {
   selectSnow(document.querySelector('#snowToggle .btn-toggle'), src ? !!src.snowCovered : false);
   window.__medGiven = src ? !!src.medGiven : false;
   window.__vetVisit = src ? !!src.vetVisit : false;
+  window.__issueTypesCache = issueTypes;
+  updateIssueTypeButtonDisplay();
   if (src && src.__editId) {
     // Correctly select the matching toggle button (not always the first) when editing
     const sevIdx = { Mild: 0, Moderate: 1, Severe: 2 }[src.severity] || 0;
@@ -1955,6 +2093,41 @@ function handlePhotoUpload(e, prefix) {
     };
     reader.readAsDataURL(f);
   });
+}
+
+// Shared "view existing photos / remove one / add new ones" manager for the three
+// multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
+// indices got removed in THIS edit session — the actual removal only takes effect
+// when the form is saved, so backing out is always safe.
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [] };
+
+function renderExistingLinksGrid(links, context, label) {
+  if (!links || !links.length) return '';
+  const visible = links.map((l, i) => ({ l, i })).filter(({ i }) => !existingLinksRemoved[context].includes(i));
+  if (!visible.length) return '';
+  return `
+    <label class="field-label">${label}</label>
+    <div class="photo-grid" style="margin-bottom:14px">
+      ${visible.map(({ l, i }) => `
+        <div class="photo-slot" style="position:relative">
+          ${l.isImage
+            ? `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener"><img src="${l.url}"></a>`
+            : `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;height:100%;background:var(--surface)"><i class="ti ti-file-text" style="font-size:24px;color:var(--ink-soft)"></i></a>`}
+          <div onclick="removeExistingLink('${context}', ${i})" style="position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);display:flex;align-items:center;justify-content:center;cursor:pointer"><i class="ti ti-x" style="color:white;font-size:13px"></i></div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+function removeExistingLink(context, index) {
+  existingLinksRemoved[context].push(index);
+  if (context === 'jazz') renderAddIssue();
+  else if (context === 'vehicle') renderAddVehicle();
+  else if (context === 'cost') renderAddCost();
+}
+function keptExistingLinks(links, context) {
+  if (!links) return [];
+  return links.filter((_, i) => !existingLinksRemoved[context].includes(i));
 }
 
 const ISSUE_ICON_CHOICES = ['ti-stethoscope', 'ti-droplet', 'ti-brain', 'ti-eye', 'ti-ear', 'ti-bone', 'ti-nose', 'ti-bug'];
@@ -2065,13 +2238,13 @@ async function saveIssue() {
     vetClinicId: window.__vetVisit ? document.getElementById('j_vetClinic').value : null,
     vetCost: window.__vetVisit ? parseFloat(document.getElementById('j_vetCost').value) || 0 : 0,
     photos: [...jazzPhotoDrafts],
-    photoLinks: [...(isEdit && jazzDuplicate.photoLinks ? jazzDuplicate.photoLinks : []), ...jazzPhotoLinkDrafts],
+    photoLinks: [...keptExistingLinks(isEdit && jazzDuplicate.photoLinks ? jazzDuplicate.photoLinks : [], 'jazz'), ...jazzPhotoLinkDrafts],
     updates: isEdit ? jazzDuplicate.updates || [] : [],
     synced: false
   };
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
-  jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
+  jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
   currentView = isEdit ? 'issueDetail' : 'main';
   if (isEdit) currentIssueId = issue.id;
   route();
@@ -2079,7 +2252,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
-    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = [];
+    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = [];
     currentView = 'addIssue'; route();
   });
 }
@@ -2194,7 +2367,24 @@ async function renderWeightMain() {
     </div>
 
     <p class="section-label">History</p>
-    <div id="weightList">${sorted.length ? sorted.map((w) => `<div class="list-row" onclick="openWeightEntryModal('${w.id}')"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('') : '<div class="empty-state">No entries yet.</div>'}</div>
+    ${sorted.length ? (() => {
+      const byMonth = {};
+      sorted.forEach((w) => { const mk = monthKey(w.date); (byMonth[mk] = byMonth[mk] || []).push(w); });
+      const months = Object.keys(byMonth).sort().reverse();
+      const controls = months.length > 1 ? collapseAllControls('weightList') : '';
+      const body = months.map((mk, i) => {
+        const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        const monthEntries = byMonth[mk];
+        return `
+          <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+            <span>${label} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+            <span></span>
+          </div>
+          <div class="collapse-body" style="display:${i===0?'block':'none'}">${monthEntries.map((w) => `<div class="list-row" onclick="openWeightEntryModal('${w.id}')"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('')}</div>
+        `;
+      }).join('');
+      return controls + `<div id="weightList">${body}</div>`;
+    })() : '<div class="empty-state">No entries yet.</div>'}
   `;
 
   if (inRange.length >= 2 && window.Chart) {
