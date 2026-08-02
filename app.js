@@ -22,6 +22,9 @@ function fmtDate(d) {
 function fmtDateYear(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
+function fmtDateFull(d) {
+  return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+}
 function monthKey(d) { return d.slice(0, 7); }
 function esc(s) { return (s || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
@@ -43,6 +46,17 @@ function payeeLogoUrl(payee) {
   }
   return null;
 }
+
+// Deleted records are kept locally as tombstones (deleted:true) rather than actually
+// removed, so the delete itself can sync — otherwise a pull from another device would
+// just bring a "deleted" record right back. These helpers are what every display screen
+// should use instead of DB.getAll directly, so deleted items never show up in lists,
+// totals, or reports. Sync code intentionally does NOT use these — it needs to see
+// everything, deleted or not, for the tombstone itself to propagate.
+async function getActiveEntries() { return (await DB.getAll('entries')).filter((r) => !r.deleted); }
+async function getActiveWeightEntries() { return (await DB.getAll('weightEntries')).filter((r) => !r.deleted); }
+async function getActiveRecurring() { return (await DB.getAll('recurring')).filter((r) => !r.deleted); }
+async function getActiveGarageCosts() { return (await DB.getAll('garageCosts')).filter((r) => !r.deleted); }
 
 // ---------- Header ----------
 function renderHeader() {
@@ -157,7 +171,7 @@ function netOf(list) {
 }
 
 async function renderFinanceMain() {
-  const entries = (await DB.getAll('entries')).sort((a, b) => b.date.localeCompare(a.date));
+  const entries = (await getActiveEntries()).sort((a, b) => b.date.localeCompare(a.date));
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -293,7 +307,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
       </div>
       <div class="entry-body">
         <div class="entry-top">
-          <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}</span>
+          <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}${e.receiptLink ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span>
           <span class="entry-value ${valClass}">${sign}${fmtMoney(e.amount)}</span>
         </div>
         <div class="entry-meta"><span style="font-weight:700;color:${categoryColor(e.categoryId)}">${esc(cat.name || '')}</span>${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
@@ -336,7 +350,7 @@ function getWeekLabel(weekStartStr) {
 }
 
 async function renderFoodBudget() {
-  const entries = await DB.getAll('entries');
+  const entries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const payees = await DB.getAll('payees');
@@ -467,7 +481,7 @@ async function renderReportsPopupContent() {
 }
 
 async function selectReportsCell(categoryId, mk2) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const cat = catById[categoryId] || {};
@@ -477,7 +491,7 @@ async function selectReportsCell(categoryId, mk2) {
 }
 
 async function selectReportsCategoryAll(categoryId) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const cat = catById[categoryId] || {};
@@ -500,7 +514,7 @@ async function selectReportsCategoryAll(categoryId) {
 }
 
 async function selectReportsChartMonth(mk2, type) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   let entries = allEntries;
   if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
   if (reportsStoreFilter.length) entries = entries.filter((e) => reportsStoreFilter.includes(e.storeId));
@@ -510,7 +524,7 @@ async function selectReportsChartMonth(mk2, type) {
 }
 
 async function selectReportsChartCategory(categoryName) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catByName = Object.fromEntries(categories.map((c) => [c.name, c]));
   const cat = catByName[categoryName];
@@ -625,7 +639,7 @@ function setReportsTypeInModal(t) {
 }
 
 async function renderReportsStub() {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -798,7 +812,7 @@ function utilityEntriesFor(allEntries, storeId, year, monthNum) {
 }
 
 async function renderUtilitiesReport() {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const payees = await DB.getAll('payees');
   const keywords = ['hydro', 'enbridge', 'water'];
   const utilityStores = payees.filter((p) => keywords.some((k) => p.name.toLowerCase().includes(k))).sort((a,b) => a.name.localeCompare(b.name));
@@ -847,7 +861,7 @@ async function renderUtilitiesReport() {
   `;
 }
 async function selectUtilityCell(storeId, year, monthNum) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const payees = await DB.getAll('payees');
   const store = payees.find((p) => p.id === storeId) || {};
   const matches = utilityEntriesFor(allEntries, storeId, year, monthNum);
@@ -893,7 +907,7 @@ const VEHICLE_CAR_EXCLUDE = {
 };
 
 async function renderFinanceVehicleReport() {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const cars = (await DB.getAll('cars')).sort((a,b) => a.name.localeCompare(b.name));
   const gasCat = categories.find((c) => c.name.toLowerCase() === 'gas');
@@ -1015,7 +1029,7 @@ function vehicleOwnershipAmount(entries, carId, categoryId, allCarsId, realCarsC
   return total;
 }
 async function selectVehicleCell(carId, categoryId, mk2) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const cars = await DB.getAll('cars');
   const categories = await DB.getAll('categories');
   const car = cars.find((c) => c.id === carId) || {};
@@ -1027,7 +1041,7 @@ async function selectVehicleCell(carId, categoryId, mk2) {
 
 // ---------- Transfers report ----------
 async function renderTransfersReport() {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -1079,7 +1093,7 @@ async function renderTransfersReport() {
   `;
 }
 async function selectReportsCategoryTransfers(categoryId) {
-  const allEntries = await DB.getAll('entries');
+  const allEntries = await getActiveEntries();
   const matches = allEntries.filter((e) => e.type === 'transfer' && e.categoryId === categoryId);
   const categories = await DB.getAll('categories');
   const cat = categories.find((c) => c.id === categoryId) || {};
@@ -1190,11 +1204,20 @@ async function duplicateEntry() {
   currentView = 'add'; route();
 }
 async function deleteEntry() {
-  if (!confirm('Delete this entry? This can\'t be undone locally (though it may still exist as a row in your Sheet history).')) return;
-  await DB.delete('entries', currentEntryId);
+  if (!confirm('Delete this entry? This removes it everywhere it syncs to (all your devices and the Sheet history stays as a record, but it stops showing in the app).')) return;
+  const entry = await DB.get('entries', currentEntryId);
+  entry.deleted = true;
+  entry.synced = false;
+  await DB.put('entries', entry);
+  Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
   closeModal();
   renderFinanceMain();
 }
+
+let entryReceiptFormFor = undefined;
+let entryReceiptDraft = null; // local base64 preview while uploading
+let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
+let entryReceiptUploading = false;
 
 async function renderAddEntry() {
   const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
@@ -1202,6 +1225,14 @@ async function renderAddEntry() {
   const cars = await DB.getAll('cars');
   const projects = await DB.getAll('projects');
   const src = duplicateSource;
+
+  const formKey = src && src.__editId ? src.__editId : (src ? 'duplicate-' + (src.id || '') : 'new');
+  if (entryReceiptFormFor !== formKey) {
+    entryReceiptFormFor = formKey;
+    entryReceiptDraft = null;
+    entryReceiptLink = (src && src.__editId && src.receiptLink) ? src.receiptLink : null;
+    entryReceiptUploading = false;
+  }
 
   const catOptions = categories.map((c) => `<option value="${c.id}" ${src && src.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const payeeOptions = payees.map((p) => `<option value="${p.id}" ${src && src.storeId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -1239,6 +1270,22 @@ async function renderAddEntry() {
     </div>
 
     <div class="field"><label class="field-label">Description</label><input id="f_description" placeholder="What was this for?" value="${src ? esc(src.description || '') : ''}"></div>
+
+    <label class="field-label">Receipt</label>
+    <div class="card tight" style="background:var(--surface);margin-bottom:20px">
+      ${entryReceiptUploading ? `
+        <p style="font-size:12px;color:var(--ink-soft)"><i class="ti ti-loader-2"></i> Uploading to Drive…</p>
+      ` : entryReceiptLink ? `
+        ${entryReceiptLink.isImage ? `<img src="${entryReceiptLink.url}" style="width:100%;border-radius:10px;margin-bottom:10px;display:block">` : `<p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px"><i class="ti ti-file"></i> Receipt attached</p>`}
+        <div style="display:flex;gap:8px">
+          <a href="${entryReceiptLink.viewUrl || entryReceiptLink.url}" target="_blank" rel="noopener" class="btn" style="text-align:center;text-decoration:none">View full</a>
+          <button type="button" class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeEntryReceipt()">Remove</button>
+        </div>
+      ` : `
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Attach a photo of the receipt — it uploads to your Drive automatically and shows up on every device.</p>
+        <input type="file" accept="image/*,.pdf" onchange="handleEntryReceiptUpload(event)">
+      `}
+    </div>
 
     <button class="btn btn-primary" onclick="saveEntry()">Save entry</button>
   `;
@@ -1455,6 +1502,26 @@ async function renderStoreForm() {
     <button class="btn btn-primary" onclick="saveStoreForm()">Save store</button>
   `;
 }
+function handleEntryReceiptUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    entryReceiptDraft = reader.result;
+    entryReceiptUploading = true;
+    renderAddEntry();
+    const result = await Sync.uploadPhoto(entryReceiptDraft, 'Finance Receipts', (document.getElementById('f_description')?.value || 'receipt').trim());
+    entryReceiptUploading = false;
+    if (result) entryReceiptLink = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, column: 'Receipt' };
+    renderAddEntry();
+  };
+  reader.readAsDataURL(f);
+}
+function removeEntryReceipt() {
+  entryReceiptLink = null;
+  entryReceiptDraft = null;
+  renderAddEntry();
+}
+
 function handleStoreLogoUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
@@ -1462,9 +1529,9 @@ function handleStoreLogoUpload(e) {
     storeLogoDraft = reader.result;
     storeLogoUploading = true;
     renderStoreForm();
-    const url = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (document.getElementById('store_name')?.value || 'logo').trim());
+    const result = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (document.getElementById('store_name')?.value || 'logo').trim());
     storeLogoUploading = false;
-    if (url) storeLogoDriveUrl = url;
+    if (result) storeLogoDriveUrl = result.url;
     renderStoreForm();
   };
   reader.readAsDataURL(f);
@@ -1519,11 +1586,13 @@ async function saveEntry() {
     projectName: projectObj ? projectObj.name : '',
     transferDirection: type === 'transfer' ? (window.__transferDirection || 'out') : null,
     carSplit: carSplitFinal,
+    receiptLink: entryReceiptLink || null,
     synced: false
   };
   await DB.put('entries', entry);
   Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
   duplicateSource = null; carSplitDraft = []; window.__transferDirection = null;
+  entryReceiptFormFor = undefined; entryReceiptDraft = null; entryReceiptLink = null; entryReceiptUploading = false;
   currentView = 'main';
   route();
 }
@@ -1598,7 +1667,7 @@ function goJazzReport() { currentView = 'report'; route(); }
 
 async function renderJazzMain() {
   const issues = (await DB.getAll('jazzIssues')).sort((a, b) => b.startDate.localeCompare(a.startDate));
-  const weighIns = (await DB.getAll('weightEntries')).filter((w) => w.subject === 'jazz').sort((a, b) => b.date.localeCompare(a.date));
+  const weighIns = (await getActiveWeightEntries()).filter((w) => w.subject === 'jazz').sort((a, b) => b.date.localeCompare(a.date));
   const issueTypes = await DB.getAll('issueTypes');
   const typeById = Object.fromEntries(issueTypes.map((t) => [t.id, t]));
 
@@ -2036,7 +2105,7 @@ function selectWeightPerson(person) { weightPerson = person; renderWeightMain();
 function setWeightRange(r) { weightRange = r; renderWeightMain(); }
 
 async function renderWeightMain() {
-  const all = (await DB.getAll('weightEntries')).filter((w) => w.subject === weightPerson.toLowerCase());
+  const all = (await getActiveWeightEntries()).filter((w) => w.subject === weightPerson.toLowerCase());
   const sorted = [...all].sort((a, b) => b.date.localeCompare(a.date));
   const latest = sorted[0];
   const prev = sorted[1];
@@ -2135,8 +2204,12 @@ async function saveWeightEdit() {
   renderWeightMain();
 }
 async function deleteWeightEntry() {
-  if (!confirm('Delete this weight entry? This can\'t be undone locally.')) return;
-  await DB.delete('weightEntries', weightEditId);
+  if (!confirm('Delete this weight entry? This removes it everywhere it syncs to.')) return;
+  const w = await DB.get('weightEntries', weightEditId);
+  w.deleted = true;
+  w.synced = false;
+  await DB.put('weightEntries', w);
+  Sync.pushEntry('Weight', w).then(() => DB.put('weightEntries', w));
   closeModal();
   renderWeightMain();
 }
@@ -2415,7 +2488,7 @@ function nextOccurrence(rule, afterDateStr) {
 // Generates any occurrences due up to and including today, for every rule. Safe to
 // call repeatedly — only ever moves forward from each rule's own lastGeneratedDate.
 async function processRecurringEntries() {
-  const rules = await DB.getAll('recurring');
+  const rules = await getActiveRecurring();
   const today = todayStr();
   for (const rule of rules) {
     let cursor = nextOccurrence(rule, rule.lastGeneratedDate || null);
@@ -2453,7 +2526,7 @@ function recurringScheduleLabel(rule) {
 }
 
 async function renderRecurringManager() {
-  const rules = (await DB.getAll('recurring')).sort((a, b) => (a.description||'').localeCompare(b.description||''));
+  const rules = (await getActiveRecurring()).sort((a, b) => (a.description||'').localeCompare(b.description||''));
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Recurring entries</span></div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="openRecurringModal()"><i class="ti ti-plus"></i> Add recurring entry</button>
@@ -2559,7 +2632,12 @@ async function saveRecurring() {
 }
 async function deleteRecurring(id) {
   if (!confirm('Delete this recurring entry? Past generated entries stay in your history — this only stops future ones.')) return;
-  await DB.delete('recurring', id);
+  const rule = await DB.get('recurring', id);
+  rule.deleted = true;
+  rule.active = false;
+  rule.synced = false;
+  await DB.put('recurring', rule);
+  Sync.pushEntry('Recurring', rule).then(() => DB.put('recurring', rule));
   closeModal();
   renderRecurringManager();
 }

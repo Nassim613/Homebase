@@ -192,7 +192,7 @@ const Sync = {
         body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName })
       });
       const data = await res.json();
-      return data.ok ? data.url : null;
+      return data.ok ? { url: data.url, viewUrl: data.viewUrl, isImage: data.isImage } : null;
     } catch (err) {
       console.warn('Photo upload failed:', err.message);
       return null;

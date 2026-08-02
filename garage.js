@@ -11,7 +11,7 @@ let garageReportMechDrill = false;
 function goGarageMain() { currentView = 'main'; route(); }
 
 async function computeVehicleTotals(vehicleId) {
-  const costs = (await DB.getAll('garageCosts')).filter((c) => c.vehicleId === vehicleId);
+  const costs = (await getActiveGarageCosts()).filter((c) => c.vehicleId === vehicleId);
   const vehicle = await DB.get('vehicles', vehicleId);
   const costSum = costs.reduce((s, c) => s + (c.totalCost || 0), 0);
   const totalSpent = (vehicle.boughtFor || 0) + costSum;
@@ -180,7 +180,7 @@ async function renderVehicleDetail() {
     <div class="card tight">
       ${vehicle.vin ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">VIN</span><span style="font-size:12px">${esc(vehicle.vin)}</span></div>` : ''}
       ${vehicle.condition ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Condition</span><span style="font-size:12px">${esc(vehicle.condition)}</span></div>` : ''}
-      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date bought</span><span style="font-size:12px">${fmtDate(vehicle.dateBought)}</span></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date bought</span><span style="font-size:12px">${fmtDateFull(vehicle.dateBought)}</span></div>
     </div>
     ${renderLinkPreviewList(vehicle.photoLinks, 'Photo')}
 
@@ -198,7 +198,7 @@ function renderCostRow(c, typeById, repairById) {
   return `<div class="entry-row" onclick="openCostDetail('${c.id}')">
     <div class="entry-icon"><i class="ti ${type.icon || 'ti-tool'}" style="color:var(--gold)"></i></div>
     <div class="entry-body">
-      <div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}</span><span class="entry-value">${c.totalCost ? fmtMoney(c.totalCost) : '—'}</span></div>
+      <div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}${c.receiptLinks && c.receiptLinks.length ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span><span class="entry-value">${c.totalCost ? fmtMoney(c.totalCost) : '—'}</span></div>
       <div class="entry-meta">${fmtDate(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
       ${c.comments ? `<div class="entry-desc">${esc(c.comments)}</div>` : ''}
     </div>
@@ -234,8 +234,13 @@ function editCostFromDetail() {
   currentView = 'addCost'; route();
 }
 async function deleteCostFromDetail() {
-  if (!confirm('Delete this cost entry? This can\'t be undone locally.')) return;
-  await DB.delete('garageCosts', costDetailId);
+  if (!confirm('Delete this cost entry? This removes it everywhere it syncs to.')) return;
+  const cost = await DB.get('garageCosts', costDetailId);
+  cost.deleted = true;
+  cost.synced = false;
+  await DB.put('garageCosts', cost);
+  const { photos, ...syncableCost } = cost;
+  Sync.pushEntry('GarageCosts', syncableCost).then(() => { cost.synced = true; DB.put('garageCosts', cost); });
   closeModal();
   renderVehicleDetail();
 }
@@ -426,7 +431,7 @@ async function confirmSale(totalSpent) {
 // ---------- All Repairs ----------
 function goGarageAllRepairs() { currentView = 'allRepairs'; route(); }
 async function renderAllRepairs() {
-  const costs = (await DB.getAll('garageCosts')).sort((a, b) => b.date.localeCompare(a.date));
+  const costs = (await getActiveGarageCosts()).sort((a, b) => b.date.localeCompare(a.date));
   const vehicles = await DB.getAll('vehicles');
   const expenseTypes = await DB.getAll('expenseTypes');
   const repairTypes = await DB.getAll('repairTypes');
@@ -464,7 +469,7 @@ function toggleMonthSection(el) {
 }
 async function filterAllRepairs(q) {
   q = q.trim().toLowerCase();
-  const costs = (await DB.getAll('garageCosts')).sort((a, b) => b.date.localeCompare(a.date));
+  const costs = (await getActiveGarageCosts()).sort((a, b) => b.date.localeCompare(a.date));
   const vehicles = await DB.getAll('vehicles');
   const expenseTypes = await DB.getAll('expenseTypes');
   const repairTypes = await DB.getAll('repairTypes');
@@ -492,7 +497,7 @@ function withinRange(dateStr, range) {
 
 async function renderGarageReport() {
   const vehicles = await DB.getAll('vehicles');
-  const costs = await DB.getAll('garageCosts');
+  const costs = await getActiveGarageCosts();
   const expenseTypes = await DB.getAll('expenseTypes');
   const repairTypes = await DB.getAll('repairTypes');
   const typeById = Object.fromEntries(expenseTypes.map((t) => [t.id, t]));
@@ -606,7 +611,7 @@ function drawGarageTypeChart(typeSpend) {
 async function drawMechChart() {
   const ctx = document.getElementById('garageMechChart');
   if (!ctx || !window.Chart) return;
-  const costs = await DB.getAll('garageCosts');
+  const costs = await getActiveGarageCosts();
   const repairTypes = await DB.getAll('repairTypes');
   const expenseTypes = await DB.getAll('expenseTypes');
   const mechType = expenseTypes.find((t) => t.name === 'Mechanical repairs');

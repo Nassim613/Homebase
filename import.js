@@ -12,7 +12,13 @@ async function mergeDimension(storeName, incomingItems) {
     const key = (item.name || '').trim().toLowerCase();
     const match = existingByName.get(key);
     if (match) {
-      idMap[item.id] = match.id; // reuse the existing record's ID, don't duplicate
+      // Keep the existing record's ID (so nothing that already points to it breaks), but
+      // refresh its other fields with the incoming data — e.g. a newly resolved logoLink
+      // that a first import couldn't have had yet.
+      const updated = { ...match, ...item, id: match.id, synced: false };
+      await DB.put(storeName, updated);
+      existingByName.set(key, updated);
+      idMap[item.id] = match.id;
     } else {
       await DB.put(storeName, item);
       existingByName.set(key, item);
