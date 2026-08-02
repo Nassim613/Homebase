@@ -67,8 +67,8 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
@@ -133,6 +133,7 @@ async function saveVehicle() {
     color: document.getElementById('v_color').value.trim(),
     condition: document.getElementById('v_condition').value.trim(),
     photos: [...garagePhotoDrafts], ownershipDoc: garageOwnershipDraft,
+    photoLinks: [...(existing && existing.photoLinks ? existing.photoLinks : []), ...garagePhotoLinkDrafts],
     sellerName: document.getElementById('v_sellerName').value.trim(),
     sellerEmail: document.getElementById('v_sellerEmail').value.trim(),
     sellerPhone: document.getElementById('v_sellerPhone').value.trim(),
@@ -144,7 +145,7 @@ async function saveVehicle() {
   await DB.put('vehicles', vehicle);
   const { photos, ownershipDoc, ...syncable } = vehicle; // photos/doc stay local-only; syncing base64 images would blow past Sheet cell limits
   Sync.pushEntry('Vehicles', syncable).then(() => { vehicle.synced = true; DB.put('vehicles', vehicle); });
-  garagePhotoDrafts = []; garageOwnershipDraft = null; vehicleEditId = null;
+  garagePhotoDrafts = []; garagePhotoLinkDrafts = []; garageOwnershipDraft = null; vehicleEditId = null;
   currentView = existing ? 'vehicleDetail' : 'main'; route();
 }
 
@@ -230,6 +231,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -247,7 +249,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
@@ -379,12 +381,13 @@ async function saveCost() {
     place: document.getElementById('c_place').value,
     comments: document.getElementById('c_comments').value.trim(),
     photos: [...garagePhotoDrafts],
+    receiptLinks: [...(cost.receiptLinks || []), ...garage2PhotoLinkDrafts],
     synced: false
   });
   await DB.put('garageCosts', cost);
   const { photos, ...syncableCost } = cost;
   Sync.pushEntry('GarageCosts', syncableCost).then(() => { cost.synced = true; DB.put('garageCosts', cost); });
-  garagePhotoDrafts = []; costEditId = null;
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; costEditId = null;
   currentView = 'vehicleDetail'; route();
 }
 

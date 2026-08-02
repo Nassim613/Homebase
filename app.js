@@ -89,7 +89,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -1882,20 +1882,41 @@ async function saveVetClinic() {
 function renderPhotoGrid(drafts, prefix) {
   let html = drafts.map((d, i) => `<div class="photo-slot"><img src="${d}"></div>`).join('');
   if (drafts.length < 6) html += `<div class="photo-slot" onclick="document.getElementById('${prefix}FileInput').click()"><i class="ti ti-plus"></i></div>`;
-  html += `<input type="file" id="${prefix}FileInput" accept="image/*" multiple style="display:none" onchange="handlePhotoUpload(event,'${prefix}')">`;
+  html += `<input type="file" id="${prefix}FileInput" accept="image/*,.pdf" multiple style="display:none" onchange="handlePhotoUpload(event,'${prefix}')">`;
   return html;
 }
 function getPhotoDraftArray(prefix) {
   if (prefix === 'jazz') return jazzPhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
+// Where newly-uploaded links for this session go, and which Drive folder they land in.
+// Kept separate from each entity's existing photoLinks/receiptLinks (from a historical
+// import, say) — those are preserved separately and the two get merged together on save.
+const PHOTO_LINK_CONTEXT = {
+  jazz: { getArray: () => jazzPhotoLinkDrafts, folder: 'Jazz Photos' },
+  garage: { getArray: () => garagePhotoLinkDrafts, folder: 'Vehicle Photos' },
+  garage2: { getArray: () => garage2PhotoLinkDrafts, folder: 'Garage Receipts' }
+};
+let jazzPhotoLinkDrafts = [];
+let garagePhotoLinkDrafts = [];
+let garage2PhotoLinkDrafts = [];
+
 function handlePhotoUpload(e, prefix) {
   const files = Array.from(e.target.files);
   const target = getPhotoDraftArray(prefix);
+  const ctx = PHOTO_LINK_CONTEXT[prefix];
   let remaining = files.length;
   files.forEach((f) => {
     const reader = new FileReader();
-    reader.onload = () => { target.push(reader.result); if (--remaining === 0) { const g = document.getElementById(prefix+'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); } };
+    reader.onload = async () => {
+      const dataUrl = reader.result;
+      target.push(dataUrl);
+      if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
+      if (ctx) {
+        const result = await Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo');
+        if (result) ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+      }
+    };
     reader.readAsDataURL(f);
   });
 }
@@ -2008,12 +2029,13 @@ async function saveIssue() {
     vetClinicId: window.__vetVisit ? document.getElementById('j_vetClinic').value : null,
     vetCost: window.__vetVisit ? parseFloat(document.getElementById('j_vetCost').value) || 0 : 0,
     photos: [...jazzPhotoDrafts],
+    photoLinks: [...(isEdit && jazzDuplicate.photoLinks ? jazzDuplicate.photoLinks : []), ...jazzPhotoLinkDrafts],
     updates: isEdit ? jazzDuplicate.updates || [] : [],
     synced: false
   };
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
-  jazzPhotoDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
+  jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
   currentView = isEdit ? 'issueDetail' : 'main';
   if (isEdit) currentIssueId = issue.id;
   route();
@@ -2021,6 +2043,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
+    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = [];
     currentView = 'addIssue'; route();
   });
 }
