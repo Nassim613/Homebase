@@ -1138,6 +1138,7 @@ async function renderEntryDetail() {
       ${project ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Project</span><span style="font-size:12px">${esc(project.name)}</span></div>` : ''}
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Synced</span><span style="font-size:12px">${entry.synced ? 'Yes' : 'Pending'}</span></div>
     </div>
+    ${renderLinkPreview(entry.receiptLink, 'Receipt')}
 
     <button class="btn" style="margin-bottom:10px" onclick="editEntry()"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="margin-bottom:10px" onclick="duplicateEntry()"><i class="ti ti-copy"></i> Duplicate</button>
@@ -1145,6 +1146,23 @@ async function renderEntryDetail() {
     <button class="btn" onclick="if(modalBackStack){modalBackStack();}else{closeModal();}">${modalBackStack ? 'Back' : 'Close'}</button>
   `;
   openModal();
+}
+
+// Shared across Finance receipts, Jazz photos, Vehicle photos, Garage receipts.
+// Real images (jpg/png/etc) show as an actual inline thumbnail you can tap to open
+// full-size; everything else (PDFs, etc) shows as a plain "View" link instead,
+// since those can't be embedded as an <img>.
+function renderLinkPreview(link, label) {
+  if (!link || !link.url) return '';
+  const openUrl = link.viewUrl || link.url;
+  if (link.isImage) {
+    return `<div class="card tight" style="margin-top:10px"><p class="field-label" style="margin-bottom:8px">${esc(label)}</p><a href="${openUrl}" target="_blank" rel="noopener"><img src="${link.url}" style="width:100%;border-radius:10px;display:block"></a></div>`;
+  }
+  return `<div class="card tight" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center"><span class="field-label" style="margin:0">${esc(label)}</span><a href="${openUrl}" target="_blank" rel="noopener" class="btn" style="width:auto;padding:8px 14px;text-decoration:none"><i class="ti ti-external-link"></i> View</a></div>`;
+}
+function renderLinkPreviewList(links, label) {
+  if (!links || !links.length) return '';
+  return links.map((l, i) => renderLinkPreview(l, links.length > 1 ? `${label} ${i + 1}` : label)).join('');
 }
 
 async function editEntry() {
@@ -1945,6 +1963,7 @@ async function renderIssueDetail() {
 
     <div class="thread-item"><p class="meta">${fmtDate(issue.startDate)} · ${issue.severity}</p><p class="note">${esc(issue.description||'')}</p>${issue.medGiven ? `<p class="meta">Medication: ${esc(issue.medName)}</p>` : ''}${issue.weather || issue.stool || issue.snowCovered ? `<p class="meta">${[issue.weather, issue.snowCovered ? 'Snow covered' : '', issue.stool ? 'Stool: ' + issue.stool : ''].filter(Boolean).join(' · ')}</p>` : ''}</div>
     ${(issue.updates||[]).map((u) => `<div class="thread-item"><p class="meta">${fmtDate(u.date)} · ${u.severity}</p><p class="note">${esc(u.note)}</p></div>`).join('')}
+    ${renderLinkPreviewList(issue.photoLinks, 'Photo')}
 
     <button class="btn" style="margin-bottom:10px" onclick="editIssue('${issue.id}')"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="margin-bottom:10px" onclick="addIssueUpdate()"><i class="ti ti-plus"></i> Add update</button>

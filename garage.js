@@ -182,6 +182,7 @@ async function renderVehicleDetail() {
       ${vehicle.condition ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Condition</span><span style="font-size:12px">${esc(vehicle.condition)}</span></div>` : ''}
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date bought</span><span style="font-size:12px">${fmtDate(vehicle.dateBought)}</span></div>
     </div>
+    ${renderLinkPreviewList(vehicle.photoLinks, 'Photo')}
 
     ${vehicle.status === 'owned' ? `<button class="btn" style="margin-bottom:10px" onclick="goSellVehicle()"><i class="ti ti-tag"></i> Mark as sold</button>` : `<div class="card tight"><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Buyer</span><span style="font-size:12px">${esc(vehicle.buyerName||'—')}</span></div><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date sold</span><span style="font-size:12px">${fmtDate(vehicle.dateSold)}</span></div></div>`}
 
@@ -221,6 +222,7 @@ async function openCostDetail(id) {
       ${cost.mileage ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Mileage</span><span style="font-size:12px">${cost.mileage.toLocaleString()} km</span></div>` : ''}
       ${cost.comments ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Comments</span><span style="font-size:12px;text-align:right;max-width:60%">${esc(cost.comments)}</span></div>` : ''}
     </div>
+    ${renderLinkPreviewList(cost.receiptLinks, 'Receipt')}
     <button class="btn" style="margin-bottom:10px" onclick="editCostFromDetail()"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteCostFromDetail()"><i class="ti ti-trash"></i> Delete</button>
   `;
@@ -263,10 +265,12 @@ async function renderAddCost() {
     <div class="field"><label class="field-label">Total cost</label><input type="number" step="0.01" id="c_cost" placeholder="$0.00 (optional)" value="${existing && existing.totalCost ? existing.totalCost : ''}"></div>
     <div class="field"><label class="field-label">Mileage</label><input type="number" id="c_mileage" placeholder="km at time of service" value="${existing && existing.mileage ? existing.mileage : ''}"></div>
     <div class="field"><label class="field-label">Place</label>
-      <select id="c_place" onchange="if(this.value==='__new') openGaragePlaceModal()">
-        ${places.map((p) => `<option value="${p.id}" ${existing && existing.place===p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-        <option value="__new">+ Add place</option>
-      </select>
+      <div style="display:flex;gap:6px">
+        <select id="c_place" style="flex:1">
+          ${places.map((p) => `<option value="${p.id}" ${existing && existing.place===p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+        <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openGaragePlaceModal()"><i class="ti ti-plus"></i></button>
+      </div>
     </div>
     <div class="field"><label class="field-label">Comments</label><textarea id="c_comments" placeholder="What was done, what to check next time...">${existing ? esc(existing.comments||'') : ''}</textarea></div>
     <label class="field-label">Receipt & photos</label>
@@ -285,7 +289,7 @@ function onExpenseTypeChange() {
   const opt = sel.selectedOptions[0];
   const area = document.getElementById('repairTypeArea');
   if (opt && opt.dataset.repair === '1') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-settings"></i> Repair type</label><select id="c_repairType" onchange="if(this.value==='__new') openGarageRepairTypeModal()">${(window.__repairTypesCache||[]).map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}<option value="__new">+ Add type</option></select></div>`;
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-settings"></i> Repair type</label><div style="display:flex;gap:6px"><select id="c_repairType" style="flex:1">${(window.__repairTypesCache||[]).map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openGarageRepairTypeModal()"><i class="ti ti-plus"></i></button></div></div>`;
   } else {
     area.innerHTML = '';
   }
