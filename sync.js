@@ -35,9 +35,23 @@ const Sync = {
     this.listeners.forEach((fn) => fn(s));
   },
 
+  // Bootstrap fallback: if this device's local copy of the Sheet URL was ever wiped
+  // (browsers — especially iOS Safari — can silently clear PWA storage under storage
+  // pressure or after inactivity), fall back to the known-good deployed URL rather than
+  // silently going "not connected." A device recovering this way also auto-heals the
+  // "imported data only shows on one device" symptom, since that's really the same
+  // root cause: no URL means no pulling, means it just looks empty.
+  DEFAULT_SHEET_URL: 'https://script.google.com/macros/s/AKfycbxIPtOx0K2XiZnk1Rb99mgpMKJkgPx2vYyXELYlqgeEonYuDnKSVUS1WuksL2y9So32SQ/exec',
+
   async getUrl() {
     const meta = await DB.get('settings', 'meta');
-    return meta ? meta.sheetUrl : '';
+    if (meta && meta.sheetUrl) return meta.sheetUrl;
+    // Local copy is missing — self-heal by saving the default back to this device
+    // so future reads (and the Settings page) reflect a connected state again.
+    const m = meta || { id: 'meta' };
+    m.sheetUrl = this.DEFAULT_SHEET_URL;
+    await DB.put('settings', m);
+    return this.DEFAULT_SHEET_URL;
   },
 
   async pushEntry(sheetName, entry) {
@@ -111,6 +125,21 @@ const Sync = {
       this._pullInProgress = false;
     }
     await this.refreshStatus();
+  },
+
+  async clearRemoteSheet() {
+    const url = await this.getUrl();
+    if (!url) return { ok: false, error: 'Not connected to a Sheet' };
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'clearAllData' })
+      });
+      return await res.json();
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   },
 
   async forceFullResync() {

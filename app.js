@@ -2563,17 +2563,12 @@ async function renderSyncDataPage() {
       <span></span>
     </div>
     <div class="collapse-body" style="display:none">
-      <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 12px">You shouldn't need anything below this line for normal use — these are fix-it tools, only if something looks wrong.</p>
+      <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 12px">You shouldn't need this for normal use — it's a fix-it button, only if something looks wrong (duplicate categories or stores with different colors, data that seems out of sync, etc).</p>
       <div class="card tight">
-        <label class="field-label">Duplicate categories or stores</label>
-        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">If the same category or store shows up twice with different colors (can happen after testing on multiple devices), this merges the duplicates and fixes the sync — safe to run anytime.</p>
-        <button class="btn" id="cleanupBtn" onclick="runDimensionCleanup()">Find & merge duplicates</button>
-        <p id="cleanupStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
-      </div>
-      <div class="card tight">
-        <label class="field-label">Rebuild the Sheet from scratch</label>
-        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Only use this right after you've manually deleted all the data rows in your Sheet's tabs. It re-sends everything fresh. If the Sheet still has old rows in it, this will create duplicates instead of fixing anything.</p>
-        <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="if(confirm('Have you already cleared all data rows from every tab in your Sheet? This will re-send everything from scratch.')){Sync.forceFullResync();renderSyncDataPage();}">Force full resync</button>
+        <label class="field-label">Rebuild everything, automatically</label>
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Does all of it in one go: merges any duplicate categories or stores, clears your Sheet's tabs for you, then sends a fresh clean copy of everything. No manual steps in between.</p>
+        <button class="btn" id="fixEverythingBtn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="runFixEverything()">Rebuild everything</button>
+        <p id="fixEverythingStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
       </div>
     </div>
   `;
@@ -2677,6 +2672,29 @@ async function runDimensionCleanup() {
     statusEl.innerHTML = `<b>Done:</b><br>${report.join('<br>')}<br>Now clear your Sheet's tabs and run Force full resync below to push the clean version up.`;
   }
   Sync.retryAllPending();
+}
+
+// One combined action: merges any duplicates, clears the Sheet automatically (no more
+// manually deleting rows yourself), then pushes a fresh clean copy of everything. Replaces
+// what used to be three separate steps you had to understand and sequence yourself.
+async function runFixEverything() {
+  if (!confirm("This rebuilds your Sheet from scratch: merges any duplicate categories/stores, clears every tab, then re-sends all your data fresh. It takes a few minutes and can't be interrupted halfway. Continue?")) return;
+  const statusEl = document.getElementById('fixEverythingStatus');
+  const btn = document.getElementById('fixEverythingBtn');
+  btn.disabled = true;
+  statusEl.textContent = 'Step 1 of 3 — merging any duplicates…';
+  await cleanupDuplicateDimensions(() => {});
+  statusEl.textContent = 'Step 2 of 3 — clearing your Sheet…';
+  const clearResult = await Sync.clearRemoteSheet();
+  if (!clearResult.ok) {
+    statusEl.textContent = `Couldn't clear the Sheet: ${clearResult.error || 'unknown error'}. Nothing was changed — safe to try again.`;
+    btn.disabled = false;
+    return;
+  }
+  statusEl.textContent = 'Step 3 of 3 — sending everything fresh…';
+  await Sync.forceFullResync();
+  statusEl.textContent = 'Done! Your Sheet has been rebuilt with one clean copy of everything.';
+  btn.disabled = false;
 }
 
 // ============ RECURRING ENTRIES ============
