@@ -67,8 +67,8 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
@@ -99,7 +99,7 @@ async function renderAddVehicle() {
     <div class="field"><label class="field-label">Date bought</label><input type="date" id="v_dateBought" value="${existing ? existing.dateBought : todayStr()}"></div>
     <div class="field-row" style="margin-bottom:20px"><div><label class="field-label">Bought for</label><input type="number" step="0.01" id="v_boughtFor" placeholder="$0.00" value="${existing ? existing.boughtFor : ''}"></div><div><label class="field-label">Mileage bought at</label><input type="number" id="v_mileageBought" placeholder="km" value="${existing && existing.mileageBoughtAt ? existing.mileageBoughtAt : ''}"></div></div>
 
-    <button class="btn btn-primary" onclick="saveVehicle()">${existing ? 'Save changes' : 'Add vehicle'}</button>
+    <button class="btn btn-primary" id="saveVehicleBtn" onclick="saveVehicle()">${existing ? 'Save changes' : 'Add vehicle'}</button>
   `;
   window.__usCan = existing ? existing.usOrCanada : 'Canadian';
   window.__trans = existing ? existing.transmission : 'Automatic';
@@ -125,6 +125,12 @@ async function saveVehicle() {
   const trim = document.getElementById('v_trim').value.trim();
   const name = [year, make, model, trim].filter(Boolean).join(' ');
   if (!name) { alert('At least year, make, or model is needed.'); return; }
+  const btn = document.getElementById('saveVehicleBtn');
+  if (pendingPhotoUploads.garage && pendingPhotoUploads.garage.length && btn) {
+    btn.disabled = true; btn.textContent = 'Finishing photo upload…';
+  }
+  await waitForPendingUploads('garage');
+  if (btn) btn.disabled = false;
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   const vehicle = existing || { id: uid(), status: 'owned', soldFor: null, dateSold: null, buyerName: null, buyerPhone: null };
   Object.assign(vehicle, {
@@ -254,7 +260,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = [];
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; existingLinksRemoved.cost = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -272,7 +278,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
@@ -306,7 +312,7 @@ async function renderAddCost() {
     ${renderExistingLinksGrid(existing && existing.receiptLinks, 'cost', 'Existing receipts (tap × to remove)')}
     <label class="field-label">Add receipt & photos</label>
     <div class="photo-grid" id="garage2PhotoGrid">${renderPhotoGrid(garagePhotoDrafts, 'garage2')}</div>
-    <button class="btn btn-primary" onclick="saveCost()">${existing ? 'Save changes' : 'Save cost'}</button>
+    <button class="btn btn-primary" id="saveCostBtn" onclick="saveCost()">${existing ? 'Save changes' : 'Save cost'}</button>
   `;
   window.__repairTypesCache = repairTypes;
   window.__expenseTypesCache = expenseTypes;
@@ -394,6 +400,12 @@ async function saveGaragePlace() {
 }
 
 async function saveCost() {
+  const btn = document.getElementById('saveCostBtn');
+  if (pendingPhotoUploads.garage2 && pendingPhotoUploads.garage2.length && btn) {
+    btn.disabled = true; btn.textContent = 'Finishing photo upload…';
+  }
+  await waitForPendingUploads('garage2');
+  if (btn) btn.disabled = false;
   const repairSel = document.getElementById('c_repairType');
   const cost = costEditId ? await DB.get('garageCosts', costEditId) : { id: uid(), vehicleId: currentVehicleId };
   Object.assign(cost, {

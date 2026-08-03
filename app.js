@@ -89,7 +89,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -1517,7 +1517,7 @@ async function renderAddEntry() {
       `}
     </div>
 
-    <button class="btn btn-primary" onclick="saveEntry()">Save entry</button>
+    <button class="btn btn-primary" id="saveEntryBtn" onclick="saveEntry()">Save entry</button>
   `;
 
   window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
@@ -1728,7 +1728,7 @@ async function renderStoreForm() {
     <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${esc(storeLogoDriveUrl || '')}"></div>
     <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">Photos you pick above upload to your Drive automatically and show up on every device. This field is also editable directly if you'd rather paste a link yourself.</p>
 
-    <button class="btn btn-primary" onclick="saveStoreForm()">Save store</button>
+    <button class="btn btn-primary" id="saveStoreBtn" onclick="saveStoreForm()">Save store</button>
   `;
 }
 function handleEntryReceiptUpload(e) {
@@ -1773,6 +1773,10 @@ function handleStoreLogoUpload(e) {
 async function saveStoreForm() {
   const name = document.getElementById('store_name').value.trim();
   if (!name) { alert('Store needs a name.'); return; }
+  const btn = document.getElementById('saveStoreBtn');
+  if (storeLogoUploading && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
+  while (storeLogoUploading) { await new Promise((r) => setTimeout(r, 150)); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save store'; }
   const payee = storeFormEditId ? await DB.get('payees', storeFormEditId) : { id: uid(), defaultCategoryId: null, defaultAmount: null };
   payee.name = name;
   payee.logo = storeLogoDraft; // local-only instant preview, kept as an offline fallback
@@ -1790,6 +1794,10 @@ async function saveStoreForm() {
 }
 
 async function saveEntry() {
+  const btn = document.getElementById('saveEntryBtn');
+  if (entryReceiptUploading && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
+  while (entryReceiptUploading) { await new Promise((r) => setTimeout(r, 150)); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save entry'; }
   const categoryId = document.getElementById('f_category').value;
   const storeId = document.getElementById('f_store').value;
   const amount = parseFloat(document.getElementById('f_amount').value) || 0;
@@ -2049,7 +2057,7 @@ async function renderAddIssue() {
     <label class="field-label">Add photos</label>
     <div class="photo-grid" id="jazzPhotoGrid">${renderPhotoGrid(jazzPhotoDrafts, 'jazz')}</div>
 
-    <button class="btn btn-primary" onclick="saveIssue()">${src && src.__editId ? 'Save changes' : 'Save entry'}</button>
+    <button class="btn btn-primary" id="saveIssueBtn" onclick="saveIssue()">${src && src.__editId ? 'Save changes' : 'Save entry'}</button>
   `;
   selectSeverity(document.querySelector('#severityToggle .btn-toggle'), src ? src.severity : 'Mild');
   selectStatus(document.querySelector('#statusToggle .btn-toggle'), src ? src.status : 'ongoing');
@@ -2139,6 +2147,7 @@ const PHOTO_LINK_CONTEXT = {
   garage2: { getArray: () => garage2PhotoLinkDrafts, folder: 'Garage Receipts' }
 };
 let jazzPhotoLinkDrafts = [];
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [] }; // in-flight upload promises, per context — Save must await these before finishing
 let garagePhotoLinkDrafts = [];
 let garage2PhotoLinkDrafts = [];
 
@@ -2149,17 +2158,27 @@ function handlePhotoUpload(e, prefix) {
   let remaining = files.length;
   files.forEach((f) => {
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const dataUrl = reader.result;
       target.push(dataUrl);
       if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
       if (ctx) {
-        const result = await Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo');
-        if (result) ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+        const uploadPromise = Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo').then((result) => {
+          if (result) ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+        });
+        if (pendingPhotoUploads[prefix]) pendingPhotoUploads[prefix].push(uploadPromise);
       }
     };
     reader.readAsDataURL(f);
   });
+}
+// Call before finalizing a save — waits for any still-uploading photos in this context
+// so the saved record's photoLinks reflects everything, not just whatever had finished
+// by the moment Save was tapped. Also clears the tracking list once done.
+async function waitForPendingUploads(prefix) {
+  const pending = pendingPhotoUploads[prefix] || [];
+  if (pending.length) await Promise.all(pending);
+  pendingPhotoUploads[prefix] = [];
 }
 
 // Shared "view existing photos / remove one / add new ones" manager for the three
@@ -2286,6 +2305,12 @@ async function restoreIssueType(id) {
 }
 
 async function saveIssue() {
+  const btn = document.getElementById('saveIssueBtn');
+  if (pendingPhotoUploads.jazz && pendingPhotoUploads.jazz.length && btn) {
+    btn.disabled = true; btn.textContent = 'Finishing photo upload…';
+  }
+  await waitForPendingUploads('jazz');
+  if (btn) btn.disabled = false;
   const typeId = document.getElementById('j_type').value;
   const startDate = document.getElementById('j_date').value || todayStr();
   const isEdit = jazzDuplicate && jazzDuplicate.__editId;
@@ -2319,7 +2344,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
-    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = [];
+    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; existingLinksRemoved.jazz = [];
     currentView = 'addIssue'; route();
   });
 }
