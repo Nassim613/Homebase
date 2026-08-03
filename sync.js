@@ -117,6 +117,13 @@ const Sync = {
             if (remoteFlag.importedAt && !localMeta.importedAt) { localMeta.importedAt = remoteFlag.importedAt; changed = true; }
             if (changed) await DB.put('settings', localMeta);
           }
+          if (remoteFlag.key === 'groceryWeeklyBudget') {
+            const localMeta = (await DB.get('settings', 'meta')) || { id: 'meta' };
+            if (localMeta.groceryWeeklyBudget !== remoteFlag.value) {
+              localMeta.groceryWeeklyBudget = remoteFlag.value;
+              await DB.put('settings', localMeta);
+            }
+          }
         } catch (e) { /* ignore malformed row */ }
       }
     } catch (err) {

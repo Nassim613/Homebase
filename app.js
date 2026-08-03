@@ -371,6 +371,9 @@ async function renderFoodBudget() {
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const payees = await DB.getAll('payees');
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
+  const meta = await DB.get('settings', 'meta');
+  const weeklyBudget = meta && meta.groceryWeeklyBudget ? meta.groceryWeeklyBudget : null;
+  const currentWeekStart = getWeekStart(todayStr());
 
   const relevant = entries.filter((e) => {
     if (e.type !== 'expense') return false;
@@ -387,19 +390,43 @@ async function renderFoodBudget() {
   $main.innerHTML = `
     <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Food budget</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Groceries + Meal Kit, grouped by week (Monday–Sunday)</p>
+
+    <div class="card tight">
+      <label class="field-label">Weekly budget</label>
+      <div style="display:flex;gap:8px">
+        <input type="number" step="0.01" id="groceryBudgetInput" placeholder="No budget set" value="${weeklyBudget || ''}" style="flex:1">
+        <button class="btn" style="width:auto;padding:8px 14px" onclick="saveGroceryWeeklyBudget()">Save</button>
+      </div>
+    </div>
+
     ${weeks.length ? collapseAllControls('foodBudgetList') : ''}
     <div id="foodBudgetList">${weeks.length ? weeks.map((wk, i) => {
       const weekEntries = byWeek[wk].sort((a, b) => b.date.localeCompare(a.date));
       const total = weekEntries.reduce((s, e) => s + e.amount, 0);
+      const isCurrent = wk === currentWeekStart;
+      let budgetLine = '';
+      if (weeklyBudget) {
+        const diff = weeklyBudget - total;
+        const over = diff < 0;
+        budgetLine = `<span class="amt ${over ? 'neg' : 'pos'}" style="font-weight:600">${over ? fmtMoney(-diff) + ' over' : fmtMoney(diff) + ' left'}</span>`;
+      }
       return `
-        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer">
-          <span>${getWeekLabel(wk)} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-          <span class="amt neg">${fmtMoney(total)}</span>
+        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${isCurrent && weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:10px;padding:8px' : ''}">
+          <span>${getWeekLabel(wk)}${isCurrent ? ' · this week' : ''} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+          ${weeklyBudget ? `<span style="text-align:right"><span class="amt neg" style="display:block">${fmtMoney(total)} spent</span>${budgetLine}</span>` : `<span class="amt neg">${fmtMoney(total)}</span>`}
         </div>
         <div class="collapse-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
       `;
     }).join('') : '<div class="empty-state">No Groceries or Meal Kit expenses logged yet.</div>'}</div>
   `;
+}
+async function saveGroceryWeeklyBudget() {
+  const val = parseFloat(document.getElementById('groceryBudgetInput').value) || null;
+  const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
+  meta.groceryWeeklyBudget = val;
+  await DB.put('settings', meta);
+  Sync.pushEntry('Meta', { id: 'groceryBudgetFlag', key: 'groceryWeeklyBudget', value: val });
+  renderFoodBudget();
 }
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
 
@@ -744,6 +771,43 @@ async function renderReportsStub() {
 
       <p class="section-label">Top categories in range</p>
       <div style="position:relative;width:100%;height:${Math.max(100, topCats.length*32)}px;margin-bottom:20px">${topCats.length ? '<canvas id="reportsCatChart"></canvas>' : '<div class="empty-state">No expenses in this range.</div>'}</div>
+
+      ${(() => {
+        const budgeted = categories.filter((c) => c.monthlyBudget);
+        if (!budgeted.length) return '';
+        const monthsWithData = [...new Set(entries.filter((e) => budgeted.some((c) => c.id === e.categoryId)).map((e) => monthKey(e.date)))].sort().reverse().slice(0, 6);
+        if (!monthsWithData.length) return '';
+        return `
+          <p class="section-label">Budget status</p>
+          ${monthsWithData.map((mk, mi) => {
+            const rows = budgeted.map((c) => {
+              const spent = entries.filter((e) => e.categoryId === c.id && monthKey(e.date) === mk && e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+              const diff = c.monthlyBudget - spent;
+              const over = diff < 0;
+              return { name: c.name, budget: c.monthlyBudget, spent, over, diff };
+            });
+            const overCount = rows.filter((r) => r.over).length;
+            const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+            return `
+              <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+                <span>${label} <i class="ti collapse-chevron ti-chevron-${mi===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+                <span style="font-size:12px;color:${overCount ? 'var(--red)' : '#0F6E56'}">${overCount ? overCount + ' over' : 'all under'}</span>
+              </div>
+              <div class="collapse-body" style="display:${mi===0?'block':'none'}">
+                ${rows.map((r) => `
+                  <div class="list-row" style="cursor:default;display:block;padding:10px 0">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline">
+                      <span style="font-size:14px;font-weight:600;color:var(--ink)">${esc(r.name)}</span>
+                      <span style="font-size:13px;font-weight:600;color:${r.over?'var(--red)':'#0F6E56'}">${r.over ? fmtMoney(-r.diff)+' over' : fmtMoney(r.diff)+' left'}</span>
+                    </div>
+                    <p style="font-size:11px;color:var(--ink-soft);margin:2px 0 0">Budget ${fmtMoney(r.budget)} · Spent ${fmtMoney(r.spent)}</p>
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }).join('')}
+        `;
+      })()}
     ` : `
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
         <p class="section-label" style="margin:0">Category by month</p>
@@ -762,7 +826,8 @@ async function renderReportsStub() {
                 <td onclick="selectReportsCategoryAll('${c.id}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
                 ${monthKeys.map((mk2) => {
                   const val = pivot[c.id][mk2];
-                  return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
+                  const overBudget = c.monthlyBudget && val > c.monthlyBudget;
+                  return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${overBudget?'var(--red)':(val?'var(--ink)':'var(--line)')};${overBudget?'background:var(--rose-soft);font-weight:600;':''}border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
                 }).join('')}
               </tr>
             `).join('')}
@@ -1583,6 +1648,7 @@ async function renderCategoryForm() {
       </select>
     </div>
     <div class="field" style="margin-bottom:20px"><label class="field-label">Default amount</label><input type="number" step="0.01" id="cat_defaultAmount" placeholder="Leave blank if it varies" value="${existing && existing.defaultAmount ? existing.defaultAmount : ''}"></div>
+    <div class="field" style="margin-bottom:20px"><label class="field-label">Monthly budget</label><input type="number" step="0.01" id="cat_monthlyBudget" placeholder="Leave blank for no budget" value="${existing && existing.monthlyBudget ? existing.monthlyBudget : ''}"><p style="font-size:11px;color:var(--ink-soft);margin-top:4px">Resets every calendar month.</p></div>
 
     <button class="btn btn-primary" onclick="saveCategoryForm()">Save category</button>
     ${existing ? `<button class="btn" style="margin-top:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideCategory('${existing.id}')">Hide from lists</button>` : ''}
@@ -1618,6 +1684,7 @@ async function saveCategoryForm() {
   cat.conditionalField = document.getElementById('cat_conditional').value;
   cat.defaultStoreId = document.getElementById('cat_defaultStore').value || null;
   cat.defaultAmount = parseFloat(document.getElementById('cat_defaultAmount').value) || null;
+  cat.monthlyBudget = parseFloat(document.getElementById('cat_monthlyBudget').value) || null;
   cat.synced = false;
   await DB.put('categories', cat);
   Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
