@@ -411,7 +411,7 @@ async function renderFoodBudget() {
         budgetLine = `<span class="amt ${over ? 'neg' : 'pos'}" style="font-weight:600">${over ? fmtMoney(-diff) + ' over' : fmtMoney(diff) + ' left'}</span>`;
       }
       return `
-        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${isCurrent && weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:10px;padding:8px' : ''}">
+        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:10px;padding:8px' : ''}">
           <span>${getWeekLabel(wk)}${isCurrent ? ' · this week' : ''} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
           ${weeklyBudget ? `<span style="text-align:right"><span class="amt neg" style="display:block">${fmtMoney(total)} spent</span>${budgetLine}</span>` : `<span class="amt neg">${fmtMoney(total)}</span>`}
         </div>
