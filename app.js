@@ -103,10 +103,12 @@ async function route() {
     if (currentView === 'categories') return renderCategoriesManager();
     if (currentView === 'categoryForm') return renderCategoryForm();
     if (currentView === 'storeForm') return renderStoreForm();
+    if (currentView === 'projectForm') return renderProjectForm();
     if (currentView === 'reports') return renderReportsStub();
     if (currentView === 'utilitiesReport') return renderUtilitiesReport();
     if (currentView === 'vehicleReport') return renderFinanceVehicleReport();
     if (currentView === 'transfersReport') return renderTransfersReport();
+    if (currentView === 'projectsReport') return renderProjectsReport();
     if (currentView === 'foodBudget') return renderFoodBudget();
   } else if (currentTab === 'jazz') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
@@ -748,10 +750,11 @@ async function renderReportsStub() {
       <button class="btn-toggle ${reportsView==='table'?'active-neutral':''}" onclick="setReportsView('table')">Category table</button>
     </div>
 
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <button class="btn" style="flex:1" onclick="currentView='utilitiesReport';route()"><i class="ti ti-bolt"></i> Utilities</button>
-      <button class="btn" style="flex:1" onclick="currentView='vehicleReport';route()"><i class="ti ti-car"></i> Vehicles</button>
-      <button class="btn" style="flex:1" onclick="currentView='transfersReport';route()"><i class="ti ti-arrows-left-right"></i> Transfers</button>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+      <button class="btn" style="flex:1 1 45%" onclick="currentView='utilitiesReport';route()"><i class="ti ti-bolt"></i> Utilities</button>
+      <button class="btn" style="flex:1 1 45%" onclick="currentView='vehicleReport';route()"><i class="ti ti-car"></i> Vehicles</button>
+      <button class="btn" style="flex:1 1 45%" onclick="currentView='transfersReport';route()"><i class="ti ti-arrows-left-right"></i> Transfers</button>
+      <button class="btn" style="flex:1 1 45%" onclick="currentView='projectsReport';route()"><i class="ti ti-tools"></i> Projects</button>
     </div>
 
     ${reportsView === 'overview' ? `
@@ -1123,6 +1126,63 @@ async function selectVehicleCell(carId, categoryId, mk2) {
 }
 
 // ---------- Transfers report ----------
+// ---------- Projects by year report ----------
+async function renderProjectsReport() {
+  const allEntries = await getActiveEntries();
+  const projects = await DB.getAll('projects');
+  const projectById = Object.fromEntries(projects.map((p) => [p.id, p]));
+  const relevant = allEntries.filter((e) => e.projectId && e.type === 'expense');
+
+  if (!relevant.length) {
+    $main.innerHTML = `<div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Projects</span></div><div class="empty-state">No expenses tagged to a project yet.</div>`;
+    return;
+  }
+
+  const years = [...new Set(relevant.map((e) => e.date.slice(0, 4)))].sort().reverse();
+  const projectIds = [...new Set(relevant.map((e) => e.projectId))];
+  const projectsUsed = projectIds.map((id) => projectById[id]).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+
+  const amountFor = (projectId, year) => relevant.filter((e) => e.projectId === projectId && e.date.slice(0, 4) === year).reduce((s, e) => s + e.amount, 0);
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Projects</span></div>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+    <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
+      <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Project</th>
+          ${years.map((y) => `<th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${y}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${projectsUsed.map((p) => `
+            <tr>
+              <td style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:var(--gold);border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(p.name)}</td>
+              ${years.map((y) => {
+                const val = amountFor(p.id, y);
+                return `<td onclick="selectProjectYearCell('${p.id}','${y}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${val?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
+              }).join('')}
+            </tr>
+          `).join('')}
+          <tr style="background:var(--surface)">
+            <td style="padding:8px 12px;position:sticky;left:0;background:var(--surface);font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Total</td>
+            ${years.map((y) => {
+              const total = projectsUsed.reduce((s, p) => s + amountFor(p.id, y), 0);
+              return `<td style="padding:8px 12px;text-align:right;font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${total ? fmtMoney(total) : '–'}</td>`;
+            }).join('')}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+async function selectProjectYearCell(projectId, year) {
+  const allEntries = await getActiveEntries();
+  const projects = await DB.getAll('projects');
+  const p = projects.find((x) => x.id === projectId) || {};
+  const matches = allEntries.filter((e) => e.projectId === projectId && e.date.slice(0, 4) === year);
+  renderReportsPopup(matches, p.name || '', year);
+}
+
 async function renderTransfersReport() {
   const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
@@ -1457,7 +1517,7 @@ async function renderAddEntry() {
   const categories = (await DB.getAll('categories')).filter((c) => !c.hidden).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
   const cars = await DB.getAll('cars');
-  const projects = await DB.getAll('projects');
+  const projects = (await DB.getAll('projects')).filter((p) => !p.hidden);
   const src = duplicateSource;
 
   const formKey = src && src.__editId ? src.__editId : (src ? 'duplicate-' + (src.id || '') : 'new');
@@ -1842,22 +1902,31 @@ async function saveEntry() {
 // ---------- Categories & Stores manager ----------
 let managerTab = 'categories';
 let showHiddenCategories = false;
+let showHiddenProjects = false;
 async function renderCategoriesManager() {
   const allCategories = (await DB.getAll('categories')).sort((a, b) => a.name.localeCompare(b.name));
   const payees = (await DB.getAll('payees')).sort((a, b) => a.name.localeCompare(b.name));
+  const allProjects = (await DB.getAll('projects')).sort((a, b) => a.name.localeCompare(b.name));
   const categories = showHiddenCategories ? allCategories : allCategories.filter((c) => !c.hidden);
   const hiddenCount = allCategories.filter((c) => c.hidden).length;
-  const list = managerTab === 'categories' ? categories : payees;
+  const projects = showHiddenProjects ? allProjects : allProjects.filter((p) => !p.hidden);
+  const hiddenProjectCount = allProjects.filter((p) => p.hidden).length;
+  const list = managerTab === 'categories' ? categories : managerTab === 'payees' ? payees : projects;
+
+  const addLabel = managerTab === 'categories' ? 'category' : managerTab === 'payees' ? 'store' : 'project';
+  const addFn = managerTab === 'categories' ? 'goAddCategory()' : managerTab === 'payees' ? 'goAddStore()' : 'goAddProject()';
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Categories & stores</span></div>
     <div class="chip-row">
       <button class="chip ${managerTab === 'categories' ? 'active' : ''}" onclick="switchManagerTab('categories')">Categories</button>
       <button class="chip ${managerTab === 'payees' ? 'active' : ''}" onclick="switchManagerTab('payees')">Stores</button>
+      <button class="chip ${managerTab === 'projects' ? 'active' : ''}" onclick="switchManagerTab('projects')">Projects</button>
     </div>
-    <button class="btn btn-primary" style="margin-bottom:14px" onclick="${managerTab === 'categories' ? 'goAddCategory()' : 'goAddStore()'}"><i class="ti ti-plus"></i> Add ${managerTab === 'categories' ? 'category' : 'store'}</button>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="${addFn}"><i class="ti ti-plus"></i> Add ${addLabel}</button>
     ${managerTab === 'categories' && hiddenCount ? `<div class="list-row" onclick="showHiddenCategories=!showHiddenCategories;renderCategoriesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenCategories ? 'Hide' : 'Show'} ${hiddenCount} hidden categor${hiddenCount===1?'y':'ies'}</span><i class="ti ti-chevron-${showHiddenCategories?'down':'right'}"></i></div>` : ''}
-    <div>${list.map((item) => managerTab === 'categories' ? renderCategoryListRow(item) : renderPayeeListRow(item)).join('') || '<div class="empty-state">Nothing yet.</div>'}</div>
+    ${managerTab === 'projects' && hiddenProjectCount ? `<div class="list-row" onclick="showHiddenProjects=!showHiddenProjects;renderCategoriesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenProjects ? 'Hide' : 'Show'} ${hiddenProjectCount} hidden project${hiddenProjectCount===1?'':'s'}</span><i class="ti ti-chevron-${showHiddenProjects?'down':'right'}"></i></div>` : ''}
+    <div>${list.map((item) => managerTab === 'categories' ? renderCategoryListRow(item) : managerTab === 'payees' ? renderPayeeListRow(item) : renderProjectListRow(item)).join('') || '<div class="empty-state">Nothing yet.</div>'}</div>
   `;
 }
 function switchManagerTab(t) { managerTab = t; renderCategoriesManager(); }
@@ -1880,6 +1949,50 @@ function renderPayeeListRow(p) {
   return `<div class="list-row" onclick="goEditStore('${p.id}')">
     <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--surface)">${payeeLogoUrl(p) ? `<img src="${payeeLogoUrl(p)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised);border-radius:8px">` : '<i class="ti ti-building-store"></i>'}</div><span>${esc(p.name)}</span></div>
   </div>`;
+}
+
+function renderProjectListRow(p) {
+  return `<div class="list-row" onclick="${p.hidden ? `restoreProject('${p.id}')` : `goEditProject('${p.id}')`}" style="${p.hidden?'opacity:0.55':''}">
+    <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ti-tools"></i></div><span>${esc(p.name)}${p.hidden?' (hidden)':''}</span></div>
+    <span style="font-size:11px;color:var(--ink-soft)">${p.hidden?'Tap to restore':''}</span>
+  </div>`;
+}
+let projectFormEditId = null;
+function goAddProject() { projectFormEditId = null; currentView = 'projectForm'; route(); }
+function goEditProject(id) { projectFormEditId = id; currentView = 'projectForm'; route(); }
+async function renderProjectForm() {
+  const existing = projectFormEditId ? await DB.get('projects', projectFormEditId) : null;
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="managerTab='projects';currentView='categories';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} project</span></div>
+    <div class="field" style="margin-bottom:20px"><label class="field-label">Name</label><input id="project_name" placeholder="e.g. Backyard" value="${existing ? esc(existing.name) : ''}"></div>
+    <button class="btn btn-primary" onclick="saveProjectForm()">Save project</button>
+    ${existing ? `<button class="btn" style="margin-top:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideProject('${existing.id}')">Hide from lists</button>` : ''}
+  `;
+}
+async function saveProjectForm() {
+  const name = document.getElementById('project_name').value.trim();
+  if (!name) { alert('Project needs a name.'); return; }
+  const p = projectFormEditId ? await DB.get('projects', projectFormEditId) : { id: uid(), hidden: false };
+  p.name = name;
+  p.synced = false;
+  await DB.put('projects', p);
+  Sync.pushEntry('Projects', p).then(() => DB.put('projects', p));
+  managerTab = 'projects'; currentView = 'categories'; route();
+}
+async function hideProject(id) {
+  if (!confirm('Hide this project from lists? Past entries that used it are unaffected.')) return;
+  const p = await DB.get('projects', id);
+  p.hidden = true; p.synced = false;
+  await DB.put('projects', p);
+  Sync.pushEntry('Projects', p).then(() => DB.put('projects', p));
+  managerTab = 'projects'; currentView = 'categories'; route();
+}
+async function restoreProject(id) {
+  const p = await DB.get('projects', id);
+  p.hidden = false; p.synced = false;
+  await DB.put('projects', p);
+  Sync.pushEntry('Projects', p).then(() => DB.put('projects', p));
+  renderCategoriesManager();
 }
 
 // ---------- Init ----------
@@ -2585,7 +2698,7 @@ async function renderMore() {
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Finance</p>
     <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories & stores</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars & projects</span><i class="ti ti-chevron-right"></i></div>
+    <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars</span><i class="ti ti-chevron-right"></i></div>
     <div class="list-row" onclick="moreView='recurring';renderMore()"><span><i class="ti ti-repeat"></i> Recurring entries</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Jazz</p>
@@ -2700,22 +2813,26 @@ async function saveSheetUrl() {
 let carsProjectsTab = 'cars';
 async function renderCarsProjectsManager() {
   const cars = await DB.getAll('cars');
-  const projects = await DB.getAll('projects');
-  const list = carsProjectsTab === 'cars' ? cars : projects;
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Cars & projects</span></div>
-    <div class="chip-row">
-      <button class="chip ${carsProjectsTab==='cars'?'active':''}" onclick="carsProjectsTab='cars';renderCarsProjectsManager()">Cars</button>
-      <button class="chip ${carsProjectsTab==='projects'?'active':''}" onclick="carsProjectsTab='projects';renderCarsProjectsManager()">Projects</button>
-    </div>
-    <button class="btn btn-primary" style="margin-bottom:14px" onclick="${carsProjectsTab==='cars'?'addCarPrompt()':'addProjectPrompt()'}"><i class="ti ti-plus"></i> Add ${carsProjectsTab==='cars'?'car':'project'}</button>
-    <div>${list.map((item) => `<div class="list-row" onclick="${carsProjectsTab==='cars'?'editCarPrompt':'editProjectPrompt'}('${item.id}')"><span>${esc(item.name)}</span><i class="ti ti-chevron-right"></i></div>`).join('') || '<div class="empty-state">None yet.</div>'}</div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Cars</span></div>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">Projects moved to Categories & stores.</p>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="addCarPrompt()"><i class="ti ti-plus"></i> Add car</button>
+    <div>${cars.map((item) => `<div class="list-row" onclick="editCarPrompt('${item.id}')"><span>${esc(item.name)}</span><i class="ti ti-chevron-right"></i></div>`).join('') || '<div class="empty-state">None yet.</div>'}</div>
   `;
 }
-function addCarPrompt() { const name = prompt('Car name:'); if (!name) return; DB.put('cars', { id: uid(), name }).then(renderCarsProjectsManager); }
-function addProjectPrompt() { const name = prompt('Project name:'); if (!name) return; DB.put('projects', { id: uid(), name }).then(renderCarsProjectsManager); }
-async function editCarPrompt(id) { const c = await DB.get('cars', id); const name = prompt('Car name:', c.name); if (!name) return; c.name = name; await DB.put('cars', c); renderCarsProjectsManager(); }
-async function editProjectPrompt(id) { const p = await DB.get('projects', id); const name = prompt('Project name:', p.name); if (!name) return; p.name = name; await DB.put('projects', p); renderCarsProjectsManager(); }
+function addCarPrompt() {
+  const name = prompt('Car name:'); if (!name) return;
+  const c = { id: uid(), name, synced: false };
+  DB.put('cars', c).then(() => { Sync.pushEntry('Cars', c).then(() => DB.put('cars', c)); renderCarsProjectsManager(); });
+}
+async function editCarPrompt(id) {
+  const c = await DB.get('cars', id);
+  const name = prompt('Car name:', c.name); if (!name) return;
+  c.name = name; c.synced = false;
+  await DB.put('cars', c);
+  Sync.pushEntry('Cars', c).then(() => DB.put('cars', c));
+  renderCarsProjectsManager();
+}
 
 // ---------- Garage Expense & Repair types manager ----------
 let expenseRepairTab = 'expense';
@@ -2750,8 +2867,25 @@ function promptNewCarInline() {
   DB.put('cars', { id: uid(), name }).then((c) => { window.__cars.push(c); onCategoryChange(true); document.getElementById('f_car').value = c.id; });
 }
 function promptNewProjectInline() {
-  const name = prompt('New project name:'); if (!name) { document.getElementById('f_project').value = ''; return; }
-  DB.put('projects', { id: uid(), name }).then((p) => { window.__projects.push(p); onCategoryChange(true); document.getElementById('f_project').value = p.id; });
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">Add project</p>
+    <div class="field"><label class="field-label">Name</label><input id="inline_project_name" placeholder="e.g. Backyard"></div>
+    <button class="btn btn-primary" onclick="saveInlineProject()">Save</button>
+  `;
+  openModal();
+}
+async function saveInlineProject() {
+  const name = document.getElementById('inline_project_name').value.trim();
+  if (!name) { alert('Project needs a name.'); return; }
+  const p = { id: uid(), name, hidden: false, synced: false };
+  await DB.put('projects', p);
+  Sync.pushEntry('Projects', p).then(() => DB.put('projects', p));
+  window.__projects.push(p);
+  closeModal();
+  onCategoryChange(true);
+  const sel = document.getElementById('f_project');
+  if (sel) sel.value = p.id;
 }
 
 async function runDimensionCleanup() {
