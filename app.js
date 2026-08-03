@@ -308,10 +308,15 @@ function renderDayGroup(date, dayEntries, catById, payeeById, openByDefault) {
 function renderEntryRow(e, catById, payeeById, showDate) {
   const cat = catById[e.categoryId] || {};
   const payee = payeeById[e.storeId] || {};
-  let valClass, sign;
+  let valClass, sign, displayAmount = e.amount;
   if (e.type === 'transfer') {
     valClass = e.transferDirection === 'in' ? 'pos' : 'neg';
     sign = e.transferDirection === 'in' ? '+' : '-';
+  } else if (e.type === 'expense' && e.amount < 0) {
+    // A return/refund — a negative expense amount reads as a credit, not another charge
+    valClass = 'pos';
+    sign = '+';
+    displayAmount = Math.abs(e.amount);
   } else {
     const isNeg = e.type === 'expense';
     valClass = isNeg ? 'neg' : 'pos';
@@ -326,7 +331,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
       <div class="entry-body">
         <div class="entry-top">
           <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}${e.receiptLink ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span>
-          <span class="entry-value ${valClass}">${sign}${fmtMoney(e.amount)}</span>
+          <span class="entry-value ${valClass}">${sign}${fmtMoney(displayAmount)}</span>
         </div>
         <div class="entry-meta"><span style="font-weight:700;color:${categoryColor(e.categoryId)}">${esc(cat.name || '')}</span>${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
         ${e.description ? `<div class="entry-desc">${esc(e.description)}</div>` : ''}
@@ -1279,8 +1284,11 @@ async function renderEntryDetail() {
   const payee = payees.find((p) => p.id === entry.storeId) || {};
   const car = entry.carId ? cars.find((c) => c.id === entry.carId) : null;
   const project = entry.projectId ? projects.find((p) => p.id === entry.projectId) : null;
-  const isNeg = entry.type === 'expense';
+  const isRefund = entry.type === 'expense' && entry.amount < 0;
+  const isNeg = entry.type === 'expense' && !isRefund;
   const valClass = entry.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
+  const detailSign = isRefund ? '+' : (entry.type === 'expense' ? '-' : (entry.type === 'income' ? '+' : ''));
+  const detailAmount = Math.abs(entry.amount);
 
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
@@ -1298,7 +1306,7 @@ async function renderEntryDetail() {
             <p style="font-size:12px;color:var(--ink-soft);margin:2px 0 0">${esc(cat.name || '')}</p>
           </div>
         </div>
-        <span class="entry-value ${valClass}" style="font-size:20px">${entry.type === 'expense' ? '-' : entry.type === 'income' ? '+' : ''}${fmtMoney(entry.amount)}</span>
+        <span class="entry-value ${valClass}" style="font-size:20px">${detailSign}${fmtMoney(detailAmount)}</span>
       </div>
       <div class="divider"></div>
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDate(entry.date)}</span></div>
@@ -1552,7 +1560,7 @@ async function renderAddEntry() {
     </div>
     <div id="transferDirectionArea"></div>
 
-    <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="f_amount" placeholder="$0.00" value="${src ? src.amount : ''}"></div>
+    <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="f_amount" placeholder="$0.00" value="${src ? src.amount : ''}" oninput="handleAmountInputForReturn()"></div>
 
     <div class="field"><label class="field-label">Store</label>
       <button type="button" class="btn" style="text-align:left" onclick="openStorePickerModal()"><span id="f_storeButtonContent">Select…</span></button>
@@ -1850,6 +1858,19 @@ async function saveStoreForm() {
     setTimeout(() => { const sel = document.getElementById('f_store'); if (sel) { sel.value = payee.id; updateStoreButtonDisplay(); } }, 0);
   } else {
     currentView = 'categories'; route();
+  }
+}
+
+// Typing a negative amount usually means logging a return/refund against an existing
+// purchase (often via Duplicate, which already carries over the original description).
+// Prepends "Return: " once, preserving whatever's already there — never overwrites it.
+function handleAmountInputForReturn() {
+  const amountEl = document.getElementById('f_amount');
+  const descEl = document.getElementById('f_description');
+  if (!amountEl || !descEl) return;
+  const val = parseFloat(amountEl.value);
+  if (val < 0 && !descEl.value.startsWith('Return: ')) {
+    descEl.value = 'Return: ' + descEl.value;
   }
 }
 
