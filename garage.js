@@ -29,9 +29,11 @@ async function renderGarageMain() {
 
   const cards = await Promise.all(filtered.map(async (v) => {
     const t = await computeVehicleTotals(v.id);
+    const cardLink = v.photoLinks && v.photoLinks.find((p) => p.isImage);
+    const cardSrc = cardLink ? cardLink.url : (v.photos && v.photos[0]);
     return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')">
       <div style="width:100%;height:70px;background:var(--surface);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
-        ${v.photos && v.photos[0] ? `<img src="${v.photos[0]}" style="width:100%;height:100%;object-fit:cover;border-radius:10px">` : '<i class="ti ti-car" style="font-size:22px;color:var(--ink-soft)"></i>'}
+        ${cardSrc ? `<img src="${cardSrc}" style="width:100%;height:100%;object-fit:cover;border-radius:10px">` : '<i class="ti ti-car" style="font-size:22px;color:var(--ink-soft)"></i>'}
       </div>
       <p style="font-size:13px;font-weight:600;margin:0">${esc(v.name)}</p>
       ${t.lastMileage ? `<p style="font-size:11px;color:var(--ink-soft);margin:2px 0 0">${t.lastMileage.toLocaleString()} km</p>` : ''}
