@@ -8,7 +8,7 @@
 //
 // GOOGLE_CLIENT_ID must exactly match the one in google-apps-script.gs's
 // GOOGLE_CLIENT_ID constant — this is what proves a token was issued for OUR app.
-const GOOGLE_CLIENT_ID = '374079870242-sf3snkj4k6pcd0k2aflj8j4agmeppgvu.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = 'PUT_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
 
 const Auth = {
   token: null,
@@ -28,13 +28,6 @@ const Auth = {
       this.token = cached;
       this.email = cachedEmail;
       this._tokenExpiry = cachedExpiry;
-    }
-
-    if (window.google && google.accounts && google.accounts.id) {
-      google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: (response) => this._handleCredential(response)
-      });
     }
 
     if (this.isTokenValid()) {
@@ -82,9 +75,25 @@ const Auth = {
       document.body.appendChild(overlay);
     }
     overlay.style.display = 'flex';
+    this._tryRenderButton(0);
+  },
+
+  // The Google Sign-In library can occasionally still be loading when this first runs
+  // (slow connection, etc) — rather than silently leaving the screen with no button,
+  // retry briefly until it's ready.
+  _tryRenderButton(attempt) {
     if (window.google && google.accounts && google.accounts.id) {
+      if (!this._initialized) {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: (response) => this._handleCredential(response) });
+        this._initialized = true;
+      }
       google.accounts.id.renderButton(document.getElementById('googleSignInBtn'), { theme: 'filled_black', size: 'large', text: 'signin_with' });
       google.accounts.id.prompt(); // also offers One Tap if a Google session is already active
+    } else if (attempt < 20) {
+      setTimeout(() => this._tryRenderButton(attempt + 1), 250); // up to ~5 seconds total
+    } else {
+      const btn = document.getElementById('googleSignInBtn');
+      if (btn) btn.innerHTML = '<p style="font-size:12px;color:var(--red,#C9564F)">Couldn\'t load Google Sign-In — check your connection and reload.</p>';
     }
   },
 
