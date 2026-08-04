@@ -60,6 +60,27 @@ const DB = {
       req.onerror = () => reject(req.error);
     });
   },
+  // Bulk versions — critical for a full sync pull/import, which can involve thousands
+  // of records. Opening one transaction per record (the plain get/put above) is fine
+  // for single-entry edits, but doing that thousands of times in a row is genuinely
+  // slow, especially on phones — this is what made a fresh device's first sync look
+  // "stuck" when it was really just working through records one at a time.
+  async getAllAsMap(storeName) {
+    const all = await this.getAll(storeName);
+    return new Map(all.map((r) => [r.id, r]));
+  },
+  async putMany(storeName, objects) {
+    if (!objects.length) return;
+    const store = await tx(storeName, 'readwrite');
+    return new Promise((resolve, reject) => {
+      let remaining = objects.length;
+      objects.forEach((obj) => {
+        const req = store.put(obj);
+        req.onsuccess = () => { if (--remaining === 0) resolve(); };
+        req.onerror = () => reject(req.error);
+      });
+    });
+  },
   async getSetting(key, fallback) {
     const rec = await this.get('settings', key);
     return rec ? rec.value : fallback;

@@ -91,16 +91,24 @@ const Sync = {
       const data = await res.json();
       for (const job of SYNC_JOBS) {
         const rows = data[job.sheet] || [];
+        if (!rows.length) continue;
+        // One bulk read of everything already local for this store, instead of a
+        // separate read per incoming row — this is the main thing that makes a big
+        // first sync fast instead of taking minutes.
+        const localById = await DB.getAllAsMap(job.store);
+        const toWrite = [];
         for (const rawJson of rows) {
           let remote;
           try { remote = JSON.parse(rawJson); } catch (e) { continue; }
           if (!remote || !remote.id) continue;
-          let local;
-          try { local = await DB.get(job.store, remote.id); } catch (e) { continue; }
+          const local = localById.get(remote.id);
           if (local && local.synced === false) continue; // local has a pending change — don't clobber it
           job.strip.forEach((f) => { if (local && local[f] !== undefined) remote[f] = local[f]; });
           remote.synced = true;
-          try { await DB.put(job.store, remote); } catch (e) { /* store may not exist locally yet, skip */ }
+          toWrite.push(remote);
+        }
+        if (toWrite.length) {
+          try { await DB.putMany(job.store, toWrite); } catch (e) { /* store may not exist locally yet, skip */ }
         }
       }
       // Special case: the "already imported" flag lives in local settings, not a normal
@@ -156,10 +164,9 @@ const Sync = {
     for (const job of SYNC_JOBS) {
       try {
         const items = await DB.getAll(job.store);
-        for (const item of items) {
-          item.synced = false;
-          await DB.put(job.store, item);
-        }
+        if (!items.length) continue;
+        items.forEach((item) => { item.synced = false; });
+        await DB.putMany(job.store, items);
       } catch (err) {
         console.warn(`Force resync: skipped store "${job.store}":`, err.message);
       }
@@ -167,19 +174,50 @@ const Sync = {
     this.retryAllPending();
   },
 
+  // Sends many records in ONE request instead of one request per record — this is what
+  // makes a big backlog (a fresh import, or catching up after being offline) take minutes
+  // instead of hours. Used by retryAllPending; individual entry saves still use the
+  // single-record pushEntry above for instant per-action feedback.
+  async pushBatch(sheetName, entries) {
+    const url = await this.getUrl();
+    if (!url || !navigator.onLine) return false;
+    this.setStatus('syncing');
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ sheet: sheetName, entries })
+      });
+      this.setStatus('synced');
+      return true;
+    } catch (err) {
+      this.setStatus('pending');
+      return false;
+    }
+  },
+
   async retryAllPending() {
     if (this._syncInProgress) return; // a sync is already running the queue — don't start a second overlapping pass
     this._syncInProgress = true;
+    const BATCH_SIZE = 200; // keeps each Apps Script call well within its own execution limits
     try {
       for (const job of SYNC_JOBS) {
         try {
           const items = await DB.getAll(job.store);
           const pending = items.filter((i) => !i.synced);
-          for (const item of pending) {
-            const payload = { ...item };
-            job.strip.forEach((k) => delete payload[k]);
-            const ok = await this.pushEntry(job.sheet, payload);
-            if (ok) { item.synced = true; await DB.put(job.store, item); }
+          if (!pending.length) continue;
+          for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+            const chunk = pending.slice(i, i + BATCH_SIZE);
+            const payloads = chunk.map((item) => {
+              const payload = { ...item };
+              job.strip.forEach((k) => delete payload[k]);
+              return payload;
+            });
+            const ok = await this.pushBatch(job.sheet, payloads);
+            if (ok) {
+              chunk.forEach((item) => { item.synced = true; });
+              await DB.putMany(job.store, chunk);
+            }
           }
         } catch (err) {
           console.warn(`Sync skipped store "${job.store}" (not present in local DB yet):`, err.message);
