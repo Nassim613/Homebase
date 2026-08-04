@@ -94,6 +94,17 @@ const Sync = {
     try {
       const res = await fetch(url + '?token=' + encodeURIComponent(token), { method: 'GET' });
       const data = await res.json();
+      if (data.error) {
+        // Apps Script rejected the request (bad/expired token, not on the allowlist,
+        // etc). Previously this silently looked identical to "zero data everywhere" —
+        // now it's surfaced explicitly instead of hiding the real reason.
+        this.lastPullError = data.error;
+        console.warn('Pull sync denied:', data.error);
+        this._pullInProgress = false;
+        await this.refreshStatus();
+        return false;
+      }
+      this.lastPullError = null;
       for (const job of SYNC_JOBS) {
         const rows = data[job.sheet] || [];
         if (!rows.length) continue;

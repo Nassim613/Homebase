@@ -64,6 +64,8 @@ function renderHeader() {
   document.getElementById('dateLine').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   const titles = { finance: 'Finances', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', more: 'Settings' };
   document.getElementById('pageTitle').textContent = titles[currentTab] || '';
+  const whoEl = document.getElementById('signedInAs');
+  if (whoEl) whoEl.textContent = Auth.email ? Auth.email : '';
 }
 
 function renderSyncPill() {
@@ -2881,6 +2883,7 @@ async function renderSyncDataPage() {
         <span class="status-pill" id="moreSyncPill" style="background:${s.bg};color:${s.color}"><i class="ti ${s.icon}"></i> <span id="moreSyncText">${s.text}</span></span>
         <button class="btn" style="width:auto;padding:8px 14px" onclick="Sync.fullSync().then(renderSyncDataPage)">Retry now</button>
       </div>
+      ${Sync.lastPullError ? `<p style="font-size:12px;color:var(--red);margin-top:8px"><i class="ti ti-alert-triangle"></i> Last sync was rejected: ${esc(Sync.lastPullError)}</p>` : ''}
     </div>
 
     <div class="card tight">
