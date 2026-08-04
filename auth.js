@@ -8,7 +8,7 @@
 //
 // GOOGLE_CLIENT_ID must exactly match the one in google-apps-script.gs's
 // GOOGLE_CLIENT_ID constant — this is what proves a token was issued for OUR app.
-const GOOGLE_CLIENT_ID = 'PUT_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '374079870242-sf3snkj4k6pcd0k2aflj8j4agmeppgvu.apps.googleusercontent.com';
 
 const Auth = {
   token: null,
