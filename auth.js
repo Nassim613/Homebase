@@ -1,0 +1,123 @@
+// ============================================================
+// Google Sign-In — real, verifiable identity for access control
+// ============================================================
+// Uses Google's own Identity Services library (loaded in index.html). A successful
+// sign-in produces a short-lived, cryptographically signed token — Apps Script verifies
+// this directly with Google on every request, so nobody can fake being someone else
+// just by knowing the app's URL, unlike the old "anyone with the link" setup.
+//
+// GOOGLE_CLIENT_ID must exactly match the one in google-apps-script.gs's
+// GOOGLE_CLIENT_ID constant — this is what proves a token was issued for OUR app.
+const GOOGLE_CLIENT_ID = 'PUT_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com';
+
+const Auth = {
+  token: null,
+  email: null,
+  _tokenExpiry: 0,
+  _onSignedIn: null,
+
+  init(onSignedIn) {
+    this._onSignedIn = onSignedIn;
+
+    // Restore a cached token if it's still valid, so a page refresh doesn't force
+    // signing in again every single time.
+    const cached = localStorage.getItem('hb_auth_token');
+    const cachedExpiry = parseInt(localStorage.getItem('hb_auth_expiry') || '0', 10);
+    const cachedEmail = localStorage.getItem('hb_auth_email');
+    if (cached && cachedExpiry > Date.now()) {
+      this.token = cached;
+      this.email = cachedEmail;
+      this._tokenExpiry = cachedExpiry;
+    }
+
+    if (window.google && google.accounts && google.accounts.id) {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (response) => this._handleCredential(response)
+      });
+    }
+
+    if (this.isTokenValid()) {
+      onSignedIn();
+    } else {
+      this.showSignInScreen();
+    }
+  },
+
+  _handleCredential(response) {
+    const token = response.credential;
+    let payload;
+    try { payload = this._decodeJwt(token); } catch (e) { return; }
+    this.token = token;
+    this.email = payload.email;
+    this._tokenExpiry = payload.exp * 1000;
+    localStorage.setItem('hb_auth_token', token);
+    localStorage.setItem('hb_auth_expiry', String(this._tokenExpiry));
+    localStorage.setItem('hb_auth_email', payload.email);
+    this.hideSignInScreen();
+    if (this._onSignedIn) this._onSignedIn();
+  },
+
+  _decodeJwt(token) {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(atob(base64).split('').map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  },
+
+  isTokenValid() {
+    return !!this.token && this._tokenExpiry > Date.now() + 60000; // 1-minute safety buffer
+  },
+
+  showSignInScreen() {
+    let overlay = document.getElementById('authOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'authOverlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:var(--bg,#F7F3E9);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:24px;text-align:center';
+      overlay.innerHTML = `
+        <p style="font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:#2B2640;margin:0">Homebase</p>
+        <p style="font-size:14px;color:#5B5568;max-width:280px;margin:0">Sign in with the Google account you were approved with to continue.</p>
+        <div id="googleSignInBtn"></div>
+      `;
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = 'flex';
+    if (window.google && google.accounts && google.accounts.id) {
+      google.accounts.id.renderButton(document.getElementById('googleSignInBtn'), { theme: 'filled_black', size: 'large', text: 'signin_with' });
+      google.accounts.id.prompt(); // also offers One Tap if a Google session is already active
+    }
+  },
+
+  hideSignInScreen() {
+    const overlay = document.getElementById('authOverlay');
+    if (overlay) overlay.style.display = 'none';
+  },
+
+  signOut() {
+    this.token = null; this.email = null; this._tokenExpiry = 0;
+    localStorage.removeItem('hb_auth_token');
+    localStorage.removeItem('hb_auth_expiry');
+    localStorage.removeItem('hb_auth_email');
+    if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+    this.showSignInScreen();
+  },
+
+  // Call before any sync request. Returns a valid token, silently refreshing via a
+  // still-active Google session if possible — only falls back to the visible sign-in
+  // screen if that doesn't work. Returns null if no valid token could be obtained,
+  // which callers treat the same as "not connected."
+  async ensureToken() {
+    if (this.isTokenValid()) return this.token;
+    return new Promise((resolve) => {
+      if (window.google && google.accounts && google.accounts.id) {
+        google.accounts.id.prompt(() => {
+          resolve(this.isTokenValid() ? this.token : null);
+          if (!this.isTokenValid()) this.showSignInScreen();
+        });
+      } else {
+        this.showSignInScreen();
+        resolve(null);
+      }
+    });
+  }
+};

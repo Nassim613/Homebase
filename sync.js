@@ -60,12 +60,14 @@ const Sync = {
       this.setStatus('pending');
       return false;
     }
+    const token = await Auth.ensureToken();
+    if (!token) { this.setStatus('pending'); return false; }
     this.setStatus('syncing');
     try {
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ sheet: sheetName, entry })
+        body: JSON.stringify({ sheet: sheetName, entry, token })
       });
       entry.synced = true;
       this.setStatus('synced');
@@ -85,10 +87,12 @@ const Sync = {
     if (this._pullInProgress) return false;
     const url = await this.getUrl();
     if (!url || !navigator.onLine) return false;
+    const token = await Auth.ensureToken();
+    if (!token) return false;
     this._pullInProgress = true;
     let anyChanged = false;
     try {
-      const res = await fetch(url, { method: 'GET' });
+      const res = await fetch(url + '?token=' + encodeURIComponent(token), { method: 'GET' });
       const data = await res.json();
       for (const job of SYNC_JOBS) {
         const rows = data[job.sheet] || [];
@@ -152,11 +156,13 @@ const Sync = {
   async clearRemoteSheet() {
     const url = await this.getUrl();
     if (!url) return { ok: false, error: 'Not connected to a Sheet' };
+    const token = await Auth.ensureToken();
+    if (!token) return { ok: false, error: 'Not signed in' };
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'clearAllData' })
+        body: JSON.stringify({ action: 'clearAllData', token })
       });
       return await res.json();
     } catch (err) {
@@ -188,12 +194,14 @@ const Sync = {
   async pushBatch(sheetName, entries) {
     const url = await this.getUrl();
     if (!url || !navigator.onLine) return false;
+    const token = await Auth.ensureToken();
+    if (!token) return false;
     this.setStatus('syncing');
     try {
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ sheet: sheetName, entries })
+        body: JSON.stringify({ sheet: sheetName, entries, token })
       });
       this.setStatus('synced');
       return true;
@@ -268,11 +276,13 @@ const Sync = {
     const url = await this.getUrl();
     if (!url) return { ok: false, error: 'Not connected to a Sheet' };
     if (!navigator.onLine) return { ok: false, error: 'Device is offline' };
+    const token = await Auth.ensureToken();
+    if (!token) return { ok: false, error: 'Not signed in' };
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName })
+        body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName, token })
       });
       if (!res.ok) return { ok: false, error: `Server responded ${res.status}` };
       const data = await res.json();

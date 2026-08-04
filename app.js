@@ -2058,7 +2058,11 @@ async function init() {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 }
-init();
+// The app doesn't start until Auth confirms a signed-in, approved Google account —
+// this is the actual access control. Everything before this point (loading the page
+// shell, the sign-in screen itself) works without it; nothing that touches your data
+// does.
+Auth.init(() => init());
 
 // ============ JAZZ MODULE ============
 let jazzDuplicate = null;
@@ -2854,6 +2858,11 @@ async function renderSyncDataPage() {
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Sync & data</span></div>
+
+    <div class="card tight" style="display:flex;justify-content:space-between;align-items:center">
+      <div><label class="field-label" style="margin:0">Signed in as</label><p style="font-size:13px;font-weight:600;margin:2px 0 0">${esc(Auth.email || 'Unknown')}</p></div>
+      <button class="btn" style="width:auto;padding:8px 14px" onclick="if(confirm('Sign out? You will need to sign back in to use Homebase.')){Auth.signOut();}">Sign out</button>
+    </div>
 
     <div class="card tight">
       <label class="field-label">Google Sheet</label>
