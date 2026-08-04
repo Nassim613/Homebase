@@ -103,7 +103,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -1493,7 +1493,7 @@ function attachBehaviorIllustrationIfNeeded(typeId) {
   const alreadyHasOne = jazzPhotoDrafts.includes(JAZZ_BEHAVIOR_ILLUSTRATION_URL);
   if (alreadyHasOne) return;
   jazzPhotoDrafts.push(JAZZ_BEHAVIOR_ILLUSTRATION_URL);
-  jazzPhotoLinkDrafts.push({ url: JAZZ_BEHAVIOR_ILLUSTRATION_URL, viewUrl: JAZZ_BEHAVIOR_ILLUSTRATION_URL, isImage: true });
+  photoUploadLinks.jazz.push({ url: JAZZ_BEHAVIOR_ILLUSTRATION_URL, viewUrl: JAZZ_BEHAVIOR_ILLUSTRATION_URL, isImage: true });
   const grid = document.getElementById('jazzPhotoGrid');
   if (grid) grid.innerHTML = renderPhotoGrid(jazzPhotoDrafts, 'jazz');
 }
@@ -2280,8 +2280,11 @@ function renderPhotoGrid(drafts, prefix) {
   const statuses = photoUploadStatus[prefix] || [];
   let html = drafts.map((d, i) => {
     const failed = statuses[i] === 'failed';
+    const isMain = i === 0;
     return `<div class="photo-slot" style="position:relative">
       <img src="${d}">
+      ${!isMain ? `<button type="button" title="Set as main photo" onclick="setMainDraftPhoto('${prefix}',${i})" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-star" style="color:white;font-size:12px"></i></button>` : `<div title="Main photo — shown in lists" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center"><i class="ti ti-star-filled" style="color:white;font-size:12px"></i></div>`}
+      <button type="button" title="Remove" onclick="removeDraftPhoto('${prefix}',${i})" style="position:absolute;bottom:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-x" style="color:white;font-size:13px"></i></button>
       ${failed ? `<div title="Didn't upload — only visible on this device" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);display:flex;align-items:center;justify-content:center"><i class="ti ti-alert-triangle" style="color:white;font-size:12px"></i></div>` : ''}
     </div>`;
   }).join('');
@@ -2293,20 +2296,19 @@ function getPhotoDraftArray(prefix) {
   if (prefix === 'jazz') return jazzPhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
-// Where newly-uploaded links for this session go, and which Drive folder they land in.
-// Kept separate from each entity's existing photoLinks/receiptLinks (from a historical
-// import, say) — those are preserved separately and the two get merged together on save.
+// Which Drive folder each context's uploads land in.
 const PHOTO_LINK_CONTEXT = {
-  jazz: { getArray: () => jazzPhotoLinkDrafts, folder: 'Jazz Photos' },
-  garage: { getArray: () => garagePhotoLinkDrafts, folder: 'Vehicle Photos' },
-  garage2: { getArray: () => garage2PhotoLinkDrafts, folder: 'Garage Receipts' }
+  jazz: { folder: 'Jazz Photos' },
+  garage: { folder: 'Vehicle Photos' },
+  garage2: { folder: 'Garage Receipts' }
 };
-let jazzPhotoLinkDrafts = [];
 let pendingPhotoUploads = { jazz: [], garage: [], garage2: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let garagePhotoLinkDrafts = [];
-let garage2PhotoLinkDrafts = [];
-
 let photoUploadStatus = { jazz: [], garage: [], garage2: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+// Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
+// drafts[i]), so removing or reordering a photo can't accidentally mix up which link
+// belongs to which preview — a real bug in the earlier version, where links were just
+// appended in whatever order uploads happened to finish, not the order shown on screen.
+let photoUploadLinks = { jazz: [], garage: [], garage2: [] };
 
 function handlePhotoUpload(e, prefix) {
   const files = Array.from(e.target.files);
@@ -2324,7 +2326,7 @@ function handlePhotoUpload(e, prefix) {
       if (ctx) {
         const uploadPromise = Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo').then((result) => {
           if (result) {
-            ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+            if (photoUploadLinks[prefix]) photoUploadLinks[prefix][idx] = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage };
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'ok';
           } else {
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'failed';
@@ -2337,6 +2339,25 @@ function handlePhotoUpload(e, prefix) {
     };
     reader.readAsDataURL(f);
   });
+}
+// Removes a photo you've picked but haven't saved yet — works whether it's still
+// uploading, already uploaded, or failed. This is also how you recover from a failed
+// upload: remove it, then add the photo again for a fresh attempt.
+function removeDraftPhoto(prefix, index) {
+  const target = getPhotoDraftArray(prefix);
+  target.splice(index, 1);
+  if (photoUploadStatus[prefix]) photoUploadStatus[prefix].splice(index, 1);
+  if (photoUploadLinks[prefix]) photoUploadLinks[prefix].splice(index, 1);
+  const g = document.getElementById(prefix + 'PhotoGrid');
+  if (g) g.innerHTML = renderPhotoGrid(target, prefix);
+}
+// Moves a photo to the front — the first photo is what shows as the "main" one in lists.
+function setMainDraftPhoto(prefix, index) {
+  const target = getPhotoDraftArray(prefix);
+  const arrays = [target, photoUploadStatus[prefix], photoUploadLinks[prefix]];
+  arrays.forEach((arr) => { if (arr && arr.length > index) { const [item] = arr.splice(index, 1); arr.unshift(item); } });
+  const g = document.getElementById(prefix + 'PhotoGrid');
+  if (g) g.innerHTML = renderPhotoGrid(target, prefix);
 }
 // Returns how many photos in this context failed to reach Drive — callers use this right
 // before saving to warn the person instead of silently saving with a gap in photoLinks.
@@ -2477,11 +2498,12 @@ async function restoreIssueType(id) {
 
 async function saveIssue() {
   const btn = document.getElementById('saveIssueBtn');
+  const originalBtnText = (jazzDuplicate && jazzDuplicate.__editId) ? 'Save changes' : 'Save entry';
   if (pendingPhotoUploads.jazz && pendingPhotoUploads.jazz.length && btn) {
     btn.disabled = true; btn.textContent = 'Finishing photo upload…';
   }
   await waitForPendingUploads('jazz');
-  if (btn) btn.disabled = false;
+  if (btn) { btn.disabled = false; btn.textContent = originalBtnText; }
   const failedCount = countFailedUploads('jazz');
   if (failedCount > 0) {
     const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
@@ -2506,13 +2528,13 @@ async function saveIssue() {
     vetClinicId: window.__vetVisit ? document.getElementById('j_vetClinic').value : null,
     vetCost: window.__vetVisit ? parseFloat(document.getElementById('j_vetCost').value) || 0 : 0,
     photos: [...jazzPhotoDrafts],
-    photoLinks: [...keptExistingLinks(isEdit && jazzDuplicate.photoLinks ? jazzDuplicate.photoLinks : [], 'jazz'), ...jazzPhotoLinkDrafts],
+    photoLinks: [...keptExistingLinks(isEdit && jazzDuplicate.photoLinks ? jazzDuplicate.photoLinks : [], 'jazz'), ...photoUploadLinks.jazz.filter(Boolean)],
     updates: isEdit ? jazzDuplicate.updates || [] : [],
     synced: false
   };
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
-  jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; existingLinksRemoved.jazz = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
+  jazzPhotoDrafts = []; photoUploadLinks.jazz = []; existingLinksRemoved.jazz = []; window.__medGiven = false; window.__vetVisit = false; window.__snowCovered = false; jazzDuplicate = null;
   currentView = isEdit ? 'issueDetail' : 'main';
   if (isEdit) currentIssueId = issue.id;
   route();
@@ -2520,7 +2542,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
-    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = [];
+    jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = [];
     currentView = 'addIssue'; route();
   });
 }

@@ -67,8 +67,8 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
@@ -126,11 +126,12 @@ async function saveVehicle() {
   const name = [year, make, model, trim].filter(Boolean).join(' ');
   if (!name) { alert('At least year, make, or model is needed.'); return; }
   const btn = document.getElementById('saveVehicleBtn');
+  const originalBtnText = vehicleEditId ? 'Save changes' : 'Add vehicle';
   if (pendingPhotoUploads.garage && pendingPhotoUploads.garage.length && btn) {
     btn.disabled = true; btn.textContent = 'Finishing photo upload…';
   }
   await waitForPendingUploads('garage');
-  if (btn) btn.disabled = false;
+  if (btn) { btn.disabled = false; btn.textContent = originalBtnText; }
   const failedCount = countFailedUploads('garage');
   if (failedCount > 0) {
     const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
@@ -145,7 +146,7 @@ async function saveVehicle() {
     color: document.getElementById('v_color').value.trim(),
     condition: document.getElementById('v_condition').value.trim(),
     photos: [...garagePhotoDrafts], ownershipDoc: garageOwnershipDraft,
-    photoLinks: [...keptExistingLinks(existing && existing.photoLinks ? existing.photoLinks : [], 'vehicle'), ...garagePhotoLinkDrafts],
+    photoLinks: [...keptExistingLinks(existing && existing.photoLinks ? existing.photoLinks : [], 'vehicle'), ...photoUploadLinks.garage.filter(Boolean)],
     sellerName: document.getElementById('v_sellerName').value.trim(),
     sellerEmail: document.getElementById('v_sellerEmail').value.trim(),
     sellerPhone: document.getElementById('v_sellerPhone').value.trim(),
@@ -157,7 +158,7 @@ async function saveVehicle() {
   await DB.put('vehicles', vehicle);
   const { photos, ownershipDoc, ...syncable } = vehicle; // photos/doc stay local-only; syncing base64 images would blow past Sheet cell limits
   Sync.pushEntry('Vehicles', syncable).then(() => { vehicle.synced = true; DB.put('vehicles', vehicle); });
-  garagePhotoDrafts = []; garagePhotoLinkDrafts = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; vehicleEditId = null;
+  garagePhotoDrafts = []; photoUploadLinks.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; vehicleEditId = null;
   currentView = existing ? 'vehicleDetail' : 'main'; route();
 }
 
@@ -265,7 +266,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = [];
+  garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -283,7 +284,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
@@ -406,11 +407,12 @@ async function saveGaragePlace() {
 
 async function saveCost() {
   const btn = document.getElementById('saveCostBtn');
+  const originalBtnText = costEditId ? 'Save changes' : 'Save cost';
   if (pendingPhotoUploads.garage2 && pendingPhotoUploads.garage2.length && btn) {
     btn.disabled = true; btn.textContent = 'Finishing photo upload…';
   }
   await waitForPendingUploads('garage2');
-  if (btn) btn.disabled = false;
+  if (btn) { btn.disabled = false; btn.textContent = originalBtnText; }
   const failedCount = countFailedUploads('garage2');
   if (failedCount > 0) {
     const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
@@ -427,13 +429,13 @@ async function saveCost() {
     place: document.getElementById('c_place').value,
     comments: document.getElementById('c_comments').value.trim(),
     photos: [...garagePhotoDrafts],
-    receiptLinks: [...keptExistingLinks(cost.receiptLinks || [], 'cost'), ...garage2PhotoLinkDrafts],
+    receiptLinks: [...keptExistingLinks(cost.receiptLinks || [], 'cost'), ...photoUploadLinks.garage2.filter(Boolean)],
     synced: false
   });
   await DB.put('garageCosts', cost);
   const { photos, ...syncableCost } = cost;
   Sync.pushEntry('GarageCosts', syncableCost).then(() => { cost.synced = true; DB.put('garageCosts', cost); });
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; existingLinksRemoved.cost = []; costEditId = null;
+  garagePhotoDrafts = []; photoUploadLinks.garage2 = []; existingLinksRemoved.cost = []; costEditId = null;
   currentView = 'vehicleDetail'; route();
 }
 
