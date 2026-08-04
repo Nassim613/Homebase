@@ -41,60 +41,49 @@ async function importBundle(bundle, onProgress) {
   onProgress && onProgress('Categories, stores, and types merged…');
 
   // Finance entries
-  let n = 0;
-  for (const e of (bundle.entries || [])) {
+  const entriesToWrite = (bundle.entries || []).map((e) => {
     e.categoryId = catMap[e.categoryId] || e.categoryId;
     e.storeId = payeeMap[e.storeId] || e.storeId;
     if (e.carId) e.carId = carMap[e.carId] || e.carId;
     if (e.projectId) e.projectId = projectMap[e.projectId] || e.projectId;
     if (e.carSplit) e.carSplit = e.carSplit.map((s) => ({ ...s, carId: carMap[s.carId] || s.carId }));
-    await DB.put('entries', e);
-    n++;
-  }
-  report.inserted.entries = n;
-  onProgress && onProgress(`${n} finance entries imported…`);
+    return e;
+  });
+  await DB.putMany('entries', entriesToWrite);
+  report.inserted.entries = entriesToWrite.length;
+  onProgress && onProgress(`${entriesToWrite.length} finance entries imported…`);
 
   // Vehicles
-  n = 0;
-  const vehicleIdSet = new Set();
-  for (const v of (bundle.vehicles || [])) {
-    await DB.put('vehicles', v);
-    vehicleIdSet.add(v.id);
-    n++;
-  }
-  report.inserted.vehicles = n;
-  onProgress && onProgress(`${n} vehicles imported…`);
+  const vehiclesToWrite = bundle.vehicles || [];
+  await DB.putMany('vehicles', vehiclesToWrite);
+  const vehicleIdSet = new Set(vehiclesToWrite.map((v) => v.id));
+  report.inserted.vehicles = vehiclesToWrite.length;
+  onProgress && onProgress(`${vehiclesToWrite.length} vehicles imported…`);
 
   // Garage costs
-  n = 0;
-  for (const c of (bundle.garageCosts || [])) {
+  const costsToWrite = (bundle.garageCosts || []).filter((c) => vehicleIdSet.has(c.vehicleId)).map((c) => {
     if (c.expenseTypeId) c.expenseTypeId = etypeMap[c.expenseTypeId] || c.expenseTypeId;
     if (c.repairTypeId) c.repairTypeId = rtypeMap[c.repairTypeId] || c.repairTypeId;
-    if (!vehicleIdSet.has(c.vehicleId)) continue; // skip orphaned costs (vehicle wasn't imported)
-    await DB.put('garageCosts', c);
-    n++;
-  }
-  report.inserted.garageCosts = n;
-  onProgress && onProgress(`${n} garage costs imported…`);
+    return c;
+  });
+  await DB.putMany('garageCosts', costsToWrite);
+  report.inserted.garageCosts = costsToWrite.length;
+  onProgress && onProgress(`${costsToWrite.length} garage costs imported…`);
 
   // Jazz issues
-  n = 0;
-  for (const j of (bundle.jazzIssues || [])) {
+  const jazzToWrite = (bundle.jazzIssues || []).map((j) => {
     if (j.typeId) j.typeId = itypeMap[j.typeId] || j.typeId;
-    await DB.put('jazzIssues', j);
-    n++;
-  }
-  report.inserted.jazzIssues = n;
-  onProgress && onProgress(`${n} Jazz issues imported…`);
+    return j;
+  });
+  await DB.putMany('jazzIssues', jazzToWrite);
+  report.inserted.jazzIssues = jazzToWrite.length;
+  onProgress && onProgress(`${jazzToWrite.length} Jazz issues imported…`);
 
   // Weight entries
-  n = 0;
-  for (const w of (bundle.weightEntries || [])) {
-    await DB.put('weightEntries', w);
-    n++;
-  }
-  report.inserted.weightEntries = n;
-  onProgress && onProgress(`${n} weight entries imported…`);
+  const weightsToWrite = bundle.weightEntries || [];
+  await DB.putMany('weightEntries', weightsToWrite);
+  report.inserted.weightEntries = weightsToWrite.length;
+  onProgress && onProgress(`${weightsToWrite.length} weight entries imported…`);
 
   return report;
 }
