@@ -103,7 +103,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; photoUploadErrors.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -1386,6 +1386,7 @@ let entryReceiptFormFor = undefined;
 let entryReceiptDraft = null; // local base64 preview while uploading
 let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
 let entryReceiptUploading = false;
+let entryReceiptUploadError = null;
 
 function openCategoryPickerModal() {
   const categories = (window.__categories || []).slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -1594,6 +1595,7 @@ async function renderAddEntry() {
           <button type="button" class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeEntryReceipt()">Remove</button>
         </div>
       ` : `
+        ${entryReceiptUploadError ? `<p style="font-size:12px;color:var(--red);margin-bottom:10px"><i class="ti ti-alert-triangle"></i> Upload failed: ${esc(entryReceiptUploadError)}</p>` : ''}
         <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Attach a photo of the receipt — it uploads to your Drive automatically and shows up on every device.</p>
         <input type="file" accept="image/*,.pdf" onchange="handleEntryReceiptUpload(event)">
       `}
@@ -1784,6 +1786,7 @@ let storeFormReturnTo = null;
 let storeLogoDraft = null;
 let storeLogoDriveUrl = null;
 let storeLogoUploading = false;
+let storeLogoUploadError = null;
 
 function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
 function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
@@ -1804,7 +1807,7 @@ async function renderStoreForm() {
       </div>
       ${(storeLogoDriveUrl || storeLogoDraft) && !storeLogoUploading ? `<button type="button" class="btn" style="width:auto;padding:8px 14px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeStoreLogo()">Remove</button>` : ''}
     </div>
-    <p id="storeLogoStatus" style="font-size:11px;color:var(--ink-soft);margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : '')}</p>
+    <p id="storeLogoStatus" style="font-size:11px;color:${storeLogoUploadError ? 'var(--red)' : 'var(--ink-soft)'};margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : (storeLogoUploadError ? 'Upload failed: ' + esc(storeLogoUploadError) : ''))}</p>
     <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
 
     <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${esc(storeLogoDriveUrl || '')}"></div>
@@ -1817,12 +1820,16 @@ function handleEntryReceiptUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = async () => {
-    entryReceiptDraft = reader.result;
+    entryReceiptDraft = await compressImageDataUrl(reader.result);
     entryReceiptUploading = true;
     renderAddEntry();
     const result = await Sync.uploadPhoto(entryReceiptDraft, 'Finance Receipts', (document.getElementById('f_description')?.value || 'receipt').trim());
     entryReceiptUploading = false;
-    if (result) entryReceiptLink = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, column: 'Receipt' };
+    if (result.ok) {
+      entryReceiptLink = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, column: 'Receipt' };
+    } else {
+      entryReceiptUploadError = result.error;
+    }
     renderAddEntry();
   };
   reader.readAsDataURL(f);
@@ -1842,12 +1849,17 @@ function handleStoreLogoUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = async () => {
-    storeLogoDraft = reader.result;
+    storeLogoDraft = await compressImageDataUrl(reader.result);
     storeLogoUploading = true;
     renderStoreForm();
     const result = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (document.getElementById('store_name')?.value || 'logo').trim());
     storeLogoUploading = false;
-    if (result) storeLogoDriveUrl = result.url;
+    if (result.ok) {
+      storeLogoDriveUrl = result.url;
+      storeLogoUploadError = null;
+    } else {
+      storeLogoUploadError = result.error;
+    }
     renderStoreForm();
   };
   reader.readAsDataURL(f);
@@ -2278,6 +2290,7 @@ async function saveVetClinic() {
 
 function renderPhotoGrid(drafts, prefix) {
   const statuses = photoUploadStatus[prefix] || [];
+  const errors = photoUploadErrors[prefix] || [];
   let html = drafts.map((d, i) => {
     const failed = statuses[i] === 'failed';
     const isMain = i === 0;
@@ -2285,7 +2298,7 @@ function renderPhotoGrid(drafts, prefix) {
       <img src="${d}">
       ${!isMain ? `<button type="button" title="Set as main photo" onclick="setMainDraftPhoto('${prefix}',${i})" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-star" style="color:white;font-size:12px"></i></button>` : `<div title="Main photo — shown in lists" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center"><i class="ti ti-star-filled" style="color:white;font-size:12px"></i></div>`}
       <button type="button" title="Remove" onclick="removeDraftPhoto('${prefix}',${i})" style="position:absolute;bottom:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-x" style="color:white;font-size:13px"></i></button>
-      ${failed ? `<div title="Didn't upload — only visible on this device" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);display:flex;align-items:center;justify-content:center"><i class="ti ti-alert-triangle" style="color:white;font-size:12px"></i></div>` : ''}
+      ${failed ? `<button type="button" onclick="alert('Upload failed: ${esc((errors[i] || 'unknown reason').replace(/'/g, "\\'"))}')" title="Tap for the reason" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-alert-triangle" style="color:white;font-size:12px"></i></button>` : ''}
     </div>`;
   }).join('');
   if (drafts.length < 6) html += `<div class="photo-slot" onclick="document.getElementById('${prefix}FileInput').click()"><i class="ti ti-plus"></i></div>`;
@@ -2304,11 +2317,37 @@ const PHOTO_LINK_CONTEXT = {
 };
 let pendingPhotoUploads = { jazz: [], garage: [], garage2: [] }; // in-flight upload promises, per context — Save must await these before finishing
 let photoUploadStatus = { jazz: [], garage: [], garage2: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
 let photoUploadLinks = { jazz: [], garage: [], garage2: [] };
+
+// Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
+// photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
+// timing out on weak signal. Resizing to a sane max dimension and re-compressing as JPEG
+// typically brings that down to a few hundred KB, which is far more resilient. PDFs pass
+// through untouched, since this only applies to actual images.
+function compressImageDataUrl(dataUrl, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve) => {
+    if (!dataUrl.startsWith('data:image/')) { resolve(dataUrl); return; }
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+        else { width = Math.round(width * maxDim / height); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl); // fall back to the original rather than lose the photo
+    img.src = dataUrl;
+  });
+}
 
 function handlePhotoUpload(e, prefix) {
   const files = Array.from(e.target.files);
@@ -2317,19 +2356,20 @@ function handlePhotoUpload(e, prefix) {
   let remaining = files.length;
   files.forEach((f) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
+    reader.onload = async () => {
+      const dataUrl = await compressImageDataUrl(reader.result);
       const idx = target.length;
       target.push(dataUrl);
       if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'pending';
       if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
       if (ctx) {
         const uploadPromise = Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo').then((result) => {
-          if (result) {
+          if (result.ok) {
             if (photoUploadLinks[prefix]) photoUploadLinks[prefix][idx] = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage };
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'ok';
           } else {
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'failed';
+            if (photoUploadErrors[prefix]) photoUploadErrors[prefix][idx] = result.error;
           }
           const g = document.getElementById(prefix + 'PhotoGrid');
           if (g) g.innerHTML = renderPhotoGrid(target, prefix);
@@ -2348,13 +2388,14 @@ function removeDraftPhoto(prefix, index) {
   target.splice(index, 1);
   if (photoUploadStatus[prefix]) photoUploadStatus[prefix].splice(index, 1);
   if (photoUploadLinks[prefix]) photoUploadLinks[prefix].splice(index, 1);
+  if (photoUploadErrors[prefix]) photoUploadErrors[prefix].splice(index, 1);
   const g = document.getElementById(prefix + 'PhotoGrid');
   if (g) g.innerHTML = renderPhotoGrid(target, prefix);
 }
 // Moves a photo to the front — the first photo is what shows as the "main" one in lists.
 function setMainDraftPhoto(prefix, index) {
   const target = getPhotoDraftArray(prefix);
-  const arrays = [target, photoUploadStatus[prefix], photoUploadLinks[prefix]];
+  const arrays = [target, photoUploadStatus[prefix], photoUploadLinks[prefix], photoUploadErrors[prefix]];
   arrays.forEach((arr) => { if (arr && arr.length > index) { const [item] = arr.splice(index, 1); arr.unshift(item); } });
   const g = document.getElementById(prefix + 'PhotoGrid');
   if (g) g.innerHTML = renderPhotoGrid(target, prefix);
@@ -2542,7 +2583,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
-    jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = [];
+    jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; photoUploadErrors.jazz = []; existingLinksRemoved.jazz = [];
     currentView = 'addIssue'; route();
   });
 }

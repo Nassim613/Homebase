@@ -266,18 +266,20 @@ const Sync = {
   // to the local-only copy in that case, nothing is lost either way.
   async uploadPhoto(dataUrl, folder, fileName) {
     const url = await this.getUrl();
-    if (!url || !navigator.onLine) return null;
+    if (!url) return { ok: false, error: 'Not connected to a Sheet' };
+    if (!navigator.onLine) return { ok: false, error: 'Device is offline' };
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName })
       });
+      if (!res.ok) return { ok: false, error: `Server responded ${res.status}` };
       const data = await res.json();
-      return data.ok ? { url: data.url, viewUrl: data.viewUrl, isImage: data.isImage } : null;
+      if (!data.ok) return { ok: false, error: data.error || 'Apps Script rejected the upload' };
+      return { ok: true, url: data.url, viewUrl: data.viewUrl, isImage: data.isImage };
     } catch (err) {
-      console.warn('Photo upload failed:', err.message);
-      return null;
+      return { ok: false, error: err.message || 'Network request failed' };
     }
   },
 

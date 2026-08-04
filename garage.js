@@ -67,8 +67,8 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; photoUploadErrors.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; photoUploadLinks.garage = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; photoUploadErrors.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
@@ -266,7 +266,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
-  garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = [];
+  garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; photoUploadErrors.garage2 = []; existingLinksRemoved.cost = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -284,7 +284,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; photoUploadErrors.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
