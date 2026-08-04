@@ -75,6 +75,20 @@ function renderSyncPill() {
   pill.innerHTML = `<i class="ti ${icon}"></i> <span>${label}</span>`;
 }
 
+// Manual "don't want to wait for the 10-second poll" refresh — forces an immediate
+// pull/push cycle and redraws the current screen if it's safe to (never on a form,
+// same rule as the automatic background refresh).
+async function manualRefresh() {
+  const icon = document.getElementById('manualRefreshIcon');
+  const btn = document.getElementById('manualRefreshBtn');
+  if (btn) btn.disabled = true;
+  if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+  await Sync.fullSync();
+  if (icon) icon.style.animation = '';
+  if (btn) btn.disabled = false;
+  if (!Sync.FORM_VIEWS.includes(currentView)) route();
+}
+
 // ---------- Tab nav ----------
 document.querySelectorAll('nav.tabs button').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -89,7 +103,7 @@ document.querySelectorAll('nav.tabs button').forEach((btn) => {
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
-  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -2263,7 +2277,14 @@ async function saveVetClinic() {
 }
 
 function renderPhotoGrid(drafts, prefix) {
-  let html = drafts.map((d, i) => `<div class="photo-slot"><img src="${d}"></div>`).join('');
+  const statuses = photoUploadStatus[prefix] || [];
+  let html = drafts.map((d, i) => {
+    const failed = statuses[i] === 'failed';
+    return `<div class="photo-slot" style="position:relative">
+      <img src="${d}">
+      ${failed ? `<div title="Didn't upload — only visible on this device" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);display:flex;align-items:center;justify-content:center"><i class="ti ti-alert-triangle" style="color:white;font-size:12px"></i></div>` : ''}
+    </div>`;
+  }).join('');
   if (drafts.length < 6) html += `<div class="photo-slot" onclick="document.getElementById('${prefix}FileInput').click()"><i class="ti ti-plus"></i></div>`;
   html += `<input type="file" id="${prefix}FileInput" accept="image/*,.pdf" multiple style="display:none" onchange="handlePhotoUpload(event,'${prefix}')">`;
   return html;
@@ -2285,6 +2306,8 @@ let pendingPhotoUploads = { jazz: [], garage: [], garage2: [] }; // in-flight up
 let garagePhotoLinkDrafts = [];
 let garage2PhotoLinkDrafts = [];
 
+let photoUploadStatus = { jazz: [], garage: [], garage2: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+
 function handlePhotoUpload(e, prefix) {
   const files = Array.from(e.target.files);
   const target = getPhotoDraftArray(prefix);
@@ -2294,17 +2317,31 @@ function handlePhotoUpload(e, prefix) {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result;
+      const idx = target.length;
       target.push(dataUrl);
+      if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'pending';
       if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
       if (ctx) {
         const uploadPromise = Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo').then((result) => {
-          if (result) ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+          if (result) {
+            ctx.getArray().push({ url: result.url, viewUrl: result.viewUrl, isImage: result.isImage });
+            if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'ok';
+          } else {
+            if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'failed';
+          }
+          const g = document.getElementById(prefix + 'PhotoGrid');
+          if (g) g.innerHTML = renderPhotoGrid(target, prefix);
         });
         if (pendingPhotoUploads[prefix]) pendingPhotoUploads[prefix].push(uploadPromise);
       }
     };
     reader.readAsDataURL(f);
   });
+}
+// Returns how many photos in this context failed to reach Drive — callers use this right
+// before saving to warn the person instead of silently saving with a gap in photoLinks.
+function countFailedUploads(prefix) {
+  return (photoUploadStatus[prefix] || []).filter((s) => s === 'failed').length;
 }
 // Call before finalizing a save — waits for any still-uploading photos in this context
 // so the saved record's photoLinks reflects everything, not just whatever had finished
@@ -2445,6 +2482,11 @@ async function saveIssue() {
   }
   await waitForPendingUploads('jazz');
   if (btn) btn.disabled = false;
+  const failedCount = countFailedUploads('jazz');
+  if (failedCount > 0) {
+    const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
+    if (!proceed) return;
+  }
   const typeId = document.getElementById('j_type').value;
   const startDate = document.getElementById('j_date').value || todayStr();
   const isEdit = jazzDuplicate && jazzDuplicate.__editId;
@@ -2478,7 +2520,7 @@ async function saveIssue() {
 function editIssue(id) {
   DB.get('jazzIssues', id).then((issue) => {
     jazzDuplicate = { ...issue, __editId: issue.id };
-    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; existingLinksRemoved.jazz = [];
+    jazzPhotoDrafts = []; jazzPhotoLinkDrafts = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; existingLinksRemoved.jazz = [];
     currentView = 'addIssue'; route();
   });
 }

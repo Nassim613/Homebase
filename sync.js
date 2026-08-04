@@ -82,10 +82,11 @@ const Sync = {
   // (2) never let a pulled record wipe out a local-only field (photos, logos) that
   // was deliberately never sent to the Sheet in the first place.
   async pullAll() {
-    if (this._pullInProgress) return;
+    if (this._pullInProgress) return false;
     const url = await this.getUrl();
-    if (!url || !navigator.onLine) return;
+    if (!url || !navigator.onLine) return false;
     this._pullInProgress = true;
+    let anyChanged = false;
     try {
       const res = await fetch(url, { method: 'GET' });
       const data = await res.json();
@@ -105,10 +106,14 @@ const Sync = {
           if (local && local.synced === false) continue; // local has a pending change — don't clobber it
           job.strip.forEach((f) => { if (local && local[f] !== undefined) remote[f] = local[f]; });
           remote.synced = true;
+          // Skip the write entirely if nothing actually changed — avoids pointless
+          // IndexedDB churn every 10 seconds, and lets callers know whether a screen
+          // refresh is actually worth doing (vs re-rendering the same data repeatedly).
+          if (local && JSON.stringify(local) === JSON.stringify(remote)) continue;
           toWrite.push(remote);
         }
         if (toWrite.length) {
-          try { await DB.putMany(job.store, toWrite); } catch (e) { /* store may not exist locally yet, skip */ }
+          try { await DB.putMany(job.store, toWrite); anyChanged = true; } catch (e) { /* store may not exist locally yet, skip */ }
         }
       }
       // Special case: the "already imported" flag lives in local settings, not a normal
@@ -130,6 +135,7 @@ const Sync = {
             if (localMeta.groceryWeeklyBudget !== remoteFlag.value) {
               localMeta.groceryWeeklyBudget = remoteFlag.value;
               await DB.put('settings', localMeta);
+              anyChanged = true;
             }
           }
         } catch (e) { /* ignore malformed row */ }
@@ -140,6 +146,7 @@ const Sync = {
       this._pullInProgress = false;
     }
     await this.refreshStatus();
+    return anyChanged;
   },
 
   async clearRemoteSheet() {
@@ -231,8 +238,9 @@ const Sync = {
 
   // Pull first (catch up on anything from other devices), then push anything pending locally.
   async fullSync() {
-    await this.pullAll();
+    const changed = await this.pullAll();
     await this.retryAllPending();
+    return changed;
   },
 
   async refreshStatus() {
@@ -273,9 +281,19 @@ const Sync = {
     }
   },
 
+  // Screens where re-rendering mid-use would wipe out whatever the person is currently
+  // typing — never auto-refresh these, no matter how new the incoming data is.
+  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle'],
+
   startPolling() {
     window.addEventListener('online', () => this.fullSync());
     window.addEventListener('offline', () => this.setStatus('pending'));
-    setInterval(() => this.fullSync(), 10000);
+    setInterval(() => {
+      this.fullSync().then((changed) => {
+        if (changed && typeof currentView !== 'undefined' && !this.FORM_VIEWS.includes(currentView) && typeof route === 'function') {
+          route(); // something genuinely new arrived and it's safe to redraw — refresh what's on screen
+        }
+      });
+    }, 10000);
   }
 };

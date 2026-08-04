@@ -167,3 +167,4 @@ nav.tabs .label { font-size: 10px; font-weight: 500; }
   width: 36px; height: 4px; border-radius: 999px; background: var(--line);
   margin: 6px auto 14px;
 }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

@@ -67,8 +67,8 @@ async function filterGarageVehicles(q) {
 
 // ---------- Add / Edit vehicle ----------
 let vehicleEditId = null;
-function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
-function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
+function goAddVehicle() { vehicleEditId = null; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; garageOwnershipDraft = null; currentView = 'addVehicle'; route(); }
+function goEditVehicle(id) { vehicleEditId = id; garagePhotoDrafts = []; garagePhotoLinkDrafts = []; pendingPhotoUploads.garage = []; photoUploadStatus.garage = []; existingLinksRemoved.vehicle = []; currentView = 'addVehicle'; route(); }
 async function renderAddVehicle() {
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   if (existing) { garagePhotoDrafts = [...(existing.photos || [])]; garageOwnershipDraft = existing.ownershipDoc || null; }
@@ -131,6 +131,11 @@ async function saveVehicle() {
   }
   await waitForPendingUploads('garage');
   if (btn) btn.disabled = false;
+  const failedCount = countFailedUploads('garage');
+  if (failedCount > 0) {
+    const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
+    if (!proceed) return;
+  }
   const existing = vehicleEditId ? await DB.get('vehicles', vehicleEditId) : null;
   const vehicle = existing || { id: uid(), status: 'owned', soldFor: null, dateSold: null, buyerName: null, buyerPhone: null };
   Object.assign(vehicle, {
@@ -260,7 +265,7 @@ async function openCostDetail(id) {
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
-  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; existingLinksRemoved.cost = [];
+  garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = [];
   closeModal();
   currentView = 'addCost'; route();
 }
@@ -278,7 +283,7 @@ async function deleteCostFromDetail() {
 
 // ---------- Add cost ----------
 let costEditId = null;
-function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
+function goAddCost() { costEditId = null; garagePhotoDrafts = []; garage2PhotoLinkDrafts = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
   const expenseTypes = await DB.getAll('expenseTypes');
@@ -406,6 +411,11 @@ async function saveCost() {
   }
   await waitForPendingUploads('garage2');
   if (btn) btn.disabled = false;
+  const failedCount = countFailedUploads('garage2');
+  if (failedCount > 0) {
+    const proceed = confirm(`${failedCount} photo${failedCount===1?'':'s'} couldn't reach Drive (check your connection) and will only be visible on this device. Save anyway? Cancel to try uploading again first.`);
+    if (!proceed) return;
+  }
   const repairSel = document.getElementById('c_repairType');
   const cost = costEditId ? await DB.get('garageCosts', costEditId) : { id: uid(), vehicleId: currentVehicleId };
   Object.assign(cost, {

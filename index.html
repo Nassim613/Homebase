@@ -25,6 +25,7 @@
       </div>
     </div>
     <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
+    <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
   </header>
 
   <main id="mainContent">
@@ -39,7 +40,7 @@
     <button data-tab="jazz"><i class="ti ti-paw"></i><span class="label">Jazz</span></button>
     <button data-tab="weight"><i class="ti ti-scale"></i><span class="label">Weight</span></button>
     <button data-tab="garage"><i class="ti ti-car"></i><span class="label">Garage</span></button>
-    <button data-tab="more"><i class="ti ti-dots"></i><span class="label">More</span></button>
+    <button data-tab="more"><i class="ti ti-settings"></i><span class="label">Settings</span></button>
   </nav>
 
   <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
