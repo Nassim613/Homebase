@@ -160,6 +160,7 @@ const Sync = {
     } finally {
       this._pullInProgress = false;
     }
+    this.hasPulledOnce = true;
     await this.refreshStatus();
     return anyChanged;
   },
@@ -285,6 +286,12 @@ const Sync = {
   async refreshStatus() {
     const url = await this.getUrl();
     if (!url) { this.setStatus('offline'); return; }
+    // "Synced" should mean "my local data genuinely reflects the Sheet" — not just
+    // "nothing of mine is waiting to be pushed," which is trivially true on a device
+    // that hasn't pulled anything down yet (a fresh browser, cleared storage, etc).
+    // Without this check, a device with zero local data would show a false "Synced"
+    // the instant it loads, before it's actually gotten anything from the Sheet.
+    if (!this.hasPulledOnce) { this.setStatus('syncing'); return; }
     let pendingCount = 0;
     for (const job of SYNC_JOBS) {
       try {
