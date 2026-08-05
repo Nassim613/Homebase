@@ -26,7 +26,10 @@
       </div>
     </div>
     <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
-    <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
+    <div style="position:relative;display:inline-block">
+      <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
+      <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
+    </div>
   </header>
 
   <main id="mainContent">

@@ -83,12 +83,19 @@ function renderSyncPill() {
 async function manualRefresh() {
   const icon = document.getElementById('manualRefreshIcon');
   const btn = document.getElementById('manualRefreshBtn');
+  const statusEl = document.getElementById('manualRefreshStatus');
   if (btn) btn.disabled = true;
   if (icon) icon.style.animation = 'spin 0.8s linear infinite';
-  await Sync.fullSync();
+  const changed = await Sync.fullSync();
   if (icon) icon.style.animation = '';
   if (btn) btn.disabled = false;
   if (!Sync.FORM_VIEWS.includes(currentView)) route();
+  if (statusEl) {
+    statusEl.textContent = Sync.lastPullError ? "Couldn't refresh" : (changed ? 'Updated' : 'Up to date');
+    statusEl.style.color = Sync.lastPullError ? 'var(--red)' : '#0F6E56';
+    statusEl.style.opacity = '1';
+    setTimeout(() => { statusEl.style.opacity = '0'; }, 1800);
+  }
 }
 
 // ---------- Tab nav ----------
