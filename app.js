@@ -1525,6 +1525,8 @@ function selectStoreFromPicker(id) {
   document.getElementById('f_store').value = id;
   closeModal();
   updateStoreButtonDisplay();
+  const store = (window.__payeesCache || []).find((p) => p.id === id);
+  if (store && store.defaultAmount) document.getElementById('f_amount').value = store.defaultAmount;
 }
 async function updateStoreButtonDisplay() {
   const el = document.getElementById('f_storeButtonContent');
@@ -1801,6 +1803,7 @@ async function renderStoreForm() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
 
     <div class="field"><label class="field-label">Name</label><input id="store_name" placeholder="e.g. Costco" value="${existing ? esc(existing.name) : ''}"></div>
+    <div class="field"><label class="field-label">Default amount</label><input type="number" step="0.01" id="store_defaultAmount" placeholder="Leave blank if it varies" value="${existing && existing.defaultAmount ? existing.defaultAmount : ''}"></div>
 
     <label class="field-label">Logo</label>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
@@ -1875,6 +1878,7 @@ async function saveStoreForm() {
   if (btn) { btn.disabled = false; btn.textContent = 'Save store'; }
   const payee = storeFormEditId ? await DB.get('payees', storeFormEditId) : { id: uid(), defaultCategoryId: null, defaultAmount: null };
   payee.name = name;
+  payee.defaultAmount = parseFloat(document.getElementById('store_defaultAmount').value) || null;
   payee.logo = storeLogoDraft; // local-only instant preview, kept as an offline fallback
   payee.logoLink = document.getElementById('store_logoLink').value.trim() || storeLogoDriveUrl || '';
   payee.synced = false;
@@ -2046,13 +2050,20 @@ async function restoreProject(id) {
 
 // ---------- Init ----------
 async function init() {
-  await seedIfEmpty();
   renderHeader();
   Sync.onStatusChange(renderSyncPill);
   await Sync.refreshStatus();
-  route();
+  route(); // render immediately with whatever's already local — don't block startup on the network
   Sync.startPolling();
   Sync.pullAll().then(async () => {
+    // Only NOW — after a real pull attempt — check whether default categories/stores/etc
+    // are actually needed. This used to run before the first pull ever had a chance to
+    // bring down real data, which meant any device with a temporarily-empty local cache
+    // (a cleared browser, a fresh sign-in, anything) looked identical to "genuinely new
+    // user" and got seeded with fresh duplicate defaults — which is what caused the
+    // repeated category duplication in the Sheet. Now it only seeds if the Sheet itself
+    // genuinely had nothing to offer.
+    await seedIfEmpty();
     await processRecurringEntries(); // pull first, so we see any occurrence the Apps Script trigger already generated server-side
     if (currentView === 'main') route();
   });
@@ -3046,6 +3057,30 @@ async function runFixEverything() {
   const statusEl = document.getElementById('fixEverythingStatus');
   const btn = document.getElementById('fixEverythingBtn');
   btn.disabled = true;
+
+  // Safety check: this device's local data is about to become the new source of truth
+  // for the entire Sheet — if it's missing things the Sheet actually has (an incomplete
+  // pull, a bug, anything), proceeding would silently destroy real data. Comparing
+  // counts first catches that before it can happen, rather than trusting local data
+  // blindly the way this used to.
+  statusEl.textContent = 'Checking your data is complete before doing anything…';
+  const remoteCounts = await Sync.getRemoteCounts();
+  if (remoteCounts) {
+    const shortfalls = [];
+    for (const job of SYNC_JOBS) {
+      const localCount = (await DB.getAll(job.store)).filter((r) => !r.deleted).length;
+      const remoteCount = remoteCounts[job.sheet] || 0;
+      if (remoteCount > 0 && localCount < remoteCount * 0.5) {
+        shortfalls.push(`${job.sheet}: this device has ${localCount}, the Sheet has ${remoteCount}`);
+      }
+    }
+    if (shortfalls.length) {
+      statusEl.innerHTML = `<b>Stopped — this device's data looks incomplete compared to your Sheet:</b><br>${shortfalls.join('<br>')}<br><br>Proceeding would have deleted real data. Try the refresh button first so this device has everything, then run this again.`;
+      btn.disabled = false;
+      return;
+    }
+  }
+
   statusEl.textContent = 'Step 1 of 3 — merging any duplicates…';
   await cleanupDuplicateDimensions(() => {});
   statusEl.textContent = 'Step 2 of 3 — clearing your Sheet…';

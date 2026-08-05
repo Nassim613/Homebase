@@ -164,6 +164,26 @@ const Sync = {
     return anyChanged;
   },
 
+  // Read-only — fetches current row counts per sheet without touching any local data.
+  // Used as a safety check before anything destructive (like clearing the Sheet), so a
+  // device with incomplete local data can't silently wipe out real data it never had.
+  async getRemoteCounts() {
+    const url = await this.getUrl();
+    if (!url) return null;
+    const token = await Auth.ensureToken();
+    if (!token) return null;
+    try {
+      const res = await fetch(url + '?token=' + encodeURIComponent(token), { method: 'GET' });
+      const data = await res.json();
+      if (data.error) return null;
+      const counts = {};
+      for (const job of SYNC_JOBS) counts[job.sheet] = (data[job.sheet] || []).length;
+      return counts;
+    } catch (err) {
+      return null;
+    }
+  },
+
   async clearRemoteSheet() {
     const url = await this.getUrl();
     if (!url) return { ok: false, error: 'Not connected to a Sheet' };
