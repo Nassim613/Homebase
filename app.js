@@ -163,25 +163,41 @@ async function route() {
 
 // ---------- Finance: main screen ----------
 // ---------- Finance range & type filter state ----------
-let financeRange = 'thisMonth'; // thisMonth | lastMonth | last3Months | lastWeek | last6Months | lastYear | last2Years | allTime
+let financeRange = 'thisMonth'; // thisMonth | lastMonth | twoMonthsAgo | last3Months | last6Months | lastYear | last2Years | allTime
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
-const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', last3Months: 'Last 3 months', lastWeek: 'Last 7 days', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
+const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
 
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function getFinanceRangeBounds(range) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth();
   if (range === 'lastMonth') return { start: fmtISO(new Date(y, m - 1, 1)), end: fmtISO(new Date(y, m, 0)) };
+  if (range === 'twoMonthsAgo') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m - 1, 0)) };
   if (range === 'last3Months') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
-  if (range === 'lastWeek') { const start = new Date(now); start.setDate(start.getDate() - 6); return { start: fmtISO(start), end: fmtISO(now) }; }
   if (range === 'last6Months') return { start: fmtISO(new Date(y, m - 5, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
-  if (range === 'lastYear') return { start: fmtISO(new Date(y - 1, m, 1)), end: fmtISO(now) };
-  if (range === 'last2Years') return { start: fmtISO(new Date(y - 2, m, 1)), end: fmtISO(now) };
+  if (range === 'lastYear') return { start: fmtISO(new Date(y, 0, 1)), end: fmtISO(new Date(y, 11, 31)) }; // calendar year, not a rolling 12 months
+  if (range === 'last2Years') return { start: fmtISO(new Date(y - 1, 0, 1)), end: fmtISO(new Date(y, 11, 31)) }; // this calendar year + the one before it
   if (range === 'allTime') return { start: '0000-01-01', end: '9999-12-31' };
   return { start: fmtISO(new Date(y, m, 1)), end: fmtISO(new Date(y, m + 1, 0)) }; // thisMonth
 }
 function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
+function openFinanceRangeMoreModal() {
+  const options = ['last3Months', 'last6Months', 'lastYear', 'last2Years', 'allTime'];
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">More ranges</p>
+    <div class="check-list">
+      ${options.map((r) => `
+        <div class="list-row" onclick="setFinanceRange('${r}');closeModal()" style="${financeRange===r?'background:var(--gold-soft);border-radius:10px':''}">
+          <span>${FINANCE_RANGE_LABELS[r]}</span>
+          ${financeRange===r ? '<i class="ti ti-check" style="color:var(--gold)"></i>' : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+  openModal();
+}
 function toggleFinanceTypeFilter(t) { financeTypeFilter = financeTypeFilter === t ? null : t; renderFinanceMain(); }
 function setFinanceSort(s) { financeSortBy = s; renderFinanceMain(); }
 function toggleCollapse(el) {
@@ -227,15 +243,13 @@ async function renderFinanceMain() {
   const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
 
   $main.innerHTML = `
+    <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
+
     <div class="chip-row">
       <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">This month</button>
-      <button class="chip ${financeRange==='lastWeek'?'active':''}" onclick="setFinanceRange('lastWeek')">Last 7 days</button>
       <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">Last month</button>
-      <button class="chip ${financeRange==='last3Months'?'active':''}" onclick="setFinanceRange('last3Months')">Last 3 months</button>
-      <button class="chip ${financeRange==='last6Months'?'active':''}" onclick="setFinanceRange('last6Months')">Last 6 months</button>
-      <button class="chip ${financeRange==='lastYear'?'active':''}" onclick="setFinanceRange('lastYear')">Last year</button>
-      <button class="chip ${financeRange==='last2Years'?'active':''}" onclick="setFinanceRange('last2Years')">Last 2 years</button>
-      <button class="chip ${financeRange==='allTime'?'active':''}" onclick="setFinanceRange('allTime')">All time</button>
+      <button class="chip ${financeRange==='twoMonthsAgo'?'active':''}" onclick="setFinanceRange('twoMonthsAgo')">2 months ago</button>
+      <button class="chip ${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange)?'active':''}" onclick="openFinanceRangeMoreModal()">${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange) ? FINANCE_RANGE_LABELS[financeRange] : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
     </div>
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -251,12 +265,6 @@ async function renderFinanceMain() {
     </div>
     ${financeTypeFilter ? `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
 
-    <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
-
-    <div style="display:flex;gap:8px;margin-bottom:14px">
-      <button class="btn" style="flex:1" onclick="goCategories()"><i class="ti ti-tag"></i> Categories & stores</button>
-      <button class="btn" style="flex:1" onclick="goReports()"><i class="ti ti-chart-bar"></i> Reports</button>
-    </div>
     <button class="btn" style="margin-bottom:14px" onclick="goFoodBudget()"><i class="ti ti-shopping-cart"></i> Food budget by week</button>
 
     <div class="chip-row">
@@ -564,19 +572,20 @@ async function selectReportsCell(categoryId, mk2) {
   renderReportsPopup(matches, cat.name || '', label);
 }
 
-async function selectReportsCategoryAll(categoryId) {
+async function selectReportsCategoryAll(categoryIdOrIds) {
+  const categoryIds = Array.isArray(categoryIdOrIds) ? categoryIdOrIds : [categoryIdOrIds];
   const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const cat = catById[categoryId] || {};
+  const displayName = catById[categoryIds[0]] ? catById[categoryIds[0]].name : '';
   const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
-  const matches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= start && e.date <= end);
+  const matches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && e.date >= start && e.date <= end);
   const total = matches.reduce((s, e) => s + e.amount, 0);
 
   // Same period, one year earlier — a simple, general "vs last year" for any category
   const shiftYear = (d) => { const dt = new Date(d + 'T00:00:00'); dt.setFullYear(dt.getFullYear() - 1); return fmtISO(dt); };
   const lastYearStart = shiftYear(start), lastYearEnd = shiftYear(end);
-  const lastYearMatches = allEntries.filter((e) => e.categoryId === categoryId && e.date >= lastYearStart && e.date <= lastYearEnd);
+  const lastYearMatches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && e.date >= lastYearStart && e.date <= lastYearEnd);
   const lastYearTotal = lastYearMatches.reduce((s, e) => s + e.amount, 0);
   const diff = total - lastYearTotal;
   const diffPct = lastYearTotal ? Math.round((diff / lastYearTotal) * 100) : null;
@@ -584,7 +593,7 @@ async function selectReportsCategoryAll(categoryId) {
     ? `Last year same period: ${fmtMoney(lastYearTotal)} <span style="color:${diff<=0?'#0F6E56':'var(--red)'}">(${diff>=0?'+':''}${fmtMoney(diff)}${diffPct!==null?', '+diffPct+'%':''})</span>`
     : `No entries in this category last year for comparison`;
 
-  renderReportsPopup(matches, cat.name || '', `${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}<br>${compareLine}`);
+  renderReportsPopup(matches, displayName, `${FINANCE_RANGE_LABELS[reportsDateRange] || 'Selected range'} · ${fmtMoney(total)} total, ${matches.length} entr${matches.length===1?'y':'ies'}<br>${compareLine}`);
 }
 
 async function selectReportsChartMonth(mk2, type) {
@@ -597,13 +606,16 @@ async function selectReportsChartMonth(mk2, type) {
   renderReportsPopup(matches, type[0].toUpperCase() + type.slice(1), label);
 }
 
+// The Top Categories chart groups spend by NAME (so a category that's been split into
+// multiple duplicate IDs at some point still shows as one bar) — but clicking through
+// used to only look up a single ID, silently missing any entries whose categoryId
+// pointed at a different duplicate of that same name. Now it gathers every ID that
+// shares the clicked name, so the popup actually matches what the bar shows.
 async function selectReportsChartCategory(categoryName) {
-  const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
-  const catByName = Object.fromEntries(categories.map((c) => [c.name, c]));
-  const cat = catByName[categoryName];
-  if (!cat) return;
-  selectReportsCategoryAll(cat.id);
+  const matchingIds = categories.filter((c) => c.name === categoryName).map((c) => c.id);
+  if (!matchingIds.length) return;
+  selectReportsCategoryAll(matchingIds);
 }
 
 function getFinanceRangeBoundsForKeys(keys) {
@@ -736,6 +748,7 @@ async function renderReportsStub() {
   const monthLabels = chartMonthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
   const incomeByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'income').reduce((s, e) => s + e.amount, 0));
   const expenseByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
+  const netByMonth = chartMonthKeys.map((mk2, i) => incomeByMonth[i] - expenseByMonth[i]);
 
   const TOP_CATS_EXCLUDE = ['mortgage'];
   const catSpend = {};
@@ -888,13 +901,15 @@ async function renderReportsStub() {
     type: 'bar',
     data: { labels: monthLabels, datasets: [
       { label: 'Income', data: incomeByMonth, backgroundColor: '#008300', borderRadius: 4 },
-      { label: 'Expense', data: expenseByMonth, backgroundColor: '#C9564F', borderRadius: 4 }
+      { label: 'Expense', data: expenseByMonth, backgroundColor: '#C9564F', borderRadius: 4 },
+      { label: 'Net', data: netByMonth, type: 'line', borderColor: '#2B2640', backgroundColor: '#2B2640', tension: 0.3, yAxisID: 'y', order: 0, pointRadius: 3 }
     ] },
     options: {
-      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, position: 'bottom', labels: { color: muted, boxWidth: 12, font: { size: 11 } } } },
       scales: { x: { grid: { display: false } }, y: { ticks: { color: muted } } },
       onClick: (evt, els) => {
         if (!els.length) return;
+        if (els[0].datasetIndex === 2) return; // the Net line isn't a real transaction type to drill into
         const type = els[0].datasetIndex === 0 ? 'income' : 'expense';
         selectReportsChartMonth(chartMonthKeys[els[0].index], type);
       }
@@ -939,10 +954,21 @@ async function renderUtilitiesReport() {
   }
 
   const years = [...new Set(relevant.map((e) => e.date.slice(0,4)))].sort().reverse();
+  const yearTotal = (year) => utilityStores.reduce((s, store) => s + MONTH_ABBR.reduce((s2, _, i) => s2 + utilityEntriesFor(relevant, store.id, year, i+1).reduce((s3,e)=>s3+e.amount,0), 0), 0);
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Utilities</span></div>
-    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell for that month, tap a store's name for its full year</p>
+
+    ${years.length > 1 ? `
+      <p class="section-label" style="margin-bottom:8px">Total by year</p>
+      <div style="position:relative;width:100%;height:160px;margin-bottom:20px"><canvas id="utilitiesYearChart"></canvas></div>
+    ` : ''}
+
+    <div style="display:grid;grid-template-columns:repeat(${Math.min(years.length,4)},1fr);gap:8px;margin-bottom:16px">
+      ${years.map((year) => `<div class="stat"><p class="label">${year} total</p><p class="value" style="font-size:14px">${fmtMoney(yearTotal(year))}</p></div>`).join('')}
+    </div>
+
     ${years.map((year) => {
       const rowsHtml = utilityStores.map((store) => {
         const cells = MONTH_ABBR.map((_, i) => {
@@ -950,7 +976,7 @@ async function renderUtilitiesReport() {
           const total = matches.reduce((s, e) => s + e.amount, 0);
           return `<td onclick="selectUtilityCell('${store.id}','${year}',${i+1})" style="padding:8px 10px;text-align:right;cursor:pointer;color:${total?'var(--ink)':'var(--line)'};border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${total ? fmtMoney(total) : '–'}</td>`;
         }).join('');
-        return `<tr><td style="padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(store.name)}</td>${cells}</tr>`;
+        return `<tr><td onclick="selectUtilityStoreYear('${store.id}','${year}')" style="padding:8px 10px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;cursor:pointer;color:var(--gold);border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(store.name)}</td>${cells}</tr>`;
       }).join('');
       const totalCells = MONTH_ABBR.map((_, i) => {
         const total = utilityStores.reduce((s, store) => s + utilityEntriesFor(relevant, store.id, year, i+1).reduce((s2,e)=>s2+e.amount,0), 0);
@@ -973,6 +999,35 @@ async function renderUtilitiesReport() {
       `;
     }).join('')}
   `;
+
+  if (years.length > 1) {
+    const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
+    const chronological = [...years].reverse();
+    const palette = ['#E3A94E', '#2A78D6', '#C9564F', '#7C9473', '#B5568C'];
+    if (window.__utilitiesYearChart) window.__utilitiesYearChart.destroy();
+    window.__utilitiesYearChart = new Chart(document.getElementById('utilitiesYearChart'), {
+      type: 'bar',
+      data: {
+        labels: chronological,
+        datasets: utilityStores.map((store, i) => ({
+          label: store.name,
+          data: chronological.map((year) => MONTH_ABBR.reduce((s, _, m) => s + utilityEntriesFor(relevant, store.id, year, m+1).reduce((s2,e)=>s2+e.amount,0), 0)),
+          backgroundColor: palette[i % palette.length], borderRadius: 4
+        }))
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: muted, boxWidth: 12, font: { size: 11 } } } },
+        scales: { x: { grid: { display: false }, ticks: { color: muted }, stacked: true }, y: { ticks: { color: muted }, stacked: true } }
+      }
+    });
+  }
+}
+async function selectUtilityStoreYear(storeId, year) {
+  const allEntries = await getActiveEntries();
+  const payees = await DB.getAll('payees');
+  const store = payees.find((p) => p.id === storeId) || {};
+  const matches = MONTH_ABBR.flatMap((_, i) => utilityEntriesFor(allEntries, storeId, year, i + 1));
+  renderReportsPopup(matches, store.name || '', `${year} — ${fmtMoney(matches.reduce((s,e)=>s+e.amount,0))} total`);
 }
 async function selectUtilityCell(storeId, year, monthNum) {
   const allEntries = await getActiveEntries();
@@ -1040,7 +1095,7 @@ async function renderFinanceVehicleReport() {
   }
   // Newest month first, leftmost — right next to the label column
   const monthKeysList = [...new Set(relevant.map((e) => monthKey(e.date)))].sort().reverse();
-  const monthColLabels = monthKeysList.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'2-digit'}));
+  const monthColLabels = monthKeysList.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'}));
 
   const allCarsCar = cars.find((c) => c.name.toLowerCase() === 'all cars');
   const realCars = cars.filter((c) => !['all cars', 'tesla'].includes(c.name.toLowerCase()));
@@ -1049,11 +1104,27 @@ async function renderFinanceVehicleReport() {
   const gasMonthsCount = gasCat ? new Set(relevant.filter((e) => e.categoryId === gasCat.id).map((e) => monthKey(e.date))).size : 0;
   const avgGasPerMonth = gasMonthsCount ? gasTotalAllTime / gasMonthsCount : 0;
 
+  // Per-car gas average, not just one overall number — each car's own total divided by
+  // the number of distinct months *that car* actually had a gas entry, so a car you've
+  // only owned for 2 months doesn't get diluted by months it wasn't even yours yet.
+  const excludeGasNames = VEHICLE_CAR_EXCLUDE['Gas'] || [];
+  const gasCarsForAvg = cars.filter((c) => !excludeGasNames.includes(c.name.toLowerCase()));
+  const avgGasPerCar = gasCat ? gasCarsForAvg.map((car) => {
+    const carGasEntries = relevant.filter((e) => e.categoryId === gasCat.id && e.carId === car.id);
+    const months = new Set(carGasEntries.map((e) => monthKey(e.date))).size;
+    const total = carGasEntries.reduce((s, e) => s + e.amount, 0);
+    return { car, avg: months ? total / months : 0 };
+  }).filter((r) => r.avg > 0) : [];
+
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Vehicles</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
 
-    ${gasCat ? `<div class="stat" style="margin-bottom:16px"><p class="label">Avg gas / month</p><p class="value" style="font-size:14px">${fmtMoney(avgGasPerMonth)}</p></div>` : ''}
+    ${gasCat ? `<div class="stat" style="margin-bottom:8px"><p class="label">Avg gas / month (all cars combined)</p><p class="value" style="font-size:14px">${fmtMoney(avgGasPerMonth)}</p></div>` : ''}
+    ${avgGasPerCar.length ? `<div class="card tight" style="margin-bottom:16px">
+      <p class="field-label" style="margin-bottom:6px">Avg gas / month, by car</p>
+      ${avgGasPerCar.map((r) => `<div class="list-row" style="cursor:default"><span style="font-size:12px">${esc(r.car.name)}</span><span style="font-size:12px;font-weight:600">${fmtMoney(r.avg)}</span></div>`).join('')}
+    </div>` : ''}
 
     <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
       <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
@@ -1089,6 +1160,11 @@ async function renderFinanceVehicleReport() {
       </table>
     </div>
 
+    ${maintCat ? `
+      <p class="section-label" style="margin-bottom:8px">Car maintenance over time</p>
+      <div style="position:relative;width:100%;height:220px;margin-bottom:20px"><canvas id="vehicleMaintChart"></canvas></div>
+    ` : ''}
+
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
       <p class="section-label" style="margin:0">Cost of ownership</p>
     </div>
@@ -1106,12 +1182,14 @@ async function renderFinanceVehicleReport() {
         const gasTotal = gasCat ? vehicleOwnershipAmount(inRange, car.id, gasCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
         const maintTotal = maintCat ? vehicleOwnershipAmount(inRange, car.id, maintCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
         const insTotal = insCat ? vehicleOwnershipAmount(inRange, car.id, insCat.id, allCarsCar ? allCarsCar.id : null, realCars.length) : 0;
+        const maintOnly = maintTotal; // no gas, no insurance
         const withoutGas = maintTotal + insTotal;
         const withGas = withoutGas + gasTotal;
         return `
           <div class="card tight" style="margin-bottom:10px">
             <p style="font-weight:700;margin-bottom:6px">${esc(car.name)}</p>
             <div class="stat-grid">
+              <div class="stat"><p class="label">Maintenance only</p><p class="value" style="font-size:14px">${fmtMoney(maintOnly)}</p></div>
               <div class="stat"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
               <div class="stat"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
             </div>
@@ -1120,6 +1198,35 @@ async function renderFinanceVehicleReport() {
       }).join('');
     })()}
   `;
+
+  // Car maintenance over time — one line per car
+  if (maintCat) {
+    const months = [...new Set(relevant.filter((e) => e.categoryId === maintCat.id).map((e) => monthKey(e.date)))].sort();
+    const labels = months.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'}));
+    const excludeMaintNames = VEHICLE_CAR_EXCLUDE['Car maintenance'] || [];
+    const maintCars = cars.filter((c) => !excludeMaintNames.includes(c.name.toLowerCase()));
+    const palette = ['#E3A94E', '#2A78D6', '#C9564F', '#7C9473', '#B5568C', '#D4783F'];
+    const datasets = maintCars.map((car, i) => ({
+      label: car.name,
+      data: months.map((mk2) => vehicleAmountFor(relevant, car.id, maintCat.id, mk2) || 0),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length],
+      tension: 0.3, spanGaps: true
+    })).filter((ds) => ds.data.some((v) => v > 0));
+    if (datasets.length) {
+      const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
+      if (window.__vehicleMaintChart) window.__vehicleMaintChart.destroy();
+      window.__vehicleMaintChart = new Chart(document.getElementById('vehicleMaintChart'), {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { color: muted, boxWidth: 12, font: { size: 11 } } } },
+          scales: { x: { grid: { display: false }, ticks: { color: muted, font: { size: 10 } } }, y: { ticks: { color: muted } } }
+        }
+      });
+    }
+  }
 }
 // Cost-of-ownership specific: a car's own entries, plus an even share of any entry
 // tagged to "All Cars" (since that cost genuinely applies to all real cars, split evenly).
@@ -1168,13 +1275,22 @@ async function renderProjectsReport() {
 
   const years = [...new Set(relevant.map((e) => e.date.slice(0, 4)))].sort().reverse();
   const projectIds = [...new Set(relevant.map((e) => e.projectId))];
-  const projectsUsed = projectIds.map((id) => projectById[id]).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  // Previously this silently dropped any projectId that didn't match a *current* project
+  // record (e.g. a project that got deleted or recreated with a new ID since) — meaning
+  // real spending data could disappear from the table with no indication why. Now it
+  // shows those under "Unknown project" instead, so nothing is hidden, and it's obvious
+  // if that's actually what's happening.
+  const projectsUsed = projectIds.map((id) => projectById[id] || { id, name: 'Unknown project (was this one deleted or recreated?)' }).sort((a, b) => a.name.localeCompare(b.name));
 
   const amountFor = (projectId, year) => relevant.filter((e) => e.projectId === projectId && e.date.slice(0, 4) === year).reduce((s, e) => s + e.amount, 0);
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="currentView='reports';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Projects</span></div>
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Tap a cell to see its entries</p>
+
+    <p class="section-label" style="margin-bottom:8px">By year</p>
+    <div style="position:relative;width:100%;height:${Math.max(160, projectsUsed.length * years.length * 10)}px;margin-bottom:20px"><canvas id="projectsYearChart"></canvas></div>
+
     <div style="overflow-x:auto;margin-bottom:20px;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px">
       <table style="border-collapse:collapse;font-size:12px;white-space:nowrap;width:100%">
         <thead><tr>
@@ -1202,6 +1318,22 @@ async function renderProjectsReport() {
       </table>
     </div>
   `;
+
+  const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
+  const palette = ['#E3A94E', '#2A78D6', '#C9564F', '#7C9473', '#B5568C', '#D4783F'];
+  if (window.__projectsYearChart) window.__projectsYearChart.destroy();
+  window.__projectsYearChart = new Chart(document.getElementById('projectsYearChart'), {
+    type: 'bar',
+    data: {
+      labels: projectsUsed.map((p) => p.name),
+      datasets: years.map((y, i) => ({ label: y, data: projectsUsed.map((p) => amountFor(p.id, y)), backgroundColor: palette[i % palette.length], borderRadius: 4 }))
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { color: muted, boxWidth: 12, font: { size: 11 } } } },
+      scales: { x: { ticks: { color: muted } }, y: { grid: { display: false }, ticks: { color: muted, font: { size: 10 } } } }
+    }
+  });
 }
 async function selectProjectYearCell(projectId, year) {
   const allEntries = await getActiveEntries();
@@ -1977,7 +2109,7 @@ async function renderCategoriesManager() {
   const addFn = managerTab === 'categories' ? 'goAddCategory()' : managerTab === 'payees' ? 'goAddStore()' : 'goAddProject()';
 
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Categories & stores</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Categories, Stores & Projects</span></div>
     <div class="chip-row">
       <button class="chip ${managerTab === 'categories' ? 'active' : ''}" onclick="switchManagerTab('categories')">Categories</button>
       <button class="chip ${managerTab === 'payees' ? 'active' : ''}" onclick="switchManagerTab('payees')">Stores</button>
@@ -2847,7 +2979,8 @@ async function renderMore() {
     <div class="list-row" onclick="currentTab='jazz';currentView='report';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='jazz'));route()"><span><i class="ti ti-heart-rate-monitor"></i> Jazz's health report</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Finance</p>
-    <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories & stores</span><i class="ti ti-chevron-right"></i></div>
+    <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories, Stores & Projects</span><i class="ti ti-chevron-right"></i></div>
+    <div class="list-row" onclick="currentTab='finance';currentView='reports';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-chart-bar"></i> Reports</span><i class="ti ti-chevron-right"></i></div>
     <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars</span><i class="ti ti-chevron-right"></i></div>
     <div class="list-row" onclick="moreView='recurring';renderMore()"><span><i class="ti ti-repeat"></i> Recurring entries</span><i class="ti ti-chevron-right"></i></div>
 
