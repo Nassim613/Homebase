@@ -1529,14 +1529,32 @@ let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once up
 let entryReceiptUploading = false;
 let entryReceiptUploadError = null;
 
+// Reusable live search-filter for any picker modal's list — just show/hide rows by
+// whether their text matches, so it works the same way everywhere without needing a
+// separate filter function per picker.
+function filterPickerList(inputEl, listId) {
+  const q = inputEl.value.trim().toLowerCase();
+  const list = document.getElementById(listId);
+  if (!list) return;
+  let anyVisible = false;
+  list.querySelectorAll('.list-row').forEach((row) => {
+    const match = row.textContent.toLowerCase().includes(q);
+    row.style.display = match ? '' : 'none';
+    if (match) anyVisible = true;
+  });
+  const emptyMsg = list.querySelector('.picker-empty-msg');
+  if (emptyMsg) emptyMsg.style.display = anyVisible ? 'none' : 'block';
+}
+
 function openCategoryPickerModal() {
   const categories = (window.__categories || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const currentVal = document.getElementById('f_category').value;
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select category</p>
+    <input placeholder="Search categories..." oninput="filterPickerList(this,'categoryPickerList')" style="margin-bottom:12px">
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddCategory('add')"><i class="ti ti-plus"></i> Add new category</button>
-    <div class="check-list" style="max-height:55vh">
+    <div class="check-list" id="categoryPickerList" style="max-height:55vh">
       ${categories.map((c) => `
         <div class="list-row" onclick="selectCategoryFromPicker('${c.id}')" style="${currentVal===c.id?'background:var(--gold-soft);border-radius:10px':''}">
           <div style="display:flex;align-items:center;gap:10px">
@@ -1545,6 +1563,7 @@ function openCategoryPickerModal() {
           </div>
         </div>
       `).join('') || '<div class="empty-state">No categories yet.</div>'}
+      <div class="empty-state picker-empty-msg" style="display:none">No matches.</div>
     </div>
   `;
   openModal();
@@ -1599,8 +1618,9 @@ function openIssueTypePickerModal() {
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select issue type</p>
+    <input placeholder="Search issue types..." oninput="filterPickerList(this,'issueTypePickerList')" style="margin-bottom:12px">
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();openIssueTypeModal(true)"><i class="ti ti-plus"></i> Add new type</button>
-    <div class="check-list" style="max-height:55vh">
+    <div class="check-list" id="issueTypePickerList" style="max-height:55vh">
       ${issueTypes.map((t) => `
         <div class="list-row" onclick="selectIssueTypeFromPicker('${t.id}')" style="${currentVal===t.id?'background:var(--gold-soft);border-radius:10px':''}">
           <div style="display:flex;align-items:center;gap:10px">
@@ -1609,6 +1629,7 @@ function openIssueTypePickerModal() {
           </div>
         </div>
       `).join('') || '<div class="empty-state">No issue types yet.</div>'}
+      <div class="empty-state picker-empty-msg" style="display:none">No matches.</div>
     </div>
   `;
   openModal();
@@ -1646,8 +1667,9 @@ function openStorePickerModal() {
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select store</p>
+    <input placeholder="Search stores..." oninput="filterPickerList(this,'storePickerList')" style="margin-bottom:12px">
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddStore('add')"><i class="ti ti-plus"></i> Add new store</button>
-    <div class="check-list" style="max-height:55vh">
+    <div class="check-list" id="storePickerList" style="max-height:55vh">
       ${payees.map((p) => `
         <div class="list-row" onclick="selectStoreFromPicker('${p.id}')" style="${currentVal===p.id?'background:var(--gold-soft);border-radius:10px':''}">
           <div style="display:flex;align-items:center;gap:10px">
@@ -1656,6 +1678,7 @@ function openStorePickerModal() {
           </div>
         </div>
       `).join('') || '<div class="empty-state">No stores yet.</div>'}
+      <div class="empty-state picker-empty-msg" style="display:none">No matches.</div>
     </div>
   `;
   openModal();
@@ -1796,7 +1819,9 @@ function onCategoryChange(skipAutofill) {
   if (cat.conditionalField === 'car') {
     area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><div style="display:flex;gap:6px"><select id="f_car" style="flex:1">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewCarInline()"><i class="ti ti-plus"></i></button></div></div>`;
   } else if (cat.conditionalField === 'project') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><div style="display:flex;gap:6px"><select id="f_project" style="flex:1">${(window.__projects || []).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewProjectInline()"><i class="ti ti-plus"></i></button></div></div>`;
+    const preselected = (duplicateSource && duplicateSource.projectId) || '';
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><button type="button" class="btn" style="text-align:left" onclick="openProjectPickerModal()"><span id="f_projectButtonContent">Select…</span></button><input type="hidden" id="f_project" value="${preselected}"></div>`;
+    updateProjectButtonDisplay();
   } else if (cat.conditionalField === 'carSplit') {
     carSplitDraft = (window.__cars || []).map((c) => ({ carId: c.id, name: c.name, checked: false, amount: 0 }));
     area.innerHTML = renderCarSplitUI();
@@ -3155,6 +3180,40 @@ function promptNewCarInline() {
   const name = prompt('New car name:'); if (!name) { document.getElementById('f_car').value = ''; return; }
   DB.put('cars', { id: uid(), name }).then((c) => { window.__cars.push(c); onCategoryChange(true); document.getElementById('f_car').value = c.id; });
 }
+function openProjectPickerModal() {
+  const projects = (window.__projects || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const currentVal = document.getElementById('f_project').value;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select project</p>
+    <input placeholder="Search projects..." oninput="filterPickerList(this,'projectPickerList')" style="margin-bottom:12px">
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="promptNewProjectInline()"><i class="ti ti-plus"></i> Add new project</button>
+    <div class="check-list" id="projectPickerList" style="max-height:55vh">
+      ${projects.map((p) => `
+        <div class="list-row" onclick="selectProjectFromPicker('${p.id}')" style="${currentVal===p.id?'background:var(--gold-soft);border-radius:10px':''}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ti-tools"></i></div>
+            <span>${esc(p.name)}</span>
+          </div>
+        </div>
+      `).join('') || '<div class="empty-state">No projects yet.</div>'}
+      <div class="empty-state picker-empty-msg" style="display:none">No matches.</div>
+    </div>
+  `;
+  openModal();
+}
+function selectProjectFromPicker(id) {
+  document.getElementById('f_project').value = id;
+  closeModal();
+  updateProjectButtonDisplay();
+}
+function updateProjectButtonDisplay() {
+  const el = document.getElementById('f_projectButtonContent');
+  if (!el) return;
+  const id = document.getElementById('f_project').value;
+  const p = (window.__projects || []).find((x) => x.id === id);
+  el.textContent = p ? p.name : 'Select…';
+}
 function promptNewProjectInline() {
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
@@ -3172,9 +3231,8 @@ async function saveInlineProject() {
   Sync.pushEntry('Projects', p).then(() => DB.put('projects', p));
   window.__projects.push(p);
   closeModal();
-  onCategoryChange(true);
   const sel = document.getElementById('f_project');
-  if (sel) sel.value = p.id;
+  if (sel) { sel.value = p.id; updateProjectButtonDisplay(); }
 }
 
 async function runDimensionCleanup() {
