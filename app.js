@@ -1552,6 +1552,7 @@ async function deleteEntry() {
 
 let entryReceiptFormFor = undefined;
 let entryReceiptDraft = null; // local base64 preview while uploading
+let entryReceiptFile = null; // the picked File, kept only for its name when the deferred upload happens at save time
 let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
 let entryReceiptUploading = false;
 let entryReceiptUploadError = null;
@@ -1740,6 +1741,7 @@ async function renderAddEntry() {
   if (entryReceiptFormFor !== formKey) {
     entryReceiptFormFor = formKey;
     entryReceiptDraft = null;
+    entryReceiptFile = null;
     entryReceiptLink = (src && src.__editId && src.receiptLink) ? src.receiptLink : null;
     entryReceiptUploading = false;
   }
@@ -1778,21 +1780,7 @@ async function renderAddEntry() {
     <div class="field"><label class="field-label">Description</label><input id="f_description" placeholder="What was this for?" value="${src ? esc(src.description || '') : ''}"></div>
 
     <label class="field-label">Receipt</label>
-    <div class="card tight" style="background:var(--surface);margin-bottom:20px">
-      ${entryReceiptUploading ? `
-        <p style="font-size:12px;color:var(--ink-soft)"><i class="ti ti-loader-2"></i> Uploading to Drive…</p>
-      ` : entryReceiptLink ? `
-        ${entryReceiptLink.isImage ? `<img src="${entryReceiptLink.url}" style="width:100%;border-radius:10px;margin-bottom:10px;display:block">` : `<p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px"><i class="ti ti-file"></i> Receipt attached</p>`}
-        <div style="display:flex;gap:8px">
-          <a href="${entryReceiptLink.viewUrl || entryReceiptLink.url}" target="_blank" rel="noopener" class="btn" style="text-align:center;text-decoration:none">View full</a>
-          <button type="button" class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeEntryReceipt()">Remove</button>
-        </div>
-      ` : `
-        ${entryReceiptUploadError ? `<p style="font-size:12px;color:var(--red);margin-bottom:10px"><i class="ti ti-alert-triangle"></i> Upload failed: ${esc(entryReceiptUploadError)}</p>` : ''}
-        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Attach a photo of the receipt — it uploads to your Drive automatically and shows up on every device.</p>
-        <input type="file" accept="image/*,.pdf" onchange="handleEntryReceiptUpload(event)">
-      `}
-    </div>
+    <div class="card tight" style="background:var(--surface);margin-bottom:20px" id="entryReceiptArea">${renderEntryReceiptSection()}</div>
 
     <button class="btn btn-primary" id="saveEntryBtn" onclick="saveEntry()">Save entry</button>
   `;
@@ -2012,28 +2000,59 @@ async function renderStoreForm() {
     <button class="btn btn-primary" id="saveStoreBtn" onclick="saveStoreForm()">Save store</button>
   `;
 }
+// Renders just the Receipt card's contents. A picked-but-not-yet-saved photo shows as a
+// local preview only — the actual Drive upload doesn't happen until Save is pressed, so
+// picking a receipt and then abandoning the entry never leaves an orphaned file sitting
+// in Drive for no reason.
+function renderEntryReceiptSection() {
+  if (entryReceiptUploading) {
+    return `<p style="font-size:12px;color:var(--ink-soft)"><i class="ti ti-loader-2"></i> Uploading to Drive…</p>`;
+  }
+  if (entryReceiptLink) {
+    return `
+      ${entryReceiptLink.isImage ? `<img src="${entryReceiptLink.url}" style="width:100%;border-radius:10px;margin-bottom:10px;display:block">` : `<p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px"><i class="ti ti-file"></i> Receipt attached</p>`}
+      <div style="display:flex;gap:8px">
+        <a href="${entryReceiptLink.viewUrl || entryReceiptLink.url}" target="_blank" rel="noopener" class="btn" style="text-align:center;text-decoration:none">View full</a>
+        <button type="button" class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeEntryReceipt()">Remove</button>
+      </div>
+    `;
+  }
+  if (entryReceiptDraft) {
+    // Picked, but not uploaded yet — this only happens when you tap Save
+    return `
+      <img src="${entryReceiptDraft}" style="width:100%;border-radius:10px;margin-bottom:10px;display:block">
+      <p style="font-size:11px;color:var(--ink-soft);margin-bottom:10px">Not uploaded yet — saves to Drive when you tap Save entry.</p>
+      <button type="button" class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeEntryReceipt()">Remove</button>
+    `;
+  }
+  return `
+    ${entryReceiptUploadError ? `<p style="font-size:12px;color:var(--red);margin-bottom:10px"><i class="ti ti-alert-triangle"></i> Upload failed: ${esc(entryReceiptUploadError)}</p>` : ''}
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Attach a photo of the receipt — it uploads to your Drive when you save this entry.</p>
+    <input type="file" accept="image/*,.pdf" onchange="handleEntryReceiptUpload(event)">
+  `;
+}
+function updateEntryReceiptSection() {
+  const el = document.getElementById('entryReceiptArea');
+  if (el) el.innerHTML = renderEntryReceiptSection();
+}
 function handleEntryReceiptUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = async () => {
     entryReceiptDraft = await compressImageDataUrl(reader.result);
-    entryReceiptUploading = true;
-    renderAddEntry();
-    const result = await Sync.uploadPhoto(entryReceiptDraft, 'Finance Receipts', (document.getElementById('f_description')?.value || 'receipt').trim());
-    entryReceiptUploading = false;
-    if (result.ok) {
-      entryReceiptLink = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, column: 'Receipt' };
-    } else {
-      entryReceiptUploadError = result.error;
-    }
-    renderAddEntry();
+    entryReceiptFile = f; // kept for its name, used only when the actual upload happens at save time
+    entryReceiptLink = null;
+    entryReceiptUploadError = null;
+    updateEntryReceiptSection();
   };
   reader.readAsDataURL(f);
 }
 function removeEntryReceipt() {
   entryReceiptLink = null;
   entryReceiptDraft = null;
-  renderAddEntry();
+  entryReceiptFile = null;
+  entryReceiptUploadError = null;
+  updateEntryReceiptSection();
 }
 
 function removeStoreLogo() {
@@ -2099,6 +2118,27 @@ function handleAmountInputForReturn() {
 
 async function saveEntry() {
   const btn = document.getElementById('saveEntryBtn');
+  // If a receipt was picked but never actually uploaded (the normal case now — upload
+  // is deferred to this exact moment), do that now, before anything else.
+  if (entryReceiptDraft && !entryReceiptLink && !entryReceiptUploading) {
+    entryReceiptUploading = true;
+    updateEntryReceiptSection();
+    if (btn) { btn.disabled = true; btn.textContent = 'Uploading receipt…'; }
+    const result = await Sync.uploadPhoto(entryReceiptDraft, 'Finance Receipts', (entryReceiptFile && entryReceiptFile.name) || (document.getElementById('f_description')?.value || 'receipt').trim());
+    entryReceiptUploading = false;
+    if (result.ok) {
+      entryReceiptLink = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, column: 'Receipt' };
+      if (btn) { btn.textContent = 'Saved to Drive ✓'; }
+      await new Promise((r) => setTimeout(r, 300));
+    } else {
+      entryReceiptUploadError = result.error;
+      updateEntryReceiptSection();
+      if (btn) { btn.disabled = false; btn.textContent = 'Save entry'; }
+      alert(`The receipt couldn't be uploaded: ${result.error}. Fix the connection and try Save again, or remove the receipt to save without it.`);
+      return;
+    }
+    updateEntryReceiptSection();
+  }
   if (entryReceiptUploading && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
   while (entryReceiptUploading) { await new Promise((r) => setTimeout(r, 150)); }
   if (btn) { btn.disabled = false; btn.textContent = 'Save entry'; }
@@ -2136,9 +2176,23 @@ async function saveEntry() {
     synced: false
   };
   await DB.put('entries', entry);
-  Sync.pushEntry('Finance', entry).then(() => DB.put('entries', entry));
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving to Sheet…'; }
+  const pushed = await Sync.pushEntry('Finance', entry);
   duplicateSource = null; carSplitDraft = []; window.__transferDirection = null;
-  entryReceiptFormFor = undefined; entryReceiptDraft = null; entryReceiptLink = null; entryReceiptUploading = false;
+  entryReceiptFormFor = undefined; entryReceiptDraft = null; entryReceiptFile = null; entryReceiptLink = null; entryReceiptUploading = false; entryReceiptUploadError = null;
+  if (!pushed) {
+    // The entry IS safely saved on this device either way — nothing is lost — but the
+    // Sheet push specifically didn't go through yet. Say so clearly rather than
+    // silently navigating away as if everything succeeded; it'll retry automatically
+    // in the background, but you should know it hasn't synced yet.
+    if (btn) { btn.disabled = false; btn.textContent = 'Save entry'; }
+    alert("Saved on this device, but couldn't reach your Sheet just now (check your connection). It'll sync automatically in the background — nothing is lost.");
+    currentView = 'main';
+    route();
+    return;
+  }
+  if (btn) { btn.textContent = 'Saved ✓'; }
+  await new Promise((r) => setTimeout(r, 350)); // brief, so "Saved" is actually visible before the page changes
   currentView = 'main';
   route();
 }
