@@ -107,16 +107,17 @@ const Sync = {
       this.lastPullError = null;
       for (const job of SYNC_JOBS) {
         const rows = data[job.sheet] || [];
-        if (!rows.length) continue;
         // One bulk read of everything already local for this store, instead of a
         // separate read per incoming row — this is the main thing that makes a big
         // first sync fast instead of taking minutes.
         const localById = await DB.getAllAsMap(job.store);
+        const remoteIds = new Set();
         const toWrite = [];
         for (const rawJson of rows) {
           let remote;
           try { remote = JSON.parse(rawJson); } catch (e) { continue; }
           if (!remote || !remote.id) continue;
+          remoteIds.add(remote.id);
           const local = localById.get(remote.id);
           if (local && local.synced === false) continue; // local has a pending change — don't clobber it
           job.strip.forEach((f) => { if (local && local[f] !== undefined) remote[f] = local[f]; });
@@ -129,6 +130,24 @@ const Sync = {
         }
         if (toWrite.length) {
           try { await DB.putMany(job.store, toWrite); anyChanged = true; } catch (e) { /* store may not exist locally yet, skip */ }
+        }
+        // The Sheet now removes a row entirely when something's deleted, instead of
+        // leaving a "deleted: true" tombstone behind — clean, but it means a device
+        // that wasn't around at the exact moment of deletion never sees a direct
+        // signal for it. This closes that gap: anything present locally with no
+        // pending changes of its own, but missing from the Sheet's current full set
+        // for this store, really has been deleted elsewhere — remove it here too.
+        if (rows.length > 0) { // an empty response usually means "couldn't reach this sheet" — don't wipe local data on that basis
+          const toRemoveLocally = [];
+          for (const [id, local] of localById) {
+            if (local.synced !== false && !remoteIds.has(id)) toRemoveLocally.push(id);
+          }
+          if (toRemoveLocally.length) {
+            try {
+              for (const id of toRemoveLocally) await DB.delete(job.store, id);
+              anyChanged = true;
+            } catch (e) { /* store may not exist locally yet, skip */ }
+          }
         }
       }
       // Special case: the "already imported" flag lives in local settings, not a normal
