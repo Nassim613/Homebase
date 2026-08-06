@@ -199,16 +199,29 @@ async function renderVehicleDetail() {
 
     <div class="card tight">
       ${vehicle.vin ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">VIN</span><span style="font-size:12px">${esc(vehicle.vin)}</span></div>` : ''}
+      ${vehicle.color ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Color</span><span style="font-size:12px">${esc(vehicle.color)}</span></div>` : ''}
+      ${vehicle.transmission ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Transmission</span><span style="font-size:12px">${esc(vehicle.transmission)}</span></div>` : ''}
+      ${vehicle.usOrCanada ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">US or Canadian</span><span style="font-size:12px">${esc(vehicle.usOrCanada)}</span></div>` : ''}
       ${vehicle.condition ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Condition</span><span style="font-size:12px">${esc(vehicle.condition)}</span></div>` : ''}
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date bought</span><span style="font-size:12px">${fmtDateFull(vehicle.dateBought)}</span></div>
+      ${vehicle.mileageBoughtAt ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Mileage bought at</span><span style="font-size:12px">${vehicle.mileageBoughtAt.toLocaleString()} km</span></div>` : ''}
     </div>
+    ${vehicle.sellerName || vehicle.sellerEmail || vehicle.sellerPhone ? `
+      <div class="card tight">
+        <label class="field-label" style="margin-bottom:6px">Bought from</label>
+        ${vehicle.sellerName ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Name</span><span style="font-size:12px">${esc(vehicle.sellerName)}</span></div>` : ''}
+        ${vehicle.sellerEmail ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Email</span><span style="font-size:12px">${esc(vehicle.sellerEmail)}</span></div>` : ''}
+        ${vehicle.sellerPhone ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Phone</span><span style="font-size:12px">${esc(vehicle.sellerPhone)}</span></div>` : ''}
+      </div>
+    ` : ''}
     ${renderLinkPreviewList(vehicle.photoLinks, 'Photo')}
 
-    ${vehicle.status === 'owned' ? `<button class="btn" style="margin-bottom:10px" onclick="goSellVehicle()"><i class="ti ti-tag"></i> Mark as sold</button>` : `<div class="card tight"><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Buyer</span><span style="font-size:12px">${esc(vehicle.buyerName||'—')}</span></div><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date sold</span><span style="font-size:12px">${fmtDate(vehicle.dateSold)}</span></div></div>`}
+    ${vehicle.status === 'owned' ? `<button class="btn" style="margin-bottom:10px" onclick="goSellVehicle()"><i class="ti ti-tag"></i> Mark as sold</button>` : `<div class="card tight"><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Buyer</span><span style="font-size:12px">${esc(vehicle.buyerName||'—')}</span></div><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date sold</span><span style="font-size:12px">${fmtDateFull(vehicle.dateSold)}</span></div></div>`}
 
     <button class="btn btn-primary" style="margin-bottom:16px" onclick="goAddCost()"><i class="ti ti-plus"></i> Add a cost</button>
 
     <p class="section-label">Related costs (${sortedCosts.length})</p>
+    ${sortedCosts.length ? `<div class="search-box" style="margin-bottom:10px"><i class="ti ti-search"></i><input placeholder="Search comments, place, type..." oninput="filterRelatedCosts(this)"></div>` : ''}
     ${sortedCosts.length ? (() => {
       const byMonth = {};
       sortedCosts.forEach((c) => { const mk = monthKey(c.date); (byMonth[mk] = byMonth[mk] || []).push(c); });
@@ -219,16 +232,41 @@ async function renderVehicleDetail() {
         const total = monthCosts.reduce((s, c) => s + (c.totalCost || 0), 0);
         const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
         return `
-          <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
-            <span>${label} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-            <span class="amt neg">${fmtMoney(total)}</span>
+          <div class="related-costs-month">
+            <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
+              <span>${label} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+              <span class="amt neg">${fmtMoney(total)}</span>
+            </div>
+            <div class="collapse-body" style="display:${i===0?'block':'none'}">${monthCosts.map((c) => renderCostRow(c, typeById, repairById)).join('')}</div>
           </div>
-          <div class="collapse-body" style="display:${i===0?'block':'none'}">${monthCosts.map((c) => renderCostRow(c, typeById, repairById)).join('')}</div>
         `;
       }).join('');
       return controls + `<div id="relatedCostsList">${body}</div>`;
     })() : '<div class="empty-state">No costs logged yet.</div>'}
   `;
+}
+// Filters Related Costs by text, temporarily expanding any month with a match (and
+// hiding months with none) so search results are actually visible, not hidden inside
+// a collapsed section.
+function filterRelatedCosts(inputEl) {
+  const q = inputEl.value.trim().toLowerCase();
+  const list = document.getElementById('relatedCostsList');
+  if (!list) return;
+  list.querySelectorAll('.related-costs-month').forEach((month) => {
+    let anyMatch = false;
+    month.querySelectorAll('.entry-row').forEach((row) => {
+      const match = row.textContent.toLowerCase().includes(q);
+      row.style.display = match ? '' : 'none';
+      if (match) anyMatch = true;
+    });
+    month.style.display = (!q || anyMatch) ? '' : 'none';
+    if (q) {
+      const bodyEl = month.querySelector('.collapse-body');
+      const chevron = month.querySelector('.collapse-chevron');
+      if (bodyEl) bodyEl.style.display = anyMatch ? 'block' : 'none';
+      if (chevron) chevron.className = 'ti collapse-chevron ti-chevron-' + (anyMatch ? 'down' : 'right');
+    }
+  });
 }
 function renderCostRow(c, typeById, repairById) {
   const type = typeById[c.expenseTypeId] || {};
@@ -237,7 +275,7 @@ function renderCostRow(c, typeById, repairById) {
     <div class="entry-icon"><i class="ti ${type.icon || 'ti-tool'}" style="color:var(--gold)"></i></div>
     <div class="entry-body">
       <div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}${c.receiptLinks && c.receiptLinks.length ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span><span class="entry-value">${c.totalCost ? fmtMoney(c.totalCost) : '—'}</span></div>
-      <div class="entry-meta">${fmtDate(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
+      <div class="entry-meta">${fmtDateFull(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
       ${c.comments ? `<div class="entry-desc">${esc(c.comments)}</div>` : ''}
     </div>
   </div>`;
@@ -255,7 +293,7 @@ async function openCostDetail(id) {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">${esc(type.name||'')}${repair?' — '+esc(repair):''}</p>
     <div class="card tight">
-      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDate(cost.date)}</span></div>
+      <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date</span><span style="font-size:12px">${fmtDateFull(cost.date)}</span></div>
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cost</span><span style="font-size:12px">${cost.totalCost ? fmtMoney(cost.totalCost) : '—'}</span></div>
       ${cost.mileage ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Mileage</span><span style="font-size:12px">${cost.mileage.toLocaleString()} km</span></div>` : ''}
       ${cost.comments ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Comments</span><span style="font-size:12px;text-align:right;max-width:60%">${esc(cost.comments)}</span></div>` : ''}
@@ -519,7 +557,7 @@ function renderAllRepairsRow(c, vehicle, typeById, repairById) {
   const repair = c.repairTypeId ? (repairById[c.repairTypeId]||{}).name : '';
   return `<div class="entry-row" onclick="openCostDetail('${c.id}')"><div class="entry-icon"><i class="ti ${type.icon||'ti-tool'}" style="color:var(--gold)"></i></div>
     <div class="entry-body"><div class="entry-top"><span class="entry-title">${esc(type.name||'')}${repair?' — '+esc(repair):''}${c.receiptLinks && c.receiptLinks.length ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span><span class="entry-value">${c.totalCost?fmtMoney(c.totalCost):'—'}</span></div>
-    <div class="entry-meta">${fmtDate(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
+    <div class="entry-meta">${fmtDateFull(c.date)}${c.mileage ? ' · '+c.mileage.toLocaleString()+' km' : ''}</div>
     ${c.comments ? `<div class="entry-desc">${esc(c.comments)}</div>` : ''}</div></div>`;
 }
 function toggleMonthSection(el) {

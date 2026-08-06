@@ -1189,9 +1189,9 @@ async function renderFinanceVehicleReport() {
           <div class="card tight" style="margin-bottom:10px">
             <p style="font-weight:700;margin-bottom:6px">${esc(car.name)}</p>
             <div class="stat-grid">
-              <div class="stat"><p class="label">Maintenance only</p><p class="value" style="font-size:14px">${fmtMoney(maintOnly)}</p></div>
-              <div class="stat"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
-              <div class="stat"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
+              <div class="stat" style="cursor:pointer" onclick="selectVehicleOwnershipStat('${car.id}','maint','${vehicleReportRange}')"><p class="label">Maintenance only</p><p class="value" style="font-size:14px">${fmtMoney(maintOnly)}</p></div>
+              <div class="stat" style="cursor:pointer" onclick="selectVehicleOwnershipStat('${car.id}','nogas','${vehicleReportRange}')"><p class="label">Without gas</p><p class="value" style="font-size:14px">${fmtMoney(withoutGas)}</p></div>
+              <div class="stat" style="cursor:pointer" onclick="selectVehicleOwnershipStat('${car.id}','withgas','${vehicleReportRange}')"><p class="label">With gas</p><p class="value" style="font-size:14px">${fmtMoney(withGas)}</p></div>
             </div>
           </div>
         `;
@@ -1203,21 +1203,20 @@ async function renderFinanceVehicleReport() {
   if (maintCat) {
     const months = [...new Set(relevant.filter((e) => e.categoryId === maintCat.id).map((e) => monthKey(e.date)))].sort();
     const labels = months.map((mk2) => new Date(mk2+'-01T00:00:00').toLocaleDateString(undefined,{month:'short',year:'numeric'}));
-    const excludeMaintNames = VEHICLE_CAR_EXCLUDE['Car maintenance'] || [];
+    const excludeMaintNames = [...(VEHICLE_CAR_EXCLUDE['Car maintenance'] || []), 'all cars']; // "All Cars" is a synthetic bucket, not a real vehicle — doesn't belong in a per-car breakdown
     const maintCars = cars.filter((c) => !excludeMaintNames.includes(c.name.toLowerCase()));
     const palette = ['#E3A94E', '#2A78D6', '#C9564F', '#7C9473', '#B5568C', '#D4783F'];
     const datasets = maintCars.map((car, i) => ({
       label: car.name,
       data: months.map((mk2) => vehicleAmountFor(relevant, car.id, maintCat.id, mk2) || 0),
-      borderColor: palette[i % palette.length],
       backgroundColor: palette[i % palette.length],
-      tension: 0.3, spanGaps: true
+      borderRadius: 4
     })).filter((ds) => ds.data.some((v) => v > 0));
     if (datasets.length) {
       const muted = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim() || '#5B5568';
       if (window.__vehicleMaintChart) window.__vehicleMaintChart.destroy();
       window.__vehicleMaintChart = new Chart(document.getElementById('vehicleMaintChart'), {
-        type: 'line',
+        type: 'bar',
         data: { labels, datasets },
         options: {
           responsive: true, maintainAspectRatio: false,
@@ -1230,6 +1229,34 @@ async function renderFinanceVehicleReport() {
 }
 // Cost-of-ownership specific: a car's own entries, plus an even share of any entry
 // tagged to "All Cars" (since that cost genuinely applies to all real cars, split evenly).
+// Same matching logic as vehicleOwnershipAmount, but returns the actual entries
+// instead of a sum — used so tapping a cost-of-ownership stat can show what it's made of.
+function vehicleOwnershipEntries(entries, carId, categoryIds, allCarsId) {
+  return entries.filter((e) => {
+    if (!categoryIds.includes(e.categoryId)) return false;
+    if (e.carSplit && e.carSplit.length) return e.carSplit.some((s) => s.carId === carId || (allCarsId && s.carId === allCarsId));
+    return e.carId === carId || (allCarsId && e.carId === allCarsId);
+  });
+}
+async function selectVehicleOwnershipStat(carId, statType, range) {
+  const cars = await DB.getAll('cars');
+  const car = cars.find((c) => c.id === carId) || {};
+  const categories = await DB.getAll('categories');
+  const gasCat = categories.find((c) => c.name === 'Gas');
+  const maintCat = categories.find((c) => c.name === 'Car maintenance');
+  const insCat = categories.find((c) => c.name === 'Car insurance');
+  const catIds = statType === 'maint' ? [maintCat && maintCat.id].filter(Boolean)
+    : statType === 'nogas' ? [maintCat && maintCat.id, insCat && insCat.id].filter(Boolean)
+    : [maintCat && maintCat.id, insCat && insCat.id, gasCat && gasCat.id].filter(Boolean);
+  const allEntries = await getActiveEntries();
+  const allCarsCar = cars.find((c) => c.name.toLowerCase() === 'all cars');
+  const { start, end } = vehicleReportRangeBounds(range);
+  const inRange = allEntries.filter((e) => e.date >= start && e.date <= end);
+  const matches = vehicleOwnershipEntries(inRange, carId, catIds, allCarsCar ? allCarsCar.id : null);
+  const label = statType === 'maint' ? 'Maintenance only' : statType === 'nogas' ? 'Without gas' : 'With gas';
+  const rangeLabels = { '3m': 'Last 3 months', '6m': 'Last 6 months', '1y': 'Last year', '2y': 'Last 2 years', 'all': 'All time' };
+  renderReportsPopup(matches, car.name || '', `${label} · ${rangeLabels[range] || range}${allCarsCar ? ' (includes a share of any "All Cars" entries)' : ''}`);
+}
 function vehicleOwnershipAmount(entries, carId, categoryId, allCarsId, realCarsCount) {
   let total = 0;
   entries.forEach((e) => {
@@ -1725,7 +1752,7 @@ async function renderAddEntry() {
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit entry' : 'Add entry'}</span></div>
 
-    <div class="field"><label class="field-label">Date</label><input type="date" id="f_date" value="${src ? (src.__editId ? src.date : todayStr()) : todayStr()}"></div>
+    <div class="field"><label class="field-label">Date</label><input type="date" id="f_date" value="${src && src.date ? src.date : todayStr()}"></div>
 
     <div class="field"><label class="field-label">Category</label>
       <button type="button" class="btn" style="text-align:left" onclick="openCategoryPickerModal()"><span id="f_categoryButtonContent">Select…</span></button>
@@ -2820,8 +2847,8 @@ async function renderJazzReport() {
   const ongoing = issues.filter((i) => i.status === 'ongoing').length;
   const medCosts = issues.reduce((s, i) => s + (i.medCost || 0), 0);
   const vetCosts = issues.reduce((s, i) => s + (i.vetCost || 0), 0);
-  const byType = {};
-  issues.forEach((i) => { const n = (typeById[i.typeId]||{}).name || 'Other'; byType[n] = (byType[n]||0)+1; });
+  const byType = {}; // keyed by typeId, not name, so duplicate-named types never get merged together
+  issues.forEach((i) => { byType[i.typeId] = (byType[i.typeId] || 0) + 1; });
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goJazzMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Jazz's report</span></div>
@@ -2834,8 +2861,29 @@ async function renderJazzReport() {
       <div class="stat"><p class="label">Vet costs</p><p class="value">${fmtMoney(vetCosts)}</p></div>
     </div>
     <p class="section-label">Issues by type</p>
-    ${Object.keys(byType).length ? Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([n,c]) => `<div class="list-row"><span>${esc(n)}</span><span>${c}</span></div>`).join('') : '<div class="empty-state">No issues logged yet.</div>'}
+    ${Object.keys(byType).length ? Object.entries(byType).sort((a,b)=>b[1]-a[1]).map(([tid,c]) => `<div class="list-row" onclick="selectJazzReportType('${tid}')"><span>${esc((typeById[tid]||{}).name || 'Other')}</span><span>${c}</span></div>`).join('') : '<div class="empty-state">No issues logged yet.</div>'}
   `;
+}
+async function selectJazzReportType(typeId) {
+  const issues = (await DB.getAll('jazzIssues')).filter((i) => i.typeId === typeId).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const types = await DB.getAll('issueTypes');
+  const typeName = (types.find((t) => t.id === typeId) || {}).name || 'Issues';
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">${esc(typeName)} · ${issues.length} logged</p>
+    <div class="check-list" style="max-height:65vh">
+      ${issues.map((i) => `
+        <div class="list-row" onclick="closeModal();openIssue('${i.id}')" style="display:block;padding:10px 0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-size:13px;font-weight:600">${fmtDateFull(i.startDate)}</span>
+            <span class="pill-sm ${i.status === 'ongoing' ? 'pill-ongoing' : 'pill-resolved'}">${i.status === 'ongoing' ? 'Ongoing' : 'Resolved'}</span>
+          </div>
+          ${i.description ? `<p style="font-size:12px;color:var(--ink-soft);margin:2px 0 0">${esc(i.description)}</p>` : ''}
+        </div>
+      `).join('') || '<div class="empty-state">None found.</div>'}
+    </div>
+  `;
+  openModal();
 }
 
 // ============ WEIGHT MODULE (family) ============
