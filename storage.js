@@ -137,6 +137,15 @@ const DEFAULT_ISSUE_TYPES = [
 ];
 
 async function seedIfEmpty() {
+  // Never seed unless we're SURE the emptiness is real — i.e. a pull actually completed
+  // without error and still came back with nothing. A failed or incomplete pull also
+  // leaves local data empty, but that's "we don't know yet," not "there's genuinely
+  // nothing here" — seeding in that case is exactly what caused repeated duplicate
+  // categories to pile up in the Sheet. When in doubt, do nothing and wait for a real pull.
+  if (typeof Sync !== 'undefined' && (!Sync.hasPulledOnce || Sync.lastPullError)) {
+    console.warn('seedIfEmpty: skipped — no confirmed successful pull yet, so emptiness cannot be trusted.');
+    return;
+  }
   const cats = await DB.getAll('categories');
   if (cats.length === 0) {
     for (const c of DEFAULT_CATEGORIES) {
