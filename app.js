@@ -1887,7 +1887,7 @@ function onCategoryChange(skipAutofill) {
   if (!cat) { area.innerHTML = ''; return; }
   if (!skipAutofill) setType(cat.type || 'expense');
 
-  if (!skipAutofill && cat.defaultStoreId) document.getElementById('f_store').value = cat.defaultStoreId;
+  if (!skipAutofill && cat.defaultStoreId) { document.getElementById('f_store').value = cat.defaultStoreId; updateStoreButtonDisplay(); }
   if (!skipAutofill && cat.defaultAmount) document.getElementById('f_amount').value = cat.defaultAmount;
 
   if (cat.conditionalField === 'car') {
