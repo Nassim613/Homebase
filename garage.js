@@ -32,12 +32,12 @@ async function renderGarageMain() {
     const cardLink = v.photoLinks && v.photoLinks.find((p) => p.isImage);
     const cardSrc = cardLink ? cardLink.url : (v.photos && v.photos[0]);
     return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')">
-      <div style="width:100%;height:70px;background:var(--surface);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
+      <div style="width:100%;height:140px;background:var(--surface);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
         ${cardSrc ? `<img src="${cardSrc}" style="width:100%;height:100%;object-fit:cover;border-radius:10px">` : '<i class="ti ti-car" style="font-size:22px;color:var(--ink-soft)"></i>'}
       </div>
       <p style="font-size:13px;font-weight:600;margin:0">${esc(v.name)}</p>
       ${t.lastMileage ? `<p style="font-size:11px;color:var(--ink-soft);margin:2px 0 0">${t.lastMileage.toLocaleString()} km</p>` : ''}
-      <p style="font-size:11px;color:var(--red);margin:2px 0 0">${fmtMoney(t.totalSpent)} spent</p>
+      <p style="font-size:11px;color:var(--red);margin:2px 0 0">${fmtMoney(t.costSum)} related costs</p>
     </div>`;
   }));
 
@@ -62,7 +62,7 @@ async function filterGarageVehicles(q) {
   const vehicles = (await DB.getAll('vehicles')).filter((v) => (v.status||'owned') === garageStatusTab && v.name.toLowerCase().includes(q));
   const cards = await Promise.all(vehicles.map(async (v) => {
     const t = await computeVehicleTotals(v.id);
-    return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')"><p style="font-size:13px;font-weight:600">${esc(v.name)}</p><p style="font-size:11px;color:var(--red)">${fmtMoney(t.totalSpent)} spent</p></div>`;
+    return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')"><p style="font-size:13px;font-weight:600">${esc(v.name)}</p><p style="font-size:11px;color:var(--red)">${fmtMoney(t.costSum)} related costs</p></div>`;
   }));
   grid.innerHTML = cards.join('') || '<div class="empty-state">No matches.</div>';
 }
@@ -194,7 +194,11 @@ async function renderVehicleDetail() {
       <div class="stat"><p class="label">Bought for</p><p class="value">${fmtMoney(vehicle.boughtFor)}</p></div>
       <div class="stat"><p class="label">${vehicle.status==='sold'?'Sold for':'Last mileage'}</p><p class="value">${vehicle.status==='sold' ? fmtMoney(vehicle.soldFor) : (t.lastMileage ? t.lastMileage.toLocaleString()+' km' : '—')}</p></div>
     </div>
-    <div class="stat" style="margin-bottom:8px"><p class="label">Total spent</p><p class="value">${fmtMoney(t.totalSpent)}</p></div>
+    <div class="stat-grid">
+      <div class="stat"><p class="label">Total spent</p><p class="value">${fmtMoney(t.totalSpent)}</p></div>
+      <div class="stat"><p class="label">Related costs</p><p class="value">${fmtMoney(t.costSum)}</p></div>
+    </div>
+    <p style="font-size:10px;color:var(--ink-soft);margin:-4px 0 8px">Total spent = purchase price + related costs. Related costs = repairs, maintenance & other logged costs only.</p>
     ${vehicle.status==='sold' ? `<div class="stat" style="background:${t.profit>=0?'var(--sage-soft)':'var(--rose-soft)'};margin-bottom:14px"><p class="label">Profit / loss</p><p class="value" style="color:${t.profit>=0?'#0F6E56':'var(--red)'}">${t.profit>=0?'+':''}${fmtMoney(t.profit)}</p></div>` : ''}
 
     <div class="card tight">

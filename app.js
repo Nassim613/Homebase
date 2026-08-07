@@ -167,6 +167,17 @@ let financeRange = 'thisMonth'; // thisMonth | lastMonth | twoMonthsAgo | last3M
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
 const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
+// Returns a dynamic "August 2026" style label for the rolling month ranges, and falls
+// back to the static label for the rest (Last 3 months, All time, etc).
+function getFinanceRangeLabel(range) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const monthYear = (offset) => new Date(y, m + offset, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  if (range === 'thisMonth') return monthYear(0);
+  if (range === 'lastMonth') return monthYear(-1);
+  if (range === 'twoMonthsAgo') return monthYear(-2);
+  return FINANCE_RANGE_LABELS[range];
+}
 
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function getFinanceRangeBounds(range) {
@@ -190,7 +201,7 @@ function openFinanceRangeMoreModal() {
     <div class="check-list">
       ${options.map((r) => `
         <div class="list-row" onclick="setFinanceRange('${r}');closeModal()" style="${financeRange===r?'background:var(--gold-soft);border-radius:10px':''}">
-          <span>${FINANCE_RANGE_LABELS[r]}</span>
+          <span>${getFinanceRangeLabel(r)}</span>
           ${financeRange===r ? '<i class="ti ti-check" style="color:var(--gold)"></i>' : ''}
         </div>
       `).join('')}
@@ -235,9 +246,12 @@ async function renderFinanceMain() {
 
   const { start, end } = getFinanceRangeBounds(financeRange);
   const inRange = entries.filter((e) => e.date >= start && e.date <= end);
-  const income = inRange.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const expense = inRange.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
-  const transfer = inRange.filter((e) => e.type === 'transfer').reduce((s, e) => s + e.amount, 0);
+  // Entries in categories flagged "Exclude from family totals" (e.g. personal allowances) still
+  // show up in the list below, but are left out of the Income/Expenses/Net figures.
+  const totalsSource = inRange.filter((e) => { const cat = catById[e.categoryId]; return !(cat && cat.excludeFromTotals); });
+  const income = totalsSource.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const expense = totalsSource.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const transfer = totalsSource.filter((e) => e.type === 'transfer').reduce((s, e) => s + e.amount, 0);
   const net = income - expense;
 
   const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
@@ -246,14 +260,14 @@ async function renderFinanceMain() {
     <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
 
     <div class="chip-row">
-      <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">This month</button>
-      <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">Last month</button>
-      <button class="chip ${financeRange==='twoMonthsAgo'?'active':''}" onclick="setFinanceRange('twoMonthsAgo')">2 months ago</button>
-      <button class="chip ${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange)?'active':''}" onclick="openFinanceRangeMoreModal()">${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange) ? FINANCE_RANGE_LABELS[financeRange] : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
+      <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">${getFinanceRangeLabel('thisMonth')}</button>
+      <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">${getFinanceRangeLabel('lastMonth')}</button>
+      <button class="chip ${financeRange==='twoMonthsAgo'?'active':''}" onclick="setFinanceRange('twoMonthsAgo')">${getFinanceRangeLabel('twoMonthsAgo')}</button>
+      <button class="chip ${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange)?'active':''}" onclick="openFinanceRangeMoreModal()">${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange) ? getFinanceRangeLabel(financeRange) : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
     </div>
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${FINANCE_RANGE_LABELS[financeRange]}</p>
+        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${getFinanceRangeLabel(financeRange)}</p>
         <i class="ti ${net >= 0 ? 'ti-trending-up' : 'ti-trending-down'}" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}"></i>
       </div>
       <p class="big" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</p>
@@ -336,6 +350,11 @@ function renderDayGroup(date, dayEntries, catById, payeeById, openByDefault) {
   `;
 }
 
+function entryTypeMeta(type) {
+  if (type === 'income') return { icon: 'ti-arrow-up-right', color: '#0F6E56', label: 'Income' };
+  if (type === 'transfer') return { icon: 'ti-arrows-left-right', color: 'var(--gold)', label: 'Transfer' };
+  return { icon: 'ti-arrow-down-right', color: 'var(--red)', label: 'Expense' };
+}
 function renderEntryRow(e, catById, payeeById, showDate) {
   const cat = catById[e.categoryId] || {};
   const payee = payeeById[e.storeId] || {};
@@ -353,11 +372,13 @@ function renderEntryRow(e, catById, payeeById, showDate) {
     valClass = isNeg ? 'neg' : 'pos';
     sign = isNeg ? '' : '+';
   }
+  const typeMeta = entryTypeMeta(e.type);
   return `
     <div class="entry-row" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
         ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised)">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
+        <div class="entry-type-badge" style="background:${typeMeta.color}" title="${typeMeta.label}"><i class="ti ${typeMeta.icon}"></i></div>
       </div>
       <div class="entry-body">
         <div class="entry-top">
@@ -386,7 +407,8 @@ function filterEntriesLive(q, listSource, catById, payeeById) {
 
 function goCategories() { currentView = 'categories'; route(); }
 function goReports() { currentView = 'reports'; route(); }
-function goFoodBudget() { currentView = 'foodBudget'; route(); }
+let foodBudgetEditing = false;
+function goFoodBudget() { currentView = 'foodBudget'; foodBudgetEditing = false; route(); }
 
 function getWeekStart(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -396,11 +418,19 @@ function getWeekStart(dateStr) {
   monday.setDate(d.getDate() + diff);
   return fmtISO(monday);
 }
+function getISOWeekNumber(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const yearStart = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+}
 function getWeekLabel(weekStartStr) {
   const start = new Date(weekStartStr + 'T00:00:00');
   const end = new Date(start); end.setDate(start.getDate() + 6);
   const f = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${f(start)} – ${f(end)}`;
+  const year = start.getFullYear();
+  const weekNo = getISOWeekNumber(weekStartStr);
+  return `${f(start)} – ${f(end)}, ${year} · Week ${weekNo}`;
 }
 
 async function renderFoodBudget() {
@@ -430,11 +460,21 @@ async function renderFoodBudget() {
     <p style="font-size:12px;color:var(--ink-soft);margin-bottom:16px">Groceries + Meal Kit, grouped by week (Monday–Sunday)</p>
 
     <div class="card tight">
-      <label class="field-label">Weekly budget</label>
-      <div style="display:flex;gap:8px">
-        <input type="number" step="0.01" id="groceryBudgetInput" placeholder="No budget set" value="${weeklyBudget || ''}" style="flex:1">
-        <button class="btn" style="width:auto;padding:8px 14px" onclick="saveGroceryWeeklyBudget()">Save</button>
-      </div>
+      ${weeklyBudget && !foodBudgetEditing ? `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <label class="field-label" style="margin-bottom:2px">Weekly budget</label>
+            <div style="font-size:19px;font-weight:600;font-family:'Fraunces',serif">${fmtMoney(weeklyBudget)}</div>
+          </div>
+          <button class="btn" style="width:auto;padding:8px 14px" onclick="editFoodBudget()">Edit</button>
+        </div>
+      ` : `
+        <label class="field-label">Weekly budget</label>
+        <div style="display:flex;gap:8px">
+          <input type="number" step="0.01" id="groceryBudgetInput" placeholder="No budget set" value="${weeklyBudget || ''}" style="flex:1">
+          <button class="btn" style="width:auto;padding:8px 14px" onclick="saveGroceryWeeklyBudget()">Save</button>
+        </div>
+      `}
     </div>
 
     ${weeks.length ? collapseAllControls('foodBudgetList') : ''}
@@ -446,24 +486,26 @@ async function renderFoodBudget() {
       if (weeklyBudget) {
         const diff = weeklyBudget - total;
         const over = diff < 0;
-        budgetLine = `<span class="amt ${over ? 'neg' : 'pos'}" style="font-weight:600">${over ? fmtMoney(-diff) + ' over' : fmtMoney(diff) + ' left'}</span>`;
+        budgetLine = `<span class="amt ${over ? 'neg' : 'pos'}" style="font-weight:700;font-size:17px;display:block">${over ? fmtMoney(-diff) + ' over' : fmtMoney(diff) + ' left'}</span>`;
       }
       return `
-        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:10px;padding:8px' : ''}">
+        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:12px;padding:18px 16px' : ''}">
           <span>${getWeekLabel(wk)}${isCurrent ? ' · this week' : ''} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-          ${weeklyBudget ? `<span style="text-align:right"><span class="amt neg" style="display:block">${fmtMoney(total)} spent</span>${budgetLine}</span>` : `<span class="amt neg">${fmtMoney(total)}</span>`}
+          ${weeklyBudget ? `<span style="text-align:right">${budgetLine}<span class="amt" style="display:block;font-size:11px;color:var(--ink-soft);font-weight:400;margin-top:2px;text-transform:none">${fmtMoney(total)} spent</span></span>` : `<span class="amt neg">${fmtMoney(total)}</span>`}
         </div>
         <div class="collapse-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
       `;
     }).join('') : '<div class="empty-state">No Groceries or Meal Kit expenses logged yet.</div>'}</div>
   `;
 }
+function editFoodBudget() { foodBudgetEditing = true; renderFoodBudget(); }
 async function saveGroceryWeeklyBudget() {
   const val = parseFloat(document.getElementById('groceryBudgetInput').value) || null;
   const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
   meta.groceryWeeklyBudget = val;
   await DB.put('settings', meta);
   Sync.pushEntry('Meta', { id: 'groceryBudgetFlag', key: 'groceryWeeklyBudget', value: val });
+  foodBudgetEditing = false;
   renderFoodBudget();
 }
 function goMain() { currentView = 'main'; duplicateSource = null; route(); }
@@ -562,22 +604,23 @@ async function renderReportsPopupContent() {
   modalBackStack = renderReportsPopupContent;
 }
 
-async function selectReportsCell(categoryId, mk2) {
-  const allEntries = await getActiveEntries();
-  const categories = await DB.getAll('categories');
-  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const cat = catById[categoryId] || {};
-  const matches = allEntries.filter((e) => e.categoryId === categoryId && monthKey(e.date) === mk2);
-  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  renderReportsPopup(matches, cat.name || '', label);
-}
-
-async function selectReportsCategoryAll(categoryIdOrIds) {
+async function selectReportsCell(categoryIdOrIds, mk2, displayNameOverride) {
   const categoryIds = Array.isArray(categoryIdOrIds) ? categoryIdOrIds : [categoryIdOrIds];
   const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const displayName = catById[categoryIds[0]] ? catById[categoryIds[0]].name : '';
+  const cat = catById[categoryIds[0]] || {};
+  const matches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && monthKey(e.date) === mk2);
+  const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  renderReportsPopup(matches, displayNameOverride || cat.name || '', label);
+}
+
+async function selectReportsCategoryAll(categoryIdOrIds, displayNameOverride) {
+  const categoryIds = Array.isArray(categoryIdOrIds) ? categoryIdOrIds : [categoryIdOrIds];
+  const allEntries = await getActiveEntries();
+  const categories = await DB.getAll('categories');
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  const displayName = displayNameOverride || (catById[categoryIds[0]] ? catById[categoryIds[0]].name : '');
   const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
   const matches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && e.date >= start && e.date <= end);
   const total = matches.reduce((s, e) => s + e.amount, 0);
@@ -735,11 +778,9 @@ async function renderReportsStub() {
   if (reportsCategoryFilter.length) entries = entries.filter((e) => reportsCategoryFilter.includes(e.categoryId));
   if (reportsStoreFilter.length) entries = entries.filter((e) => reportsStoreFilter.includes(e.storeId));
   if (reportsTypeFilter) entries = entries.filter((e) => e.type === reportsTypeFilter);
-  const REPORTS_ALWAYS_EXCLUDE = ['allowance', 'personal'];
-  entries = entries.filter((e) => {
-    const name = (catById[e.categoryId] || {}).name || '';
-    return !REPORTS_ALWAYS_EXCLUDE.some((ex) => name.toLowerCase().includes(ex));
-  });
+  // Categories flagged "Exclude from family totals" (personal allowances, etc.) are left out of
+  // every Reports view too, same as the Finance main screen.
+  entries = entries.filter((e) => { const cat = catById[e.categoryId]; return !(cat && cat.excludeFromTotals); });
 
   const monthKeys = getReportsMonthKeys(reportsDateRange, entries); // newest first already for thisMonth/last3/last6/thisYear/allTime
   const rangeEntries = entries.filter((e) => monthKeys.includes(monthKey(e.date)));
@@ -750,22 +791,40 @@ async function renderReportsStub() {
   const expenseByMonth = chartMonthKeys.map((mk2) => entries.filter((e) => monthKey(e.date) === mk2 && e.type === 'expense').reduce((s, e) => s + e.amount, 0));
   const netByMonth = chartMonthKeys.map((mk2, i) => incomeByMonth[i] - expenseByMonth[i]);
 
+  // Groceries and Meal Kit are reported together everywhere below, same idea as the Food budget page.
+  const groceryCat = categories.find((c) => c.name.toLowerCase().includes('groceries'));
+  const mealKitCat = categories.find((c) => c.name.toLowerCase().includes('meal kit'));
+  const groupCategoryName = (name) => {
+    const n = (name || '').toLowerCase();
+    return (groceryCat && mealKitCat && (n.includes('groceries') || n.includes('meal kit'))) ? 'Groceries + Meal Kit' : name;
+  };
+
   const TOP_CATS_EXCLUDE = ['mortgage'];
   const catSpend = {};
   rangeEntries.filter((e) => e.type === 'expense').forEach((e) => {
-    const name = (catById[e.categoryId] || {}).name || 'Other';
+    const name = groupCategoryName((catById[e.categoryId] || {}).name || 'Other');
     if (TOP_CATS_EXCLUDE.some((ex) => name.toLowerCase().includes(ex))) return;
     catSpend[name] = (catSpend[name] || 0) + e.amount;
   });
   const topCats = Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 6);
 
-  // Category x month pivot
-  const tableCats = categories.filter((c) => !c.hidden && !reportsExcludedCategoryIds.includes(c.id) && !REPORTS_ALWAYS_EXCLUDE.some((ex) => c.name.toLowerCase().includes(ex))).sort((a, b) => a.name.localeCompare(b.name));
-  const pivot = {}; // catId -> monthKey -> total
+  // Category x month pivot — Groceries + Meal Kit collapse into one synthetic row (merged.id).
+  const GROCERY_MEALKIT_GROUP_ID = '__grocery_mealkit__';
+  const rawTableCats = categories.filter((c) => !c.hidden && !reportsExcludedCategoryIds.includes(c.id) && !c.excludeFromTotals);
+  let tableCats;
+  if (groceryCat && mealKitCat) {
+    const merged = { id: GROCERY_MEALKIT_GROUP_ID, name: 'Groceries + Meal Kit', icon: groceryCat.icon, _groupIds: [groceryCat.id, mealKitCat.id] };
+    tableCats = [merged, ...rawTableCats.filter((c) => c.id !== groceryCat.id && c.id !== mealKitCat.id)].sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    tableCats = rawTableCats.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const pivot = {}; // catId (or the merged group id) -> monthKey -> total
   tableCats.forEach((c) => { pivot[c.id] = {}; });
   rangeEntries.forEach((e) => {
-    if (!pivot[e.categoryId]) return;
-    pivot[e.categoryId][monthKey(e.date)] = (pivot[e.categoryId][monthKey(e.date)] || 0) + e.amount;
+    const isGroupMember = groceryCat && mealKitCat && (e.categoryId === groceryCat.id || e.categoryId === mealKitCat.id);
+    const targetId = isGroupMember ? GROCERY_MEALKIT_GROUP_ID : e.categoryId;
+    if (!pivot[targetId]) return;
+    pivot[targetId][monthKey(e.date)] = (pivot[targetId][monthKey(e.date)] || 0) + e.amount;
   });
   const monthColLabels = monthKeys.map((mk2) => new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'short', year: '2-digit' }));
 
@@ -867,11 +926,11 @@ async function renderReportsStub() {
           <tbody>
             ${tableCats.map((c) => `
               <tr>
-                <td onclick="selectReportsCategoryAll('${c.id}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
+                <td onclick="selectReportsCategoryAll(${c._groupIds ? JSON.stringify(c._groupIds).replace(/"/g, "'") : `'${c.id}'`}, '${esc(c.name)}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
                 ${monthKeys.map((mk2) => {
                   const val = pivot[c.id][mk2];
                   const overBudget = c.monthlyBudget && val > c.monthlyBudget;
-                  return `<td onclick="selectReportsCell('${c.id}','${mk2}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${overBudget?'var(--red)':(val?'var(--ink)':'var(--line)')};${overBudget?'background:var(--rose-soft);font-weight:600;':''}border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
+                  return `<td onclick="selectReportsCell(${c._groupIds ? JSON.stringify(c._groupIds).replace(/"/g, "'") : `'${c.id}'`},'${mk2}','${esc(c.name)}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${overBudget?'var(--red)':(val?'var(--ink)':'var(--line)')};${overBudget?'background:var(--rose-soft);font-weight:600;':''}border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
                 }).join('')}
               </tr>
             `).join('')}
@@ -1826,7 +1885,7 @@ function onCategoryChange(skipAutofill) {
   const cat = (window.__categories || []).find((c) => c.id === catId);
   const area = document.getElementById('conditionalFieldArea');
   if (!cat) { area.innerHTML = ''; return; }
-  if (!skipAutofill) setType(cat.type);
+  if (!skipAutofill) setType(cat.type || 'expense');
 
   if (!skipAutofill && cat.defaultStoreId) document.getElementById('f_store').value = cat.defaultStoreId;
   if (!skipAutofill && cat.defaultAmount) document.getElementById('f_amount').value = cat.defaultAmount;
@@ -1869,7 +1928,14 @@ function updateCarSplitAmount(carId, val) {
 // ---------- Category form (its own page) ----------
 let categoryFormEditId = null;
 let categoryFormReturnTo = null;
-const CATEGORY_ICON_CHOICES = ['ti-tag', 'ti-shopping-cart', 'ti-home', 'ti-car', 'ti-heart', 'ti-tool', 'ti-building-bank', 'ti-user', 'ti-repeat', 'ti-tools-kitchen-2', 'ti-shield-check', 'ti-plane'];
+const CATEGORY_ICON_CHOICES = [
+  'ti-tag', 'ti-shopping-cart', 'ti-shopping-bag', 'ti-home', 'ti-car', 'ti-heart', 'ti-tool', 'ti-building-bank', 'ti-user', 'ti-users',
+  'ti-repeat', 'ti-tools-kitchen-2', 'ti-shield-check', 'ti-plane', 'ti-piggy-bank', 'ti-wallet', 'ti-credit-card', 'ti-receipt', 'ti-briefcase', 'ti-cash',
+  'ti-coin', 'ti-gift', 'ti-paw', 'ti-dog', 'ti-cat', 'ti-stethoscope', 'ti-pill', 'ti-first-aid-kit', 'ti-school', 'ti-book',
+  'ti-device-gamepad-2', 'ti-movie', 'ti-music', 'ti-coffee', 'ti-shirt', 'ti-bolt', 'ti-droplet', 'ti-wifi', 'ti-phone', 'ti-bus',
+  'ti-gas-station', 'ti-baby-carriage', 'ti-barbell', 'ti-umbrella', 'ti-file-invoice', 'ti-building-store', 'ti-beach', 'ti-trees', 'ti-hammer', 'ti-scissors',
+  'ti-calendar', 'ti-device-tv', 'ti-bike', 'ti-train', 'ti-armchair', 'ti-building'
+];
 
 function goAddCategory(returnTo) { categoryFormEditId = null; categoryFormReturnTo = returnTo || null; currentView = 'categoryForm'; route(); }
 function goEditCategory(id) { categoryFormEditId = id; categoryFormReturnTo = null; currentView = 'categoryForm'; route(); }
@@ -1892,8 +1958,16 @@ async function renderCategoryForm() {
       <button class="btn-toggle" onclick="selectCategoryType(this,'transfer')">Transfer</button>
     </div>
 
+    <div class="card tight" style="background:var(--surface);margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="cat_excludeFromTotals" ${existing && existing.excludeFromTotals ? 'checked' : ''}>
+        <span style="font-size:13px;font-weight:500">Exclude from family Income/Expense totals</span>
+      </label>
+      <p style="font-size:11px;color:var(--ink-soft);margin:4px 0 0">Entries still appear in your lists and history — they just won't count toward the Finance page's Income, Expenses, or Net numbers. Good for personal allowances.</p>
+    </div>
+
     <label class="field-label">Icon</label>
-    <div id="catIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+    <div id="catIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;max-height:180px;overflow-y:auto;padding:4px;border:1px solid var(--line);border-radius:12px">
       ${CATEGORY_ICON_CHOICES.map((ic) => `<button type="button" onclick="selectCategoryIcon('${ic}', event)" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === window.__categoryIconDraft ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
     </div>
 
@@ -1952,6 +2026,7 @@ async function saveCategoryForm() {
   cat.defaultStoreId = document.getElementById('cat_defaultStore').value || null;
   cat.defaultAmount = parseFloat(document.getElementById('cat_defaultAmount').value) || null;
   cat.monthlyBudget = parseFloat(document.getElementById('cat_monthlyBudget').value) || null;
+  cat.excludeFromTotals = document.getElementById('cat_excludeFromTotals').checked;
   cat.synced = false;
   await DB.put('categories', cat);
   Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
@@ -2229,6 +2304,7 @@ async function renderCategoriesManager() {
   const allProjects = (await DB.getAll('projects')).sort((a, b) => a.name.localeCompare(b.name));
   const categories = showHiddenCategories ? allCategories : allCategories.filter((c) => !c.hidden);
   const hiddenCount = allCategories.filter((c) => c.hidden).length;
+  const missingTypeCount = allCategories.filter((c) => !c.hidden && !c.type).length;
   const projects = showHiddenProjects ? allProjects : allProjects.filter((p) => !p.hidden);
   const hiddenProjectCount = allProjects.filter((p) => p.hidden).length;
   const list = managerTab === 'categories' ? categories : managerTab === 'payees' ? payees : projects;
@@ -2244,6 +2320,7 @@ async function renderCategoriesManager() {
       <button class="chip ${managerTab === 'projects' ? 'active' : ''}" onclick="switchManagerTab('projects')">Projects</button>
     </div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="${addFn}"><i class="ti ti-plus"></i> Add ${addLabel}</button>
+    ${managerTab === 'categories' && missingTypeCount ? `<div class="card tight" style="background:var(--rose-soft);margin-bottom:8px"><span style="font-size:12px;color:var(--red)"><i class="ti ti-alert-triangle" style="vertical-align:-2px"></i> ${missingTypeCount} categor${missingTypeCount===1?'y has':'ies have'} no type set, so they won't auto-select Expense/Income/Transfer. Tap the flagged ${missingTypeCount===1?'one' : 'ones'} below to fix.</span></div>` : ''}
     ${managerTab === 'categories' && hiddenCount ? `<div class="list-row" onclick="showHiddenCategories=!showHiddenCategories;renderCategoriesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenCategories ? 'Hide' : 'Show'} ${hiddenCount} hidden categor${hiddenCount===1?'y':'ies'}</span><i class="ti ti-chevron-${showHiddenCategories?'down':'right'}"></i></div>` : ''}
     ${managerTab === 'projects' && hiddenProjectCount ? `<div class="list-row" onclick="showHiddenProjects=!showHiddenProjects;renderCategoriesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenProjects ? 'Hide' : 'Show'} ${hiddenProjectCount} hidden project${hiddenProjectCount===1?'':'s'}</span><i class="ti ti-chevron-${showHiddenProjects?'down':'right'}"></i></div>` : ''}
     <div>${list.map((item) => managerTab === 'categories' ? renderCategoryListRow(item) : managerTab === 'payees' ? renderPayeeListRow(item) : renderProjectListRow(item)).join('') || '<div class="empty-state">Nothing yet.</div>'}</div>
@@ -2252,9 +2329,10 @@ async function renderCategoriesManager() {
 function switchManagerTab(t) { managerTab = t; renderCategoriesManager(); }
 
 function renderCategoryListRow(c) {
-  return `<div class="list-row" onclick="${c.hidden ? `restoreCategory('${c.id}')` : `goEditCategory('${c.id}')`}" style="${c.hidden ? 'opacity:0.55' : ''}">
+  const missingType = !c.hidden && !c.type;
+  return `<div class="list-row" onclick="${c.hidden ? `restoreCategory('${c.id}')` : `goEditCategory('${c.id}')`}" style="${c.hidden ? 'opacity:0.55' : ''}${missingType ? ';outline:1.5px solid var(--red);border-radius:10px' : ''}">
     <div style="display:flex;align-items:center"><div class="icon-badge" style="background:var(--gold-soft)"><i class="ti ${c.icon || 'ti-tag'}"></i></div><span>${esc(c.name)}${c.hidden ? ' (hidden)' : ''}</span></div>
-    <span style="font-size:11px;color:var(--ink-soft);text-transform:capitalize">${c.hidden ? 'Tap to restore' : c.type}</span>
+    <span style="font-size:11px;color:${missingType ? 'var(--red)' : 'var(--ink-soft)'};text-transform:capitalize">${c.hidden ? 'Tap to restore' : (missingType ? '⚠ No type set' : (c.type + (c.excludeFromTotals ? ' · excluded' : '')))}</span>
   </div>`;
 }
 async function restoreCategory(id) {
