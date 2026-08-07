@@ -1967,12 +1967,13 @@ async function saveCategoryForm() {
 let storeFormEditId = null;
 let storeFormReturnTo = null;
 let storeLogoDraft = null;
+let storeLogoFile = null;
 let storeLogoDriveUrl = null;
 let storeLogoUploading = false;
 let storeLogoUploadError = null;
 
-function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
-function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; storeLogoDriveUrl = null; currentView = 'storeForm'; route(); }
+function goAddStore(returnTo) { storeFormEditId = null; storeFormReturnTo = returnTo || null; storeLogoDraft = null; storeLogoFile = null; storeLogoDriveUrl = null; storeLogoUploadError = null; currentView = 'storeForm'; route(); }
+function goEditStore(id) { storeFormEditId = id; storeFormReturnTo = null; storeLogoDraft = null; storeLogoFile = null; storeLogoDriveUrl = null; storeLogoUploadError = null; currentView = 'storeForm'; route(); }
 
 async function renderStoreForm() {
   const existing = storeFormEditId ? await DB.get('payees', storeFormEditId) : null;
@@ -1985,17 +1986,10 @@ async function renderStoreForm() {
     <div class="field"><label class="field-label">Default amount</label><input type="number" step="0.01" id="store_defaultAmount" placeholder="Leave blank if it varies" value="${existing && existing.defaultAmount ? existing.defaultAmount : ''}"></div>
 
     <label class="field-label">Logo</label>
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-      <div class="photo-slot" style="width:90px;height:90px" onclick="document.getElementById('storeLogoInput').click()">
-        ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}" style="object-fit:contain">` : storeLogoDraft ? `<img src="${storeLogoDraft}" style="object-fit:contain">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
-      </div>
-      ${(storeLogoDriveUrl || storeLogoDraft) && !storeLogoUploading ? `<button type="button" class="btn" style="width:auto;padding:8px 14px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeStoreLogo()">Remove</button>` : ''}
-    </div>
-    <p id="storeLogoStatus" style="font-size:11px;color:${storeLogoUploadError ? 'var(--red)' : 'var(--ink-soft)'};margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : (storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : (storeLogoUploadError ? 'Upload failed: ' + esc(storeLogoUploadError) : ''))}</p>
-    <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
+    <div id="storeLogoArea">${renderStoreLogoSection()}</div>
 
     <div class="field"><label class="field-label">Logo link (optional)</label><input id="store_logoLink" placeholder="Link to logo image (e.g. Drive link)" value="${esc(storeLogoDriveUrl || '')}"></div>
-    <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">Photos you pick above upload to your Drive automatically and show up on every device. This field is also editable directly if you'd rather paste a link yourself.</p>
+    <p style="font-size:11px;color:var(--ink-soft);margin:-10px 0 16px">Photos you pick above upload to your Drive when you save. This field is also editable directly if you'd rather paste a link yourself.</p>
 
     <button class="btn btn-primary" id="saveStoreBtn" onclick="saveStoreForm()">Save store</button>
   `;
@@ -2057,25 +2051,36 @@ function removeEntryReceipt() {
 
 function removeStoreLogo() {
   storeLogoDraft = null;
+  storeLogoFile = null;
   storeLogoDriveUrl = null;
-  renderStoreForm();
+  storeLogoUploadError = null;
+  updateStoreLogoSection();
+}
+function renderStoreLogoSection() {
+  return `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div class="photo-slot" style="width:90px;height:90px" onclick="document.getElementById('storeLogoInput').click()">
+        ${storeLogoUploading ? `<i class="ti ti-loader-2"></i>` : (storeLogoDriveUrl ? `<img src="${storeLogoDriveUrl}" style="object-fit:contain">` : storeLogoDraft ? `<img src="${storeLogoDraft}" style="object-fit:contain">` : '<i class="ti ti-building-store" style="font-size:24px"></i>')}
+      </div>
+      ${(storeLogoDriveUrl || storeLogoDraft) && !storeLogoUploading ? `<button type="button" class="btn" style="width:auto;padding:8px 14px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeStoreLogo()">Remove</button>` : ''}
+    </div>
+    <p id="storeLogoStatus" style="font-size:11px;color:${storeLogoUploadError ? 'var(--red)' : 'var(--ink-soft)'};margin-bottom:12px">${storeLogoUploading ? 'Uploading to Drive…' : storeLogoDriveUrl ? 'Saved to Drive — visible on every device' : storeLogoDraft ? 'Not uploaded yet — saves to Drive when you tap Save store.' : (storeLogoUploadError ? 'Upload failed: ' + esc(storeLogoUploadError) : '')}</p>
+    <input type="file" id="storeLogoInput" accept="image/*" style="display:none" onchange="handleStoreLogoUpload(event)">
+  `;
+}
+function updateStoreLogoSection() {
+  const el = document.getElementById('storeLogoArea');
+  if (el) el.innerHTML = renderStoreLogoSection();
 }
 function handleStoreLogoUpload(e) {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = async () => {
     storeLogoDraft = await compressImageDataUrl(reader.result);
-    storeLogoUploading = true;
-    renderStoreForm();
-    const result = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (document.getElementById('store_name')?.value || 'logo').trim());
-    storeLogoUploading = false;
-    if (result.ok) {
-      storeLogoDriveUrl = result.url;
-      storeLogoUploadError = null;
-    } else {
-      storeLogoUploadError = result.error;
-    }
-    renderStoreForm();
+    storeLogoFile = f;
+    storeLogoDriveUrl = null;
+    storeLogoUploadError = null;
+    updateStoreLogoSection();
   };
   reader.readAsDataURL(f);
 }
@@ -2083,6 +2088,23 @@ async function saveStoreForm() {
   const name = document.getElementById('store_name').value.trim();
   if (!name) { alert('Store needs a name.'); return; }
   const btn = document.getElementById('saveStoreBtn');
+  if (storeLogoDraft && !storeLogoDriveUrl && !storeLogoUploading) {
+    storeLogoUploading = true;
+    updateStoreLogoSection();
+    if (btn) { btn.disabled = true; btn.textContent = 'Uploading logo…'; }
+    const result = await Sync.uploadPhoto(storeLogoDraft, 'Store Logos', (storeLogoFile && storeLogoFile.name) || name || 'logo');
+    storeLogoUploading = false;
+    if (result.ok) {
+      storeLogoDriveUrl = result.url;
+    } else {
+      storeLogoUploadError = result.error;
+      updateStoreLogoSection();
+      if (btn) { btn.disabled = false; btn.textContent = 'Save store'; }
+      alert(`The logo couldn't be uploaded: ${result.error}. Fix the connection and try Save again, or remove the logo to save without it.`);
+      return;
+    }
+    updateStoreLogoSection();
+  }
   if (storeLogoUploading && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
   while (storeLogoUploading) { await new Promise((r) => setTimeout(r, 150)); }
   if (btn) { btn.disabled = false; btn.textContent = 'Save store'; }
