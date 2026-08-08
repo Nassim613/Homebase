@@ -144,7 +144,10 @@ nav.tabs .label { font-size: 10px; font-weight: 500; }
 
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: var(--vvtop, 0px);
+  left: 0;
+  right: 0;
+  height: var(--vvh, 100vh);
   background: rgba(43, 38, 64, 0.5);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);

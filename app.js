@@ -4,6 +4,7 @@ let currentView = 'main'; // main | add | categories | reports
 let editingCategory = null;
 let duplicateSource = null;
 let carSplitDraft = [];
+let isHandlingPopState = false; // true only while route() is running as a result of the back button
 
 const $main = document.getElementById('mainContent');
 const $fab = document.getElementById('fab');
@@ -118,7 +119,35 @@ $fab.addEventListener('click', () => {
 });
 
 // ---------- Router ----------
+// Every phone/PWA back-button press fires a browser "popstate" event, popping to
+// whatever state was pushed before the current one. As a single-page app, this screen
+// never touched browser history by default — so with no entries of its own to pop
+// through, the very first back press would immediately exit the installed app instead
+// of stepping back a screen, even from deep in a form. Fixed by pushing a history entry
+// for every screen change below, and restoring from it on popstate — once those are
+// genuinely exhausted, back correctly falls through to actually leaving the app.
+window.addEventListener('popstate', (e) => {
+  if (e.state && e.state.tab) {
+    isHandlingPopState = true;
+    currentTab = e.state.tab;
+    currentView = e.state.view || 'main';
+    document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab));
+    if (typeof renderHeader === 'function') renderHeader();
+    route();
+  }
+});
+
 async function route() {
+  if (!isHandlingPopState) {
+    const state = { tab: currentTab, view: currentView };
+    if (!history.state) {
+      history.replaceState(state, ''); // first ever route() call — establish the baseline entry, don't push a duplicate on top of it
+    } else if (history.state.tab !== state.tab || history.state.view !== state.view) {
+      history.pushState(state, '');
+    }
+  }
+  isHandlingPopState = false;
+
   if (currentTab === 'finance') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderFinanceMain();
@@ -167,8 +196,27 @@ let financeRange = 'thisMonth'; // thisMonth | lastMonth | twoMonthsAgo | last3M
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
 const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
-// Returns a dynamic "August 2026" style label for the rolling month ranges, and falls
-// back to the static label for the rest (Last 3 months, All time, etc).
+// Turns [{name:'August',year:2026}, {name:'July',year:2026}, {name:'June',year:2026}]
+// (newest first) into "August, July & June 2026" — or, on the rare window that crosses
+// a year boundary (e.g. Nov/Dec/Jan), into "January 2026, December & November 2025".
+function formatMonthListLabel(monthsDesc) {
+  if (monthsDesc.every((m) => m.year === monthsDesc[0].year)) {
+    const names = monthsDesc.map((m) => m.name);
+    const joined = names.length > 1 ? names.slice(0, -1).join(', ') + ' & ' + names[names.length - 1] : names[0];
+    return `${joined} ${monthsDesc[0].year}`;
+  }
+  return monthsDesc.map((m) => `${m.name} ${m.year}`).join(', ');
+}
+// "March to August 2026", or "October 2025 to March 2026" if it crosses a year boundary.
+function formatMonthRangeLabel(startDate, endDate) {
+  const startName = startDate.toLocaleDateString(undefined, { month: 'long' });
+  const endName = endDate.toLocaleDateString(undefined, { month: 'long' });
+  const sy = startDate.getFullYear(), ey = endDate.getFullYear();
+  return sy === ey ? `${startName} to ${endName} ${ey}` : `${startName} ${sy} to ${endName} ${ey}`;
+}
+// Returns a dynamic "August 2026" style label for the rolling month ranges, and a
+// dynamic label for the longer ranges too (matching their actual calendar-aligned
+// bounds from getFinanceRangeBounds) — only "All time" stays a fixed label.
 function getFinanceRangeLabel(range) {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth();
@@ -176,7 +224,14 @@ function getFinanceRangeLabel(range) {
   if (range === 'thisMonth') return monthYear(0);
   if (range === 'lastMonth') return monthYear(-1);
   if (range === 'twoMonthsAgo') return monthYear(-2);
-  return FINANCE_RANGE_LABELS[range];
+  if (range === 'last3Months') {
+    const months = [0, -1, -2].map((offset) => { const d = new Date(y, m + offset, 1); return { name: d.toLocaleDateString(undefined, { month: 'long' }), year: d.getFullYear() }; });
+    return formatMonthListLabel(months);
+  }
+  if (range === 'last6Months') return formatMonthRangeLabel(new Date(y, m - 5, 1), new Date(y, m, 1));
+  if (range === 'lastYear') return `All of ${y}`;
+  if (range === 'last2Years') return `All of ${y - 1} & ${y}`;
+  return FINANCE_RANGE_LABELS[range]; // allTime
 }
 
 function fmtISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
@@ -1640,7 +1695,7 @@ function openCategoryPickerModal() {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select category</p>
     <input placeholder="Search categories..." oninput="filterPickerList(this,'categoryPickerList')" style="margin-bottom:12px">
-    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddCategory('add')"><i class="ti ti-plus"></i> Add new category</button>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();snapshotEntryFormDraft();goAddCategory('add')"><i class="ti ti-plus"></i> Add new category</button>
     <div class="check-list" id="categoryPickerList" style="max-height:55vh">
       ${categories.map((c) => `
         <div class="list-row" onclick="selectCategoryFromPicker('${c.id}')" style="${currentVal===c.id?'background:var(--gold-soft);border-radius:10px':''}">
@@ -1755,7 +1810,7 @@ function openStorePickerModal() {
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Select store</p>
     <input placeholder="Search stores..." oninput="filterPickerList(this,'storePickerList')" style="margin-bottom:12px">
-    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();goAddStore('add')"><i class="ti ti-plus"></i> Add new store</button>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="closeModal();snapshotEntryFormDraft();goAddStore('add')"><i class="ti ti-plus"></i> Add new store</button>
     <div class="check-list" id="storePickerList" style="max-height:55vh">
       ${payees.map((p) => `
         <div class="list-row" onclick="selectStoreFromPicker('${p.id}')" style="${currentVal===p.id?'background:var(--gold-soft);border-radius:10px':''}">
@@ -1850,6 +1905,31 @@ async function renderAddEntry() {
   if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
   updateStoreButtonDisplay();
   updateCategoryButtonDisplay();
+}
+
+// Captures every field currently entered on the Add/Edit entry form into duplicateSource,
+// so a detour to create a new category or store — which fully re-renders the screen —
+// can restore exactly what was typed when it comes back, instead of the form reloading
+// blank. Safe to call from anywhere: it's a no-op if the entry form isn't what's on
+// screen right now.
+function snapshotEntryFormDraft() {
+  const dateEl = document.getElementById('f_date');
+  if (!dateEl) return;
+  const carEl = document.getElementById('f_car');
+  const projectEl = document.getElementById('f_project');
+  duplicateSource = {
+    ...(duplicateSource || {}), // keeps __editId (and id, when editing) if present
+    date: dateEl.value,
+    categoryId: document.getElementById('f_category').value || null,
+    type: window.__currentType || 'expense',
+    transferDirection: window.__transferDirection || null,
+    amount: document.getElementById('f_amount').value,
+    storeId: document.getElementById('f_store').value || null,
+    description: document.getElementById('f_description').value,
+    carId: carEl ? carEl.value : null,
+    projectId: projectEl ? projectEl.value : null,
+    receiptLink: entryReceiptLink || null
+  };
 }
 
 function setType(t) {
@@ -2421,6 +2501,23 @@ async function init() {
 // shell, the sign-in screen itself) works without it; nothing that touches your data
 // does.
 Auth.init(() => init());
+
+// Mobile keyboards don't shrink the page's layout viewport in most browsers — they just
+// overlay it — so a modal positioned with plain "inset:0" ends up flush against the full
+// screen bottom, hidden underneath the keyboard, instead of sitting above it. The
+// VisualViewport API reports the actually-visible area, so we mirror it into two CSS
+// vars (--vvh, --vvtop) that .modal-backdrop uses instead of 100vh/0, keeping any open
+// picker sheet (store, category, etc) fully visible and tappable while typing.
+function syncViewportHeight() {
+  if (!window.visualViewport) return;
+  document.documentElement.style.setProperty('--vvh', window.visualViewport.height + 'px');
+  document.documentElement.style.setProperty('--vvtop', window.visualViewport.offsetTop + 'px');
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncViewportHeight);
+  window.visualViewport.addEventListener('scroll', syncViewportHeight);
+  syncViewportHeight();
+}
 
 // ============ JAZZ MODULE ============
 let jazzDuplicate = null;

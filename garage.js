@@ -6,7 +6,6 @@ let currentVehicleId = null;
 let garageReportKind = null; // 'owned' | 'flips'
 let garageReportRange = 'all'; // '6m' | '1y' | 'all'
 let garageReportVehicleFilter = null; // vehicle id, toggled via chart click
-let garageReportMechDrill = false;
 
 function goGarageMain() { currentView = 'main'; route(); }
 
@@ -37,7 +36,6 @@ async function renderGarageMain() {
       </div>
       <p style="font-size:13px;font-weight:600;margin:0">${esc(v.name)}</p>
       ${t.lastMileage ? `<p style="font-size:11px;color:var(--ink-soft);margin:2px 0 0">${t.lastMileage.toLocaleString()} km</p>` : ''}
-      <p style="font-size:11px;color:var(--red);margin:2px 0 0">${fmtMoney(t.costSum)} related costs</p>
     </div>`;
   }));
 
@@ -62,7 +60,7 @@ async function filterGarageVehicles(q) {
   const vehicles = (await DB.getAll('vehicles')).filter((v) => (v.status||'owned') === garageStatusTab && v.name.toLowerCase().includes(q));
   const cards = await Promise.all(vehicles.map(async (v) => {
     const t = await computeVehicleTotals(v.id);
-    return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')"><p style="font-size:13px;font-weight:600">${esc(v.name)}</p><p style="font-size:11px;color:var(--red)">${fmtMoney(t.costSum)} related costs</p></div>`;
+    return `<div class="card tight" style="cursor:pointer" onclick="openVehicle('${v.id}')"><p style="font-size:13px;font-weight:600">${esc(v.name)}</p>${t.lastMileage ? `<p style="font-size:11px;color:var(--ink-soft)">${t.lastMileage.toLocaleString()} km</p>` : ''}</div>`;
   }));
   grid.innerHTML = cards.join('') || '<div class="empty-state">No matches.</div>';
 }
@@ -588,7 +586,7 @@ async function filterAllRepairs(q) {
 }
 
 // ---------- Reports ----------
-function goGarageReport(kind) { garageReportKind = kind; garageReportRange = 'all'; garageReportVehicleFilter = null; garageReportMechDrill = false; currentView = 'garageReport'; route(); }
+function goGarageReport(kind) { garageReportKind = kind; garageReportRange = 'all'; garageReportVehicleFilter = null; currentView = 'garageReport'; route(); }
 
 function withinRange(dateStr, range) {
   if (range === 'all') return true;
@@ -648,19 +646,17 @@ async function renderGarageReport() {
     ${statGrid}
     <p class="section-label">Spend by vehicle <span style="font-weight:400;color:var(--ink-soft);font-size:11px">· tap a bar to filter</span></p>
     <div style="position:relative;width:100%;height:${Math.max(120, relevantVehicles.length*36)}px;margin-bottom:20px"><canvas id="garageVehicleChart"></canvas></div>
-    <p class="section-label">Spend by expense type <span style="font-weight:400;color:var(--ink-soft);font-size:11px">· tap Mechanical repairs to drill in</span></p>
-    <div style="position:relative;width:100%;height:${Math.max(120, Object.keys(typeSpend).length*36)}px;margin-bottom:${garageReportMechDrill?'12px':'20px'}"><canvas id="garageTypeChart"></canvas></div>
-    ${garageReportMechDrill ? renderMechDrillChart(relevantCosts, repairTypes) : ''}
+    <p class="section-label">Spend by expense type</p>
+    <div style="position:relative;width:100%;height:${Math.max(120, Object.keys(typeSpend).length*36)}px;margin-bottom:20px"><canvas id="garageTypeChart"></canvas></div>
+    <p class="section-label">Spend by repair type <span style="font-weight:400;color:var(--ink-soft);font-size:11px">· Mechanical repairs only</span></p>
+    <div style="position:relative;width:100%;height:${Math.max(120, repairTypes.length*30)}px;margin-bottom:20px"><canvas id="garageMechChart"></canvas></div>
     <p class="section-label">${isFlips?'Vehicles by profit':'Vehicles by spend'}</p>
     ${vehicleListRows || '<div class="empty-state">No vehicles in range.</div>'}
   `;
 
   drawGarageVehicleChart(relevantVehicles, vehicleSpend, isFlips);
   drawGarageTypeChart(typeSpend);
-}
-
-function renderMechDrillChart(costs, repairTypes) {
-  return `<div style="position:relative;width:100%;height:${Math.max(120, repairTypes.length*30)}px;margin-bottom:20px"><canvas id="garageMechChart"></canvas></div>`;
+  drawMechChart();
 }
 
 function setGarageRange(r) { garageReportRange = r; renderGarageReport(); }
@@ -695,22 +691,15 @@ function drawGarageTypeChart(typeSpend) {
   if (gTypeChart) gTypeChart.destroy();
   const labels = Object.keys(typeSpend);
   const data = Object.values(typeSpend);
-  const colors = labels.map((l) => (garageReportMechDrill && l === 'Mechanical repairs' ? '#2a78d6' : '#e0dfd8'));
   gTypeChart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ data, backgroundColor: garageReportMechDrill ? colors : '#2a78d6', borderRadius: 4 }] },
+    data: { labels, datasets: [{ data, backgroundColor: '#2a78d6', borderRadius: 4 }] },
     options: {
       indexAxis: 'y', responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
-      scales: { x: { ticks: { callback: (v) => '$' + Math.round(v/1000) + 'k' } } },
-      onClick: (evt, els) => {
-        if (!els.length) return;
-        const label = labels[els[0].index];
-        if (label === 'Mechanical repairs') { garageReportMechDrill = !garageReportMechDrill; renderGarageReport(); }
-      }
+      scales: { x: { ticks: { callback: (v) => '$' + Math.round(v/1000) + 'k' } } }
     }
   });
-  if (garageReportMechDrill) drawMechChart();
 }
 async function drawMechChart() {
   const ctx = document.getElementById('garageMechChart');
