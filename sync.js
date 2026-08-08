@@ -18,7 +18,8 @@ const SYNC_JOBS = [
   { store: 'issueTypes', sheet: 'IssueTypes', strip: [] },
   { store: 'vetClinics', sheet: 'VetClinics', strip: [] },
   { store: 'garagePlaces', sheet: 'Places', strip: [] },
-  { store: 'recurring', sheet: 'Recurring', strip: [] }
+  { store: 'recurring', sheet: 'Recurring', strip: [] },
+  { store: 'passwords', sheet: 'Passwords', strip: [] }
 ];
 
 const Sync = {

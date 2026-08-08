@@ -1,7 +1,7 @@
 // ---------- IndexedDB wrapper ----------
 const DB_NAME = 'homebase';
-const DB_VERSION = 3;
-const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces'];
+const DB_VERSION = 4;
+const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords'];
 
 let dbPromise = null;
 

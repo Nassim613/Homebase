@@ -195,7 +195,7 @@ async function route() {
 let financeRange = 'thisMonth'; // thisMonth | lastMonth | twoMonthsAgo | last3Months | last6Months | lastYear | last2Years | allTime
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
-const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
+const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', threeMonthsAgo: '3 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
 // Turns [{name:'August',year:2026}, {name:'July',year:2026}, {name:'June',year:2026}]
 // (newest first) into "August, July & June 2026" — or, on the rare window that crosses
 // a year boundary (e.g. Nov/Dec/Jan), into "January 2026, December & November 2025".
@@ -224,6 +224,7 @@ function getFinanceRangeLabel(range) {
   if (range === 'thisMonth') return monthYear(0);
   if (range === 'lastMonth') return monthYear(-1);
   if (range === 'twoMonthsAgo') return monthYear(-2);
+  if (range === 'threeMonthsAgo') return monthYear(-3);
   if (range === 'last3Months') {
     const months = [0, -1, -2].map((offset) => { const d = new Date(y, m + offset, 1); return { name: d.toLocaleDateString(undefined, { month: 'long' }), year: d.getFullYear() }; });
     return formatMonthListLabel(months);
@@ -240,6 +241,7 @@ function getFinanceRangeBounds(range) {
   const y = now.getFullYear(), m = now.getMonth();
   if (range === 'lastMonth') return { start: fmtISO(new Date(y, m - 1, 1)), end: fmtISO(new Date(y, m, 0)) };
   if (range === 'twoMonthsAgo') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m - 1, 0)) };
+  if (range === 'threeMonthsAgo') return { start: fmtISO(new Date(y, m - 3, 1)), end: fmtISO(new Date(y, m - 2, 0)) };
   if (range === 'last3Months') return { start: fmtISO(new Date(y, m - 2, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
   if (range === 'last6Months') return { start: fmtISO(new Date(y, m - 5, 1)), end: fmtISO(new Date(y, m + 1, 0)) };
   if (range === 'lastYear') return { start: fmtISO(new Date(y, 0, 1)), end: fmtISO(new Date(y, 11, 31)) }; // calendar year, not a rolling 12 months
@@ -249,7 +251,7 @@ function getFinanceRangeBounds(range) {
 }
 function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
 function openFinanceRangeMoreModal() {
-  const options = ['last3Months', 'last6Months', 'lastYear', 'last2Years', 'allTime'];
+  const options = ['threeMonthsAgo', 'last3Months', 'last6Months', 'lastYear', 'last2Years', 'allTime'];
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">More ranges</p>
@@ -544,8 +546,8 @@ async function renderFoodBudget() {
         budgetLine = `<span class="amt ${over ? 'neg' : 'pos'}" style="font-weight:700;font-size:17px;display:block">${over ? fmtMoney(-diff) + ' over' : fmtMoney(diff) + ' left'}</span>`;
       }
       return `
-        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:12px;padding:18px 16px' : ''}">
-          <span>${getWeekLabel(wk)}${isCurrent ? ' · this week' : ''} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
+        <div class="section-title" onclick="toggleCollapse(this)" style="cursor:pointer;${weeklyBudget ? 'background:' + (total > weeklyBudget ? 'var(--rose-soft)' : 'var(--sage-soft)') + ';border-radius:12px;padding:18px 16px' : ''}${isCurrent ? ';border:2px solid var(--gold);box-shadow:0 0 0 3px var(--gold-soft)' : ''}">
+          <span>${getWeekLabel(wk)}${isCurrent ? ' <span style="background:var(--gold);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:none;letter-spacing:0;vertical-align:2px;display:inline-block">THIS WEEK</span>' : ''} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
           ${weeklyBudget ? `<span style="text-align:right">${budgetLine}<span class="amt" style="display:block;font-size:11px;color:var(--ink-soft);font-weight:400;margin-top:2px;text-transform:none">${fmtMoney(total)} spent</span></span>` : `<span class="amt neg">${fmtMoney(total)}</span>`}
         </div>
         <div class="collapse-body" style="display:${i===0?'block':'none'}">${weekEntries.map((e) => renderEntryRow(e, catById, payeeById, false)).join('')}</div>
@@ -977,9 +979,13 @@ async function renderReportsStub() {
           <thead><tr>
             <th style="text-align:left;padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);color:var(--ink-soft);font-weight:600;min-width:120px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">Category</th>
             ${monthColLabels.map((l) => `<th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${l}</th>`).join('')}
+            <th style="text-align:right;padding:8px 12px;color:var(--ink-soft);font-weight:600;min-width:80px;border-bottom:1px solid var(--line);background:var(--gold-soft)">Avg/mo</th>
           </tr></thead>
           <tbody>
-            ${tableCats.map((c) => `
+            ${tableCats.map((c) => {
+              const monthTotals = monthKeys.map((mk2) => pivot[c.id][mk2] || 0);
+              const avg = monthTotals.reduce((s, v) => s + v, 0) / (monthKeys.length || 1);
+              return `
               <tr>
                 <td onclick="selectReportsCategoryAll(${c._groupIds ? JSON.stringify(c._groupIds).replace(/"/g, "'") : `'${c.id}'`}, '${esc(c.name)}')" style="padding:8px 12px;position:sticky;left:0;background:var(--surface-raised);font-weight:700;color:${categoryColor(c.id)};cursor:pointer;border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${esc(c.name)}</td>
                 ${monthKeys.map((mk2) => {
@@ -987,8 +993,10 @@ async function renderReportsStub() {
                   const overBudget = c.monthlyBudget && val > c.monthlyBudget;
                   return `<td onclick="selectReportsCell(${c._groupIds ? JSON.stringify(c._groupIds).replace(/"/g, "'") : `'${c.id}'`},'${mk2}','${esc(c.name)}')" style="padding:8px 12px;text-align:right;cursor:pointer;color:${overBudget?'var(--red)':(val?'var(--ink)':'var(--line)')};${overBudget?'background:var(--rose-soft);font-weight:600;':''}border-bottom:1px solid var(--line);border-right:1px solid var(--line)">${val ? fmtMoney(val) : '–'}</td>`;
                 }).join('')}
+                <td style="padding:8px 12px;text-align:right;font-weight:700;color:var(--ink);background:var(--gold-soft);border-bottom:1px solid var(--line)">${fmtMoney(avg)}</td>
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
         </table>
       </div>
@@ -1850,6 +1858,9 @@ async function renderAddEntry() {
   const cars = await DB.getAll('cars');
   const projects = (await DB.getAll('projects')).filter((p) => !p.hidden);
   const src = duplicateSource;
+  // Brand-new entries (not an edit or duplicate) default to Groceries, since it's far and
+  // away the most common category logged — still fully overridable via the picker.
+  const defaultCategoryId = src && src.categoryId ? src.categoryId : (src ? null : (categories.find((c) => c.name.trim().toLowerCase() === 'groceries') || {}).id || null);
 
   const formKey = src && src.__editId ? src.__editId : (src ? 'duplicate-' + (src.id || '') : 'new');
   if (entryReceiptFormFor !== formKey) {
@@ -1860,7 +1871,7 @@ async function renderAddEntry() {
     entryReceiptUploading = false;
   }
 
-  const catOptions = categories.map((c) => `<option value="${c.id}" ${src && src.categoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const catOptions = categories.map((c) => `<option value="${c.id}" ${defaultCategoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const payeeOptions = payees.map((p) => `<option value="${p.id}" ${src && src.storeId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const carOptions = cars.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   const projectOptions = projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -1872,7 +1883,7 @@ async function renderAddEntry() {
 
     <div class="field"><label class="field-label">Category</label>
       <button type="button" class="btn" style="text-align:left" onclick="openCategoryPickerModal()"><span id="f_categoryButtonContent">Select…</span></button>
-      <input type="hidden" id="f_category" value="${src && src.categoryId ? src.categoryId : ''}">
+      <input type="hidden" id="f_category" value="${defaultCategoryId || ''}">
     </div>
 
     <div id="conditionalFieldArea"></div>
@@ -1900,8 +1911,14 @@ async function renderAddEntry() {
   `;
 
   window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
-  if (src && src.categoryId) { onCategoryChange(true); }
-  setType(src ? src.type : 'expense');
+  if (src && src.categoryId) {
+    onCategoryChange(true);
+    setType(src.type);
+  } else if (defaultCategoryId) {
+    onCategoryChange(false); // fresh entry defaulting to Groceries — applies its store/amount/type defaults too, same as if it were hand-picked
+  } else {
+    setType('expense');
+  }
   if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
   updateStoreButtonDisplay();
   updateCategoryButtonDisplay();
@@ -3285,7 +3302,9 @@ async function logJazzWeighIn() {
 }
 
 // ============ MORE / SETTINGS MODULE ============
-let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes
+let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes | passwords | passwordForm
+let passwordFormEditId = null;
+let passwordRevealed = {}; // password id -> true while its value is shown in plain text on the list
 let editingSheetUrl = false;
 
 function goMoreMain() { moreView = 'main'; renderMore(); }
@@ -3296,6 +3315,8 @@ async function renderMore() {
   if (moreView === 'syncData') return renderSyncDataPage();
   if (moreView === 'issueTypes') return renderIssueTypesManager();
   if (moreView === 'recurring') return renderRecurringManager();
+  if (moreView === 'passwords') return renderPasswordsManager();
+  if (moreView === 'passwordForm') return renderPasswordForm();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -3314,9 +3335,122 @@ async function renderMore() {
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Garage</p>
     <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>
 
+    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Security</p>
+    <div class="list-row" onclick="moreView='passwords';renderMore()"><span><i class="ti ti-lock"></i> Passwords</span><i class="ti ti-chevron-right"></i></div>
+
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Sync & data</p>
     <div class="list-row" onclick="moreView='syncData';renderMore()"><span><i class="ti ti-cloud"></i> Google Sheet sync & import</span><span class="status-pill ${Sync.status}" style="font-size:11px"><i class="ti ti-cloud"></i></span></div>
   `;
+}
+
+async function getActivePasswords() { return (await DB.getAll('passwords')).filter((r) => !r.deleted); }
+
+async function renderPasswordsManager() {
+  const passwords = (await getActivePasswords()).sort((a, b) => a.site.localeCompare(b.site));
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='main';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Passwords</span></div>
+    <div class="card tight" style="background:var(--gold-soft);margin-bottom:14px">
+      <p style="font-size:11px;color:var(--ink)"><i class="ti ti-info-circle"></i> Shared between you and Safia, same as everything else in Homebase. Kept out of the automatic Sheet backups and edit history that everything else gets, but the Sheet itself still stores these as plain text — treat this like a shared notebook, not a vault.</p>
+    </div>
+    <button class="btn btn-primary" style="margin-bottom:14px" onclick="goAddPassword()"><i class="ti ti-plus"></i> Add password</button>
+    ${passwords.map((p) => `
+      <div class="card tight" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0;cursor:pointer" onclick="goEditPassword('${p.id}')">
+            <p style="font-size:14px;font-weight:600;margin:0">${esc(p.site)}</p>
+            ${p.username ? `<p style="font-size:12px;color:var(--ink-soft);margin:2px 0 0">${esc(p.username)}</p>` : ''}
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn" style="width:34px;height:34px;padding:0" onclick="togglePasswordReveal('${p.id}')"><i class="ti ${passwordRevealed[p.id] ? 'ti-eye-off' : 'ti-eye'}"></i></button>
+            <button class="btn" style="width:34px;height:34px;padding:0" onclick="copyPasswordValue('${p.id}', this)"><i class="ti ti-copy"></i></button>
+          </div>
+        </div>
+        <div class="divider" style="margin:8px 0"></div>
+        <p style="font-family:monospace;font-size:14px;letter-spacing:${passwordRevealed[p.id] ? '0' : '2px'};margin:0">${passwordRevealed[p.id] ? esc(p.password) : '••••••••••'}</p>
+        ${p.url ? `<p style="font-size:11px;color:var(--ink-soft);margin-top:6px"><i class="ti ti-link"></i> ${esc(p.url)}</p>` : ''}
+      </div>
+    `).join('') || '<div class="empty-state">No passwords saved yet.</div>'}
+  `;
+}
+
+function togglePasswordReveal(id) { passwordRevealed[id] = !passwordRevealed[id]; renderPasswordsManager(); }
+
+async function copyPasswordValue(id, btn) {
+  const p = await DB.get('passwords', id);
+  if (!p) return;
+  try {
+    await navigator.clipboard.writeText(p.password);
+    if (btn) { const original = btn.innerHTML; btn.innerHTML = '<i class="ti ti-check"></i>'; setTimeout(() => { btn.innerHTML = original; }, 1200); }
+  } catch (err) { /* clipboard unavailable on this device — nothing to fall back to */ }
+}
+
+function goAddPassword() { passwordFormEditId = null; moreView = 'passwordForm'; renderMore(); }
+function goEditPassword(id) { passwordFormEditId = id; moreView = 'passwordForm'; renderMore(); }
+
+async function renderPasswordForm() {
+  const existing = passwordFormEditId ? await DB.get('passwords', passwordFormEditId) : null;
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='passwords';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} password</span></div>
+
+    <label class="field-label">Site or app name</label>
+    <input id="pw_site" placeholder="e.g. Netflix" value="${esc(existing ? existing.site : '')}" style="margin-bottom:16px">
+
+    <label class="field-label">Username or email</label>
+    <input id="pw_username" value="${esc(existing ? (existing.username || '') : '')}" style="margin-bottom:16px">
+
+    <label class="field-label">Password</label>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="pw_password" type="password" value="${esc(existing ? (existing.password || '') : '')}" style="flex:1">
+      <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="togglePasswordFieldVisibility()"><i class="ti ti-eye" id="pwFieldEyeIcon"></i></button>
+    </div>
+
+    <label class="field-label">Website (optional)</label>
+    <input id="pw_url" placeholder="https://..." value="${esc(existing ? (existing.url || '') : '')}" style="margin-bottom:16px">
+
+    <label class="field-label">Notes (optional)</label>
+    <textarea id="pw_notes" rows="3" style="margin-bottom:16px">${esc(existing ? (existing.notes || '') : '')}</textarea>
+
+    <button class="btn btn-primary" onclick="savePasswordEntry()">Save password</button>
+    ${existing ? `<button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-top:10px" onclick="deletePasswordEntry('${existing.id}')"><i class="ti ti-trash"></i> Delete</button>` : ''}
+  `;
+}
+
+function togglePasswordFieldVisibility() {
+  const input = document.getElementById('pw_password');
+  const icon = document.getElementById('pwFieldEyeIcon');
+  const showing = input.type === 'text';
+  input.type = showing ? 'password' : 'text';
+  icon.className = 'ti ' + (showing ? 'ti-eye' : 'ti-eye-off');
+}
+
+async function savePasswordEntry() {
+  const site = document.getElementById('pw_site').value.trim();
+  if (!site) { alert('Give it a name — usually the site or app.'); return; }
+  const existing = passwordFormEditId ? await DB.get('passwords', passwordFormEditId) : null;
+  const entry = {
+    id: existing ? existing.id : uid(),
+    site,
+    username: document.getElementById('pw_username').value.trim(),
+    password: document.getElementById('pw_password').value,
+    url: document.getElementById('pw_url').value.trim(),
+    notes: document.getElementById('pw_notes').value.trim(),
+    synced: false
+  };
+  await DB.put('passwords', entry);
+  Sync.pushEntry('Passwords', entry).then(() => { entry.synced = true; DB.put('passwords', entry); });
+  moreView = 'passwords';
+  renderMore();
+}
+
+async function deletePasswordEntry(id) {
+  if (!confirm('Delete this saved password? This removes it everywhere it syncs to (both your devices and Safia\'s).')) return;
+  const entry = await DB.get('passwords', id);
+  entry.deleted = true;
+  entry.synced = false;
+  await DB.put('passwords', entry);
+  Sync.pushEntry('Passwords', entry).then(() => DB.put('passwords', entry));
+  moreView = 'passwords';
+  renderMore();
 }
 
 const SYNC_PLAIN_LABEL = {
