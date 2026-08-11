@@ -2783,22 +2783,25 @@ function renderPhotoGrid(drafts, prefix) {
 }
 function getPhotoDraftArray(prefix) {
   if (prefix === 'jazz') return jazzPhotoDrafts;
+  if (prefix === 'docs') return docFileDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
-// Which Drive folder each context's uploads land in.
+// Which Drive folder each context's uploads land in. 'docs' isn't listed here since its
+// folder name is dynamic (whatever the person is naming/renaming their Documents folder
+// to) rather than fixed — see handlePhotoUpload below.
 const PHOTO_LINK_CONTEXT = {
   jazz: { folder: 'Jazz Photos' },
   garage: { folder: 'Vehicle Photos' },
   garage2: { folder: 'Garage Receipts' }
 };
-let pendingPhotoUploads = { jazz: [], garage: [], garage2: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let photoUploadStatus = { jazz: [], garage: [], garage2: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
-let photoUploadErrors = { jazz: [], garage: [], garage2: [] }; // parallel too — the actual reason, so it's reportable without a dev console
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [] }; // in-flight upload promises, per context — Save must await these before finishing
+let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
-let photoUploadLinks = { jazz: [], garage: [], garage2: [] };
+let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [] };
 
 // Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
 // photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
@@ -2829,6 +2832,8 @@ function handlePhotoUpload(e, prefix) {
   const files = Array.from(e.target.files);
   const target = getPhotoDraftArray(prefix);
   const ctx = PHOTO_LINK_CONTEXT[prefix];
+  const uploadFolder = prefix === 'docs' ? (currentDocFolderName.trim() || 'Uncategorized') : (ctx && ctx.folder);
+  const uploadRoot = prefix === 'docs' ? 'Homebase Documents' : undefined;
   let remaining = files.length;
   files.forEach((f) => {
     const reader = new FileReader();
@@ -2838,10 +2843,10 @@ function handlePhotoUpload(e, prefix) {
       target.push(dataUrl);
       if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'pending';
       if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
-      if (ctx) {
-        const uploadPromise = Sync.uploadPhoto(dataUrl, ctx.folder, f.name || 'photo').then((result) => {
+      if (uploadFolder) {
+        const uploadPromise = Sync.uploadPhoto(dataUrl, uploadFolder, f.name || 'photo', uploadRoot).then((result) => {
           if (result.ok) {
-            if (photoUploadLinks[prefix]) photoUploadLinks[prefix][idx] = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage };
+            if (photoUploadLinks[prefix]) photoUploadLinks[prefix][idx] = { url: result.url, viewUrl: result.viewUrl, isImage: result.isImage, name: f.name || '' };
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'ok';
           } else {
             if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'failed';
@@ -2894,7 +2899,7 @@ async function waitForPendingUploads(prefix) {
 // multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
 // indices got removed in THIS edit session — the actual removal only takes effect
 // when the form is saved, so backing out is always safe.
-let existingLinksRemoved = { jazz: [], vehicle: [], cost: [] };
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [] };
 
 function renderExistingLinksGrid(links, context, label) {
   if (!links || !links.length) return '';
@@ -2919,6 +2924,7 @@ function removeExistingLink(context, index) {
   if (context === 'jazz') renderAddIssue();
   else if (context === 'vehicle') renderAddVehicle();
   else if (context === 'cost') renderAddCost();
+  else if (context === 'docFolder') renderDocFolderForm();
 }
 function keptExistingLinks(links, context) {
   if (!links) return [];
@@ -3302,9 +3308,12 @@ async function logJazzWeighIn() {
 }
 
 // ============ MORE / SETTINGS MODULE ============
-let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes | passwords | passwordForm
+let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes | passwords | passwordForm | docFolders | docFolderForm
 let passwordFormEditId = null;
 let passwordRevealed = {}; // password id -> true while its value is shown in plain text on the list
+let docFolderEditId = null;
+let docFileDrafts = []; // local base64 previews for files added but not yet saved, mirrors jazzPhotoDrafts/garagePhotoDrafts
+let currentDocFolderName = ''; // tracked live as the name field is typed, since new file uploads need it immediately (see handlePhotoUpload)
 let editingSheetUrl = false;
 
 function goMoreMain() { moreView = 'main'; renderMore(); }
@@ -3317,6 +3326,8 @@ async function renderMore() {
   if (moreView === 'recurring') return renderRecurringManager();
   if (moreView === 'passwords') return renderPasswordsManager();
   if (moreView === 'passwordForm') return renderPasswordForm();
+  if (moreView === 'docFolders') return renderDocFoldersManager();
+  if (moreView === 'docFolderForm') return renderDocFolderForm();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -3334,6 +3345,9 @@ async function renderMore() {
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Garage</p>
     <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>
+
+    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Documents</p>
+    <div class="list-row" onclick="moreView='docFolders';renderMore()"><span><i class="ti ti-folder"></i> Documents</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Security</p>
     <div class="list-row" onclick="moreView='passwords';renderMore()"><span><i class="ti ti-lock"></i> Passwords</span><i class="ti ti-chevron-right"></i></div>
@@ -3450,6 +3464,111 @@ async function deletePasswordEntry(id) {
   await DB.put('passwords', entry);
   Sync.pushEntry('Passwords', entry).then(() => DB.put('passwords', entry));
   moreView = 'passwords';
+  renderMore();
+}
+
+const DOC_FOLDER_ICON_CHOICES = ['ti-folder', 'ti-heart', 'ti-home', 'ti-coin', 'ti-briefcase', 'ti-plane', 'ti-ball-basketball', 'ti-school', 'ti-stethoscope', 'ti-car', 'ti-paw', 'ti-file-text', 'ti-shield-check', 'ti-gift', 'ti-tool', 'ti-users', 'ti-camera', 'ti-book'];
+function docFolderColor(folderId) {
+  if (!folderId) return CATEGORY_COLOR_PALETTE[0];
+  let hash = 0;
+  for (let i = 0; i < folderId.length; i++) hash = (hash * 31 + folderId.charCodeAt(i)) | 0;
+  return CATEGORY_COLOR_PALETTE[Math.abs(hash) % CATEGORY_COLOR_PALETTE.length];
+}
+
+async function getActiveDocFolders() { return (await DB.getAll('docFolders')).filter((r) => !r.deleted); }
+
+async function renderDocFoldersManager() {
+  const folders = (await getActiveDocFolders()).sort((a, b) => a.name.localeCompare(b.name));
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='main';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Documents</span></div>
+    <button class="btn btn-primary" style="margin-bottom:18px" onclick="goAddDocFolder()"><i class="ti ti-plus"></i> Add folder</button>
+    ${folders.length ? `
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px 10px">
+        ${folders.map((f) => { const color = docFolderColor(f.id); const count = (f.fileLinks || []).length; return `
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="goEditDocFolder('${f.id}')">
+            <div style="width:68px;height:56px;border-radius:10px;display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:8px">
+              <i class="ti ti-folder-filled" style="font-size:56px;position:absolute;top:0;left:0;width:100%;height:100%;color:${color}"></i>
+              <div style="position:relative;z-index:1;width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,0.88);display:flex;align-items:center;justify-content:center;margin-top:6px"><i class="ti ${f.icon || 'ti-folder'}" style="font-size:13px;color:${color}"></i></div>
+            </div>
+            <div style="font-size:13px;font-weight:600">${esc(f.name)}</div>
+            <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">${count ? count + ' file' + (count===1?'':'s') : 'Empty'}</div>
+          </div>
+        `; }).join('')}
+      </div>
+    ` : '<div class="empty-state">No folders yet — add one to start storing files.</div>'}
+  `;
+}
+
+function goAddDocFolder() {
+  docFolderEditId = null; docFileDrafts = []; currentDocFolderName = ''; window.__docFolderIconDraft = null;
+  photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
+  moreView = 'docFolderForm'; renderMore();
+}
+function goEditDocFolder(id) {
+  docFolderEditId = id; docFileDrafts = [];
+  photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
+  moreView = 'docFolderForm'; renderMore();
+}
+
+function selectDocFolderIcon(icon) {
+  window.__docFolderIconDraft = icon;
+  document.querySelectorAll('#docFolderIconPicker button').forEach((b) => { b.style.background = (b.dataset.icon === icon) ? 'var(--gold-soft)' : 'var(--surface-raised)'; });
+}
+
+async function renderDocFolderForm() {
+  const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
+  currentDocFolderName = existing ? existing.name : '';
+  window.__docFolderIconDraft = existing ? (existing.icon || 'ti-folder') : 'ti-folder';
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='docFolders';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} folder</span></div>
+
+    <label class="field-label">Folder name</label>
+    <input id="docFolder_name" value="${esc(existing ? existing.name : '')}" oninput="currentDocFolderName=this.value" style="margin-bottom:4px">
+    ${existing ? `<p style="font-size:11px;color:var(--ink-soft);margin:0 0 16px">Renaming won't move files already uploaded under the old name — only new files land in the renamed Drive folder.</p>` : `<div style="margin-bottom:16px"></div>`}
+
+    <label class="field-label">Icon</label>
+    <div id="docFolderIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;max-height:130px;overflow-y:auto;padding:4px;border:1px solid var(--line);border-radius:12px">
+      ${DOC_FOLDER_ICON_CHOICES.map((ic) => `<button type="button" data-icon="${ic}" onclick="selectDocFolderIcon('${ic}')" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === window.__docFolderIconDraft ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
+    </div>
+
+    ${renderExistingLinksGrid(existing && existing.fileLinks, 'docFolder', 'Files')}
+    <label class="field-label">Add files</label>
+    <div class="photo-grid" id="docsPhotoGrid" style="margin-bottom:16px">${renderPhotoGrid(docFileDrafts, 'docs')}</div>
+
+    <button class="btn btn-primary" onclick="saveDocFolder()">Save folder</button>
+    ${existing ? `<button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-top:10px" onclick="deleteDocFolder('${existing.id}')"><i class="ti ti-trash"></i> Delete folder</button>` : ''}
+  `;
+}
+
+async function saveDocFolder() {
+  const name = document.getElementById('docFolder_name').value.trim();
+  if (!name) { alert('Give the folder a name.'); return; }
+  const failedCount = countFailedUploads('docs');
+  if (failedCount && !confirm(`${failedCount} file${failedCount === 1 ? '' : 's'} failed to upload and won't be saved. Continue anyway?`)) return;
+  await waitForPendingUploads('docs');
+  const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
+  const folder = {
+    id: existing ? existing.id : uid(),
+    name,
+    icon: window.__docFolderIconDraft || 'ti-folder',
+    fileLinks: [...keptExistingLinks(existing && existing.fileLinks ? existing.fileLinks : [], 'docFolder'), ...photoUploadLinks.docs.filter(Boolean)],
+    synced: false
+  };
+  await DB.put('docFolders', folder);
+  Sync.pushEntry('DocFolders', folder).then(() => { folder.synced = true; DB.put('docFolders', folder); });
+  docFileDrafts = []; photoUploadLinks.docs = []; existingLinksRemoved.docFolder = []; docFolderEditId = null;
+  moreView = 'docFolders';
+  renderMore();
+}
+
+async function deleteDocFolder(id) {
+  if (!confirm('Delete this folder from Homebase? Files already uploaded stay safely in your Google Drive — this only removes the folder and its file list from the app.')) return;
+  const folder = await DB.get('docFolders', id);
+  folder.deleted = true;
+  folder.synced = false;
+  await DB.put('docFolders', folder);
+  Sync.pushEntry('DocFolders', folder).then(() => DB.put('docFolders', folder));
+  moreView = 'docFolders';
   renderMore();
 }
 

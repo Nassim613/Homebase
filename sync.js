@@ -19,7 +19,8 @@ const SYNC_JOBS = [
   { store: 'vetClinics', sheet: 'VetClinics', strip: [] },
   { store: 'garagePlaces', sheet: 'Places', strip: [] },
   { store: 'recurring', sheet: 'Recurring', strip: [] },
-  { store: 'passwords', sheet: 'Passwords', strip: [] }
+  { store: 'passwords', sheet: 'Passwords', strip: [] },
+  { store: 'docFolders', sheet: 'DocFolders', strip: [] }
 ];
 
 const Sync = {
@@ -330,7 +331,7 @@ const Sync = {
   // "Homebase Photos/<folder>". Returns the embeddable thumbnail URL on success,
   // or null on failure (offline, no Sheet URL set, etc) — callers should fall back
   // to the local-only copy in that case, nothing is lost either way.
-  async uploadPhoto(dataUrl, folder, fileName) {
+  async uploadPhoto(dataUrl, folder, fileName, rootFolder) {
     const url = await this.getUrl();
     if (!url) return { ok: false, error: 'Not connected to a Sheet' };
     if (!navigator.onLine) return { ok: false, error: 'Device is offline' };
@@ -340,7 +341,7 @@ const Sync = {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName, token })
+        body: JSON.stringify({ action: 'uploadPhoto', dataUrl, folder, fileName, rootFolder, token })
       });
       if (!res.ok) return { ok: false, error: `Server responded ${res.status}` };
       const data = await res.json();
