@@ -3486,13 +3486,19 @@ async function renderDocFoldersManager() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='main';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Documents</span></div>
     <button class="btn btn-primary" style="margin-bottom:18px" onclick="goAddDocFolder()"><i class="ti ti-plus"></i> Add folder</button>
     ${folders.length ? `
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px 10px">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px">
         ${folders.map((f) => { const color = docFolderColor(f.id); const count = (f.fileLinks || []).length; return `
           <div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="goViewDocFolder('${f.id}')">
-            <div style="width:68px;height:56px;border-radius:10px;display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:8px">
-              <i class="ti ti-folder-filled" style="font-size:56px;position:absolute;top:0;left:0;width:100%;height:100%;color:${color}"></i>
-              <div style="position:relative;z-index:1;width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,0.88);display:flex;align-items:center;justify-content:center;margin-top:6px"><i class="ti ${f.icon || 'ti-folder'}" style="font-size:13px;color:${color}"></i></div>
-            </div>
+            ${f.coverImage ? `
+              <div style="width:100%;aspect-ratio:1;border-radius:16px;position:relative;margin-bottom:8px;overflow:hidden;box-shadow:var(--shadow)">
+                <img src="${f.coverImage}" style="width:100%;height:100%;object-fit:cover;display:block">
+                <div style="position:absolute;bottom:-4px;right:-4px;width:26px;height:26px;border-radius:50%;background:#fff;border:2px solid var(--surface);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(43,38,64,0.2)"><i class="ti ${f.icon || 'ti-folder'}" style="font-size:13px;color:${color}"></i></div>
+              </div>
+            ` : `
+              <div style="width:100%;aspect-ratio:1;border-radius:16px;margin-bottom:8px;background:${color}22;display:flex;align-items:center;justify-content:center">
+                <i class="ti ti-folder-filled" style="font-size:34px;color:${color}"></i>
+              </div>
+            `}
             <div style="font-size:13px;font-weight:600">${esc(f.name)}</div>
             <div style="font-size:11px;color:var(--ink-soft);margin-top:1px">${count ? count + ' file' + (count===1?'':'s') : 'Empty'}</div>
           </div>
@@ -3540,11 +3546,13 @@ async function renderDocFolderView() {
 
 function goAddDocFolder() {
   docFolderEditId = null; docFileDrafts = []; docFileNameOverrides = []; docExistingNameEdits = {}; currentDocFolderName = ''; window.__docFolderIconDraft = null;
+  docFolderCoverDraft = null; docFolderCoverFile = null; docFolderCoverDriveUrl = null; docFolderCoverUploading = false; docFolderCoverUploadError = null;
   photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
   moreView = 'docFolderForm'; renderMore();
 }
 function goEditDocFolder(id) {
   docFolderEditId = id; docFileDrafts = []; docFileNameOverrides = []; docExistingNameEdits = {};
+  docFolderCoverDraft = null; docFolderCoverFile = null; docFolderCoverDriveUrl = null; docFolderCoverUploading = false; docFolderCoverUploadError = null;
   photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
   moreView = 'docFolderForm'; renderMore();
 }
@@ -3560,6 +3568,44 @@ function selectDocFolderIcon(icon) {
 // field is editable immediately instead of appearing only after the upload completes.
 let docExistingNameEdits = {};
 let docFileNameOverrides = [];
+let docFolderCoverDraft = null;
+let docFolderCoverFile = null;
+let docFolderCoverDriveUrl = null;
+let docFolderCoverUploading = false;
+let docFolderCoverUploadError = null;
+
+function removeDocFolderCover() {
+  docFolderCoverDraft = null; docFolderCoverFile = null; docFolderCoverDriveUrl = null; docFolderCoverUploadError = null;
+  updateDocFolderCoverSection();
+}
+function renderDocFolderCoverSection() {
+  return `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div class="photo-slot" style="width:90px;height:90px" onclick="document.getElementById('docFolderCoverInput').click()">
+        ${docFolderCoverUploading ? `<i class="ti ti-loader-2"></i>` : (docFolderCoverDriveUrl ? `<img src="${docFolderCoverDriveUrl}">` : docFolderCoverDraft ? `<img src="${docFolderCoverDraft}">` : '<i class="ti ti-photo" style="font-size:24px"></i>')}
+      </div>
+      ${(docFolderCoverDriveUrl || docFolderCoverDraft) && !docFolderCoverUploading ? `<button type="button" class="btn" style="width:auto;padding:8px 14px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="removeDocFolderCover()">Remove</button>` : ''}
+    </div>
+    <p id="docFolderCoverStatus" style="font-size:11px;color:${docFolderCoverUploadError ? 'var(--red)' : 'var(--ink-soft)'};margin-bottom:16px">${docFolderCoverUploading ? 'Uploading to Drive…' : docFolderCoverDriveUrl ? 'Saved to Drive — visible on every device' : docFolderCoverDraft ? 'Not uploaded yet — saves to Drive when you tap Save folder.' : (docFolderCoverUploadError ? 'Upload failed: ' + esc(docFolderCoverUploadError) : 'No cover image — the folder shows its icon instead.')}</p>
+    <input type="file" id="docFolderCoverInput" accept="image/*" style="display:none" onchange="handleDocFolderCoverUpload(event)">
+  `;
+}
+function updateDocFolderCoverSection() {
+  const el = document.getElementById('docFolderCoverArea');
+  if (el) el.innerHTML = renderDocFolderCoverSection();
+}
+function handleDocFolderCoverUpload(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    docFolderCoverDraft = await compressImageDataUrl(reader.result);
+    docFolderCoverFile = f;
+    docFolderCoverDriveUrl = null;
+    docFolderCoverUploadError = null;
+    updateDocFolderCoverSection();
+  };
+  reader.readAsDataURL(f);
+}
 
 // Documents-specific version of the shared "existing files" grid — adds a type badge,
 // tap-to-open, and an editable name field per file. Kept separate from
@@ -3625,6 +3671,7 @@ async function renderDocFolderForm() {
   const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
   currentDocFolderName = existing ? existing.name : '';
   window.__docFolderIconDraft = existing ? (existing.icon || 'ti-folder') : 'ti-folder';
+  if (existing && existing.coverImage) docFolderCoverDriveUrl = existing.coverImage;
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${existing ? `goViewDocFolder('${existing.id}')` : "moreView='docFolders';renderMore()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} folder</span></div>
 
@@ -3632,7 +3679,10 @@ async function renderDocFolderForm() {
     <input id="docFolder_name" value="${esc(existing ? existing.name : '')}" oninput="currentDocFolderName=this.value" style="margin-bottom:4px">
     ${existing ? `<p style="font-size:11px;color:var(--ink-soft);margin:0 0 16px">Renaming won't move files already uploaded under the old name — only new files land in the renamed Drive folder.</p>` : `<div style="margin-bottom:16px"></div>`}
 
-    <label class="field-label">Icon</label>
+    <label class="field-label">Cover image (optional)</label>
+    <div id="docFolderCoverArea">${renderDocFolderCoverSection()}</div>
+
+    <label class="field-label">Icon <span style="font-weight:400;color:var(--ink-soft);text-transform:none">— shown as a small badge on the cover image, or full-size if there's no cover</span></label>
     <div id="docFolderIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;max-height:130px;overflow-y:auto;padding:4px;border:1px solid var(--line);border-radius:12px">
       ${DOC_FOLDER_ICON_CHOICES.map((ic) => `<button type="button" data-icon="${ic}" onclick="selectDocFolderIcon('${ic}')" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === window.__docFolderIconDraft ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
     </div>
@@ -3642,7 +3692,7 @@ async function renderDocFolderForm() {
     <div class="photo-grid" id="docsPhotoGrid" style="margin-bottom:8px">${renderDocNewFilesGrid()}</div>
     <p style="font-size:11px;color:var(--ink-soft);margin:0 0 16px">Tap a file to open it, or its name to rename it.</p>
 
-    <button class="btn btn-primary" onclick="saveDocFolder()">Save folder</button>
+    <button class="btn btn-primary" id="saveDocFolderBtn" onclick="saveDocFolder()">Save folder</button>
     ${existing ? `<button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-top:10px" onclick="deleteDocFolder('${existing.id}')"><i class="ti ti-trash"></i> Delete folder</button>` : ''}
   `;
 }
@@ -3652,6 +3702,27 @@ async function saveDocFolder() {
   if (!name) { alert('Give the folder a name.'); return; }
   const failedCount = countFailedUploads('docs');
   if (failedCount && !confirm(`${failedCount} file${failedCount === 1 ? '' : 's'} failed to upload and won't be saved. Continue anyway?`)) return;
+
+  const btn = document.getElementById('saveDocFolderBtn');
+  if (docFolderCoverDraft && !docFolderCoverDriveUrl && !docFolderCoverUploading) {
+    docFolderCoverUploading = true;
+    updateDocFolderCoverSection();
+    if (btn) { btn.disabled = true; btn.textContent = 'Uploading cover image…'; }
+    const result = await Sync.uploadPhoto(docFolderCoverDraft, name || 'Cover', (docFolderCoverFile && docFolderCoverFile.name) || 'cover', 'Homebase Documents');
+    docFolderCoverUploading = false;
+    if (result.ok) {
+      docFolderCoverDriveUrl = result.url;
+    } else {
+      docFolderCoverUploadError = result.error;
+      updateDocFolderCoverSection();
+      if (btn) { btn.disabled = false; btn.textContent = 'Save folder'; }
+      alert(`The cover image couldn't be uploaded: ${result.error}. Fix the connection and try Save again, or remove the cover image to save without it.`);
+      return;
+    }
+    updateDocFolderCoverSection();
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save folder'; }
+
   await waitForPendingUploads('docs');
   const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
   // Apply any renames typed in this session onto the existing (kept) links, keyed by
@@ -3669,12 +3740,14 @@ async function saveDocFolder() {
     id: existing ? existing.id : uid(),
     name,
     icon: window.__docFolderIconDraft || 'ti-folder',
+    coverImage: docFolderCoverDriveUrl || null,
     fileLinks: [...keptWithNames, ...newLinks],
     synced: false
   };
   await DB.put('docFolders', folder);
   Sync.pushEntry('DocFolders', folder).then(() => { folder.synced = true; DB.put('docFolders', folder); });
   docFileDrafts = []; photoUploadLinks.docs = []; existingLinksRemoved.docFolder = []; docExistingNameEdits = {}; docFileNameOverrides = []; docFolderEditId = null;
+  docFolderCoverDraft = null; docFolderCoverFile = null; docFolderCoverDriveUrl = null; docFolderCoverUploadError = null;
   moreView = 'docFolders';
   renderMore();
 }
