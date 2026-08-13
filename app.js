@@ -2842,7 +2842,8 @@ function handlePhotoUpload(e, prefix) {
       const idx = target.length;
       target.push(dataUrl);
       if (photoUploadStatus[prefix]) photoUploadStatus[prefix][idx] = 'pending';
-      if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = renderPhotoGrid(target, prefix); }
+      if (prefix === 'docs') docFileNameOverrides[idx] = f.name ? f.name.replace(/\.[^/.]+$/, '') : 'Untitled'; // strip extension — it's implied by the type badge
+      if (--remaining === 0) { const g = document.getElementById(prefix + 'PhotoGrid'); if (g) g.innerHTML = prefix === 'docs' ? renderDocNewFilesGrid() : renderPhotoGrid(target, prefix); }
       if (uploadFolder) {
         const uploadPromise = Sync.uploadPhoto(dataUrl, uploadFolder, f.name || 'photo', uploadRoot).then((result) => {
           if (result.ok) {
@@ -2853,7 +2854,7 @@ function handlePhotoUpload(e, prefix) {
             if (photoUploadErrors[prefix]) photoUploadErrors[prefix][idx] = result.error;
           }
           const g = document.getElementById(prefix + 'PhotoGrid');
-          if (g) g.innerHTML = renderPhotoGrid(target, prefix);
+          if (g) g.innerHTML = prefix === 'docs' ? renderDocNewFilesGrid() : renderPhotoGrid(target, prefix);
         });
         if (pendingPhotoUploads[prefix]) pendingPhotoUploads[prefix].push(uploadPromise);
       }
@@ -2870,8 +2871,9 @@ function removeDraftPhoto(prefix, index) {
   if (photoUploadStatus[prefix]) photoUploadStatus[prefix].splice(index, 1);
   if (photoUploadLinks[prefix]) photoUploadLinks[prefix].splice(index, 1);
   if (photoUploadErrors[prefix]) photoUploadErrors[prefix].splice(index, 1);
+  if (prefix === 'docs') docFileNameOverrides.splice(index, 1);
   const g = document.getElementById(prefix + 'PhotoGrid');
-  if (g) g.innerHTML = renderPhotoGrid(target, prefix);
+  if (g) g.innerHTML = prefix === 'docs' ? renderDocNewFilesGrid() : renderPhotoGrid(target, prefix);
 }
 // Moves a photo to the front — the first photo is what shows as the "main" one in lists.
 function setMainDraftPhoto(prefix, index) {
@@ -3308,7 +3310,7 @@ async function logJazzWeighIn() {
 }
 
 // ============ MORE / SETTINGS MODULE ============
-let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes | passwords | passwordForm | docFolders | docFolderForm
+let moreView = 'main'; // main | carsProjects | expenseRepairTypes | syncData | issueTypes | passwords | passwordForm | docFolders | docFolderView | docFolderForm
 let passwordFormEditId = null;
 let passwordRevealed = {}; // password id -> true while its value is shown in plain text on the list
 let docFolderEditId = null;
@@ -3327,6 +3329,7 @@ async function renderMore() {
   if (moreView === 'passwords') return renderPasswordsManager();
   if (moreView === 'passwordForm') return renderPasswordForm();
   if (moreView === 'docFolders') return renderDocFoldersManager();
+  if (moreView === 'docFolderView') return renderDocFolderView();
   if (moreView === 'docFolderForm') return renderDocFolderForm();
 
   $main.innerHTML = `
@@ -3485,7 +3488,7 @@ async function renderDocFoldersManager() {
     ${folders.length ? `
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px 10px">
         ${folders.map((f) => { const color = docFolderColor(f.id); const count = (f.fileLinks || []).length; return `
-          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="goEditDocFolder('${f.id}')">
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="goViewDocFolder('${f.id}')">
             <div style="width:68px;height:56px;border-radius:10px;display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:8px">
               <i class="ti ti-folder-filled" style="font-size:56px;position:absolute;top:0;left:0;width:100%;height:100%;color:${color}"></i>
               <div style="position:relative;z-index:1;width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,0.88);display:flex;align-items:center;justify-content:center;margin-top:6px"><i class="ti ${f.icon || 'ti-folder'}" style="font-size:13px;color:${color}"></i></div>
@@ -3499,13 +3502,49 @@ async function renderDocFoldersManager() {
   `;
 }
 
+let currentViewDocFolderId = null;
+function goViewDocFolder(id) { currentViewDocFolderId = id; moreView = 'docFolderView'; renderMore(); }
+
+// Clean, read-only browsing page — the default when you tap a folder. Editing (rename,
+// icon, add/remove/rename files, delete) lives on a separate page, reached via the
+// pencil icon here, so browsing never has to wade through edit-mode chrome.
+async function renderDocFolderView() {
+  const folder = await DB.get('docFolders', currentViewDocFolderId);
+  const color = docFolderColor(folder.id);
+  const links = folder.fileLinks || [];
+  $main.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="moreView='docFolders';renderMore()">
+        <i class="ti ti-arrow-left" style="font-size:20px"></i>
+        <i class="ti ti-folder-filled" style="color:${color};font-size:20px"></i>
+        <span style="font-family:'Fraunces',serif;font-size:17px">${esc(folder.name)}</span>
+      </div>
+      <button class="btn" style="width:36px;height:36px;padding:0;flex-shrink:0" onclick="goEditDocFolder('${folder.id}')"><i class="ti ti-pencil"></i></button>
+    </div>
+    <p style="font-size:12px;color:var(--ink-soft);margin:0 0 18px">${links.length} file${links.length === 1 ? '' : 's'}</p>
+    ${links.length ? `
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+        ${links.map((l) => `
+          <a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;border-radius:14px;overflow:hidden;background:var(--surface-raised);box-shadow:var(--shadow);display:block">
+            <div style="aspect-ratio:1;background:#fff;position:relative;display:flex;align-items:center;justify-content:center">
+              ${l.isImage ? `<img src="${l.url}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ti-file-type-pdf" style="font-size:34px;color:var(--red)"></i>`}
+              <div style="position:absolute;top:6px;left:6px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;background:rgba(43,38,64,0.75);color:#fff">${l.isImage ? 'IMAGE' : 'PDF'}</div>
+            </div>
+            <div style="padding:8px 10px;font-size:12px;font-weight:600">${esc(l.name || 'Untitled')}</div>
+          </a>
+        `).join('')}
+      </div>
+    ` : '<div class="empty-state">No files yet — tap the pencil to add some.</div>'}
+  `;
+}
+
 function goAddDocFolder() {
-  docFolderEditId = null; docFileDrafts = []; currentDocFolderName = ''; window.__docFolderIconDraft = null;
+  docFolderEditId = null; docFileDrafts = []; docFileNameOverrides = []; docExistingNameEdits = {}; currentDocFolderName = ''; window.__docFolderIconDraft = null;
   photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
   moreView = 'docFolderForm'; renderMore();
 }
 function goEditDocFolder(id) {
-  docFolderEditId = id; docFileDrafts = [];
+  docFolderEditId = id; docFileDrafts = []; docFileNameOverrides = []; docExistingNameEdits = {};
   photoUploadLinks.docs = []; pendingPhotoUploads.docs = []; photoUploadStatus.docs = []; photoUploadErrors.docs = []; existingLinksRemoved.docFolder = [];
   moreView = 'docFolderForm'; renderMore();
 }
@@ -3515,12 +3554,79 @@ function selectDocFolderIcon(icon) {
   document.querySelectorAll('#docFolderIconPicker button').forEach((b) => { b.style.background = (b.dataset.icon === icon) ? 'var(--gold-soft)' : 'var(--surface-raised)'; });
 }
 
+// docExistingNameEdits: index (into folder.fileLinks) -> edited name, applied on Save.
+// docFileNameOverrides: index-aligned with docFileDrafts, same idea for newly-added files
+// — set as soon as a file is picked (not just once its upload finishes), so the name
+// field is editable immediately instead of appearing only after the upload completes.
+let docExistingNameEdits = {};
+let docFileNameOverrides = [];
+
+// Documents-specific version of the shared "existing files" grid — adds a type badge,
+// tap-to-open, and an editable name field per file. Kept separate from
+// renderExistingLinksGrid (used by Jazz/Vehicle/Garage) so those stay exactly as they
+// are; Documents just has richer needs (naming, in particular) that don't apply there.
+function renderDocExistingFilesGrid(links) {
+  if (!links || !links.length) return '';
+  const visible = links.map((l, i) => ({ l, i })).filter(({ i }) => !existingLinksRemoved.docFolder.includes(i));
+  if (!visible.length) return '';
+  return `
+    <label class="field-label">Files</label>
+    <div class="photo-grid" style="margin-bottom:4px">
+      ${visible.map(({ l, i }) => `
+        <div>
+          <div class="photo-slot" style="position:relative">
+            <a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;height:100%;width:100%">
+              ${l.isImage ? `<img src="${l.url}">` : `<i class="ti ti-file-type-pdf" style="font-size:26px;color:var(--red)"></i>`}
+            </a>
+            <div style="position:absolute;top:4px;left:4px;font-size:8px;font-weight:700;padding:2px 5px;border-radius:5px;background:rgba(43,38,64,0.75);color:#fff">${l.isImage ? 'IMAGE' : 'PDF'}</div>
+            <div onclick="removeExistingLink('docFolder', ${i})" style="position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);display:flex;align-items:center;justify-content:center;cursor:pointer"><i class="ti ti-x" style="color:white;font-size:13px"></i></div>
+          </div>
+          <input value="${esc(docExistingNameEdits[i] !== undefined ? docExistingNameEdits[i] : (l.name || ''))}" oninput="docExistingNameEdits[${i}]=this.value" style="width:100%;font-size:11px;border:none;border-bottom:1px solid var(--line);background:transparent;padding:4px 2px;margin-top:4px;text-align:center">
+        </div>
+      `).join('')}
+    </div>
+    <div style="margin-bottom:12px"></div>
+  `;
+}
+
+// Documents-specific version of renderPhotoGrid — same status tracking underneath
+// (photoUploadStatus/photoUploadLinks), but adds a visible status badge for every state
+// (not just failures), a type badge, and an editable name per file.
+function renderDocNewFilesGrid() {
+  const statuses = photoUploadStatus.docs || [];
+  const errors = photoUploadErrors.docs || [];
+  let html = docFileDrafts.map((d, i) => {
+    const status = statuses[i] || 'pending';
+    const isImage = d.startsWith('data:image/');
+    const link = photoUploadLinks.docs[i];
+    const statusBadge = status === 'ok'
+      ? `<div style="position:absolute;bottom:4px;left:4px;width:18px;height:18px;border-radius:50%;background:#0F6E56;display:flex;align-items:center;justify-content:center"><i class="ti ti-check" style="color:#fff;font-size:11px"></i></div>`
+      : status === 'failed'
+        ? `<button type="button" onclick="alert('Upload failed: ${esc((errors[i] || 'unknown reason').replace(/'/g, "\\'"))}')" title="Tap for the reason" style="position:absolute;bottom:4px;left:4px;width:18px;height:18px;border-radius:50%;background:var(--red);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-alert-triangle" style="color:#fff;font-size:11px"></i></button>`
+        : `<div style="position:absolute;bottom:4px;left:4px;width:18px;height:18px;border-radius:50%;background:rgba(43,38,64,0.75);display:flex;align-items:center;justify-content:center"><i class="ti ti-loader-2" style="color:#fff;font-size:10px;animation:spin 1s linear infinite"></i></div>`;
+    return `
+      <div>
+        <div class="photo-slot" style="position:relative;${status==='pending'?'opacity:0.75;border-style:dashed':''}">
+          ${link ? `<a href="${link.viewUrl || link.url}" target="_blank" rel="noopener" style="display:block;height:100%;width:100%">${isImage ? `<img src="${d}">` : `<div style="display:flex;align-items:center;justify-content:center;height:100%"><i class="ti ti-file-type-pdf" style="font-size:26px;color:var(--red)"></i></div>`}</a>` : (isImage ? `<img src="${d}">` : `<div style="display:flex;align-items:center;justify-content:center;height:100%"><i class="ti ti-file-type-pdf" style="font-size:26px;color:var(--red)"></i></div>`)}
+          <div style="position:absolute;top:4px;left:4px;font-size:8px;font-weight:700;padding:2px 5px;border-radius:5px;background:rgba(43,38,64,0.75);color:#fff">${isImage ? 'IMAGE' : 'PDF'}</div>
+          ${statusBadge}
+          <button type="button" title="Remove" onclick="removeDraftPhoto('docs',${i})" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-x" style="color:white;font-size:12px"></i></button>
+        </div>
+        <input value="${esc(docFileNameOverrides[i] || '')}" oninput="docFileNameOverrides[${i}]=this.value" style="width:100%;font-size:11px;border:none;border-bottom:1px solid var(--line);background:transparent;padding:4px 2px;margin-top:4px;text-align:center">
+      </div>
+    `;
+  }).join('');
+  if (docFileDrafts.length < 6) html += `<div class="photo-slot" onclick="document.getElementById('docsFileInput').click()"><i class="ti ti-plus"></i></div>`;
+  html += `<input type="file" id="docsFileInput" accept="image/*,.pdf" multiple style="display:none" onchange="handlePhotoUpload(event,'docs')">`;
+  return html;
+}
+
 async function renderDocFolderForm() {
   const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
   currentDocFolderName = existing ? existing.name : '';
   window.__docFolderIconDraft = existing ? (existing.icon || 'ti-folder') : 'ti-folder';
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='docFolders';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} folder</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${existing ? `goViewDocFolder('${existing.id}')` : "moreView='docFolders';renderMore()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} folder</span></div>
 
     <label class="field-label">Folder name</label>
     <input id="docFolder_name" value="${esc(existing ? existing.name : '')}" oninput="currentDocFolderName=this.value" style="margin-bottom:4px">
@@ -3531,9 +3637,10 @@ async function renderDocFolderForm() {
       ${DOC_FOLDER_ICON_CHOICES.map((ic) => `<button type="button" data-icon="${ic}" onclick="selectDocFolderIcon('${ic}')" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === window.__docFolderIconDraft ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
     </div>
 
-    ${renderExistingLinksGrid(existing && existing.fileLinks, 'docFolder', 'Files')}
+    ${renderDocExistingFilesGrid(existing && existing.fileLinks)}
     <label class="field-label">Add files</label>
-    <div class="photo-grid" id="docsPhotoGrid" style="margin-bottom:16px">${renderPhotoGrid(docFileDrafts, 'docs')}</div>
+    <div class="photo-grid" id="docsPhotoGrid" style="margin-bottom:8px">${renderDocNewFilesGrid()}</div>
+    <p style="font-size:11px;color:var(--ink-soft);margin:0 0 16px">Tap a file to open it, or its name to rename it.</p>
 
     <button class="btn btn-primary" onclick="saveDocFolder()">Save folder</button>
     ${existing ? `<button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-top:10px" onclick="deleteDocFolder('${existing.id}')"><i class="ti ti-trash"></i> Delete folder</button>` : ''}
@@ -3547,16 +3654,27 @@ async function saveDocFolder() {
   if (failedCount && !confirm(`${failedCount} file${failedCount === 1 ? '' : 's'} failed to upload and won't be saved. Continue anyway?`)) return;
   await waitForPendingUploads('docs');
   const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
+  // Apply any renames typed in this session onto the existing (kept) links, keyed by
+  // their ORIGINAL index so a rename always lands on the right file even after others
+  // have been removed.
+  const originalLinks = (existing && existing.fileLinks) || [];
+  const keptWithNames = originalLinks
+    .map((l, i) => ({ l, i }))
+    .filter(({ i }) => !existingLinksRemoved.docFolder.includes(i))
+    .map(({ l, i }) => ({ ...l, name: docExistingNameEdits[i] !== undefined ? docExistingNameEdits[i] : l.name }));
+  // ...and any typed names onto the newly-uploaded links.
+  const newLinks = photoUploadLinks.docs.filter(Boolean).map((l, i) => ({ ...l, name: docFileNameOverrides[i] || l.name }));
+
   const folder = {
     id: existing ? existing.id : uid(),
     name,
     icon: window.__docFolderIconDraft || 'ti-folder',
-    fileLinks: [...keptExistingLinks(existing && existing.fileLinks ? existing.fileLinks : [], 'docFolder'), ...photoUploadLinks.docs.filter(Boolean)],
+    fileLinks: [...keptWithNames, ...newLinks],
     synced: false
   };
   await DB.put('docFolders', folder);
   Sync.pushEntry('DocFolders', folder).then(() => { folder.synced = true; DB.put('docFolders', folder); });
-  docFileDrafts = []; photoUploadLinks.docs = []; existingLinksRemoved.docFolder = []; docFolderEditId = null;
+  docFileDrafts = []; photoUploadLinks.docs = []; existingLinksRemoved.docFolder = []; docExistingNameEdits = {}; docFileNameOverrides = []; docFolderEditId = null;
   moreView = 'docFolders';
   renderMore();
 }
