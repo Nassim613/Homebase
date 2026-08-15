@@ -2963,7 +2963,7 @@ async function renderIssueTypeModal() {
     <div id="itypeIconPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
       ${ISSUE_ICON_CHOICES.map((ic) => `<button type="button" onclick="selectIssueTypeIcon('${ic}', event)" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);background:${ic === issueTypeModalIcon ? 'var(--rose-soft)' : 'var(--surface-raised)'}"><i class="ti ${ic}"></i></button>`).join('')}
     </div>
-    <button class="btn btn-primary" style="margin-bottom:10px" onclick="saveIssueTypeModal()">Save</button>
+    <button class="btn btn-primary" id="saveIssueTypeBtn" style="margin-bottom:10px" onclick="saveIssueTypeModal()">Save</button>
     ${existing ? `<button class="btn" style="margin-bottom:10px;background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="hideIssueTypeModal('${existing.id}')">Hide from list</button>` : ''}
     <button class="btn" onclick="closeModal()">Cancel</button>
   `;
@@ -2973,15 +2973,24 @@ function selectIssueTypeIcon(ic, evt) {
   document.querySelectorAll('#itypeIconPicker button').forEach((b) => { b.style.background = 'var(--surface-raised)'; });
   if (evt && evt.currentTarget) evt.currentTarget.style.background = 'var(--rose-soft)';
 }
+let issueTypeSaving = false;
 async function saveIssueTypeModal() {
+  if (issueTypeSaving) return;
   const name = document.getElementById('itype_name').value.trim();
   if (!name) { alert('Issue type needs a name.'); return; }
+  const all = await DB.getAll('issueTypes');
+  const dupe = all.find((t) => !t.hidden && t.name.trim().toLowerCase() === name.toLowerCase() && t.id !== issueTypeModalEditId);
+  if (dupe && !confirm(`"${dupe.name}" already exists as an issue type. Add another one with the same name anyway?`)) return;
+  issueTypeSaving = true;
+  const btn = document.getElementById('saveIssueTypeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const t = issueTypeModalEditId ? await DB.get('issueTypes', issueTypeModalEditId) : { id: uid(), hidden: false };
   t.name = name;
   t.icon = issueTypeModalIcon;
   t.synced = false;
   await DB.put('issueTypes', t);
   Sync.pushEntry('IssueTypes', t).then(() => DB.put('issueTypes', t));
+  issueTypeSaving = false;
   closeModal();
   if (issueTypeModalReturnToAdd) {
     renderAddIssue().then(() => { const sel = document.getElementById('j_type'); if (sel) sel.value = t.id; });
@@ -3697,17 +3706,21 @@ async function renderDocFolderForm() {
   `;
 }
 
+let docFolderSaving = false; // re-entrancy guard — without this, tapping "Save folder" twice while it's mid-upload (no visible feedback otherwise) fires two overlapping saves that can each independently decide "no existing row yet" and both append, producing two live Sheet rows sharing the same ID instead of one row being updated
 async function saveDocFolder() {
+  if (docFolderSaving) return;
   const name = document.getElementById('docFolder_name').value.trim();
   if (!name) { alert('Give the folder a name.'); return; }
   const failedCount = countFailedUploads('docs');
   if (failedCount && !confirm(`${failedCount} file${failedCount === 1 ? '' : 's'} failed to upload and won't be saved. Continue anyway?`)) return;
 
+  docFolderSaving = true;
   const btn = document.getElementById('saveDocFolderBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   if (docFolderCoverDraft && !docFolderCoverDriveUrl && !docFolderCoverUploading) {
     docFolderCoverUploading = true;
     updateDocFolderCoverSection();
-    if (btn) { btn.disabled = true; btn.textContent = 'Uploading cover image…'; }
+    if (btn) { btn.textContent = 'Uploading cover image…'; }
     const result = await Sync.uploadPhoto(docFolderCoverDraft, name || 'Cover', (docFolderCoverFile && docFolderCoverFile.name) || 'cover', 'Homebase Documents');
     docFolderCoverUploading = false;
     if (result.ok) {
@@ -3715,13 +3728,14 @@ async function saveDocFolder() {
     } else {
       docFolderCoverUploadError = result.error;
       updateDocFolderCoverSection();
+      docFolderSaving = false;
       if (btn) { btn.disabled = false; btn.textContent = 'Save folder'; }
       alert(`The cover image couldn't be uploaded: ${result.error}. Fix the connection and try Save again, or remove the cover image to save without it.`);
       return;
     }
     updateDocFolderCoverSection();
   }
-  if (btn) { btn.disabled = false; btn.textContent = 'Save folder'; }
+  if (btn) { btn.textContent = 'Saving…'; } // stays disabled straight through the rest of this — a second tap here is exactly what caused the duplicate-row bug
 
   await waitForPendingUploads('docs');
   const existing = docFolderEditId ? await DB.get('docFolders', docFolderEditId) : null;
@@ -3748,6 +3762,7 @@ async function saveDocFolder() {
   Sync.pushEntry('DocFolders', folder).then(() => { folder.synced = true; DB.put('docFolders', folder); });
   docFileDrafts = []; photoUploadLinks.docs = []; existingLinksRemoved.docFolder = []; docExistingNameEdits = {}; docFileNameOverrides = []; docFolderEditId = null;
   docFolderCoverDraft = null; docFolderCoverFile = null; docFolderCoverDriveUrl = null; docFolderCoverUploadError = null;
+  docFolderSaving = false;
   moreView = 'docFolders';
   renderMore();
 }
