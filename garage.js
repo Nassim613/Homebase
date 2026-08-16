@@ -329,8 +329,8 @@ let costEditId = null;
 function goAddCost() { costEditId = null; garagePhotoDrafts = []; photoUploadLinks.garage2 = []; pendingPhotoUploads.garage2 = []; photoUploadStatus.garage2 = []; photoUploadErrors.garage2 = []; existingLinksRemoved.cost = []; currentView = 'addCost'; route(); }
 async function renderAddCost() {
   const vehicle = await DB.get('vehicles', currentVehicleId);
-  const expenseTypes = await DB.getAll('expenseTypes');
-  const repairTypes = await DB.getAll('repairTypes');
+  const expenseTypes = (await DB.getAll('expenseTypes')).filter((t) => !t.deleted);
+  const repairTypes = (await DB.getAll('repairTypes')).filter((t) => !t.deleted);
   const places = await DB.getAll('garagePlaces');
   const existing = costEditId ? await DB.get('garageCosts', costEditId) : null;
   if (existing) garagePhotoDrafts = [...(existing.photos || [])];

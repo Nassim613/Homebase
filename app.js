@@ -2620,7 +2620,7 @@ function filterJazz(q, days, byDay, typeById) {
 }
 
 async function renderAddIssue() {
-  const issueTypes = (await DB.getAll('issueTypes')).filter((t) => !t.hidden);
+  const issueTypes = (await DB.getAll('issueTypes')).filter((t) => !t.hidden && !t.deleted);
   const vetClinics = await DB.getAll('vetClinics');
   const pastIssues = await DB.getAll('jazzIssues');
   const medHistory = [...new Set(pastIssues.map((i) => i.medName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -3010,13 +3010,102 @@ async function hideIssueTypeModal(id) {
 }
 
 let showHiddenIssueTypes = false;
+// Finds groups of same-named (case-insensitive, trimmed) records in a store, keeps ONE
+// per group as the "keeper" (preferring a non-hidden one, then whichever one is already
+// referenced by the most dependent records, to minimize how many need rewriting), points
+// every dependent record's reference field at the keeper instead, and only THEN deletes
+// the now-unreferenced duplicates for real — not just hides them. Reused for Jazz issue
+// types, Garage expense types, and Garage repair types; `dependents` describes every
+// place that stores an ID pointing at this entity.
+async function mergeDuplicatesByName(store, sheetName, dependents) {
+  const all = await DB.getAll(store);
+  const active = all.filter((r) => !r.deleted);
+  const groups = {};
+  active.forEach((r) => {
+    const key = (r.name || '').trim().toLowerCase();
+    if (!key) return;
+    (groups[key] = groups[key] || []).push(r);
+  });
+
+  let mergedGroups = 0, reassignedRecords = 0, deletedDuplicates = 0;
+
+  for (const key of Object.keys(groups)) {
+    const group = groups[key];
+    if (group.length < 2) continue;
+
+    // Count how many dependent records currently reference each candidate, so the
+    // keeper is whichever one needs the FEWEST records rewritten — pure efficiency,
+    // doesn't change the outcome, just less work done.
+    const refCounts = {};
+    for (const cand of group) refCounts[cand.id] = 0;
+    for (const dep of dependents) {
+      const records = await DB.getAll(dep.store);
+      records.forEach((rec) => { if (refCounts[rec[dep.field]] !== undefined) refCounts[rec[dep.field]]++; });
+    }
+    group.sort((a, b) => {
+      if (!!a.hidden !== !!b.hidden) return a.hidden ? 1 : -1; // prefer a visible one as keeper
+      return (refCounts[b.id] || 0) - (refCounts[a.id] || 0);
+    });
+    const keeper = group[0];
+    const dupes = group.slice(1);
+    if (!dupes.length) continue;
+    mergedGroups++;
+
+    for (const dep of dependents) {
+      const records = await DB.getAll(dep.store);
+      for (const rec of records) {
+        if (dupes.some((d) => d.id === rec[dep.field])) {
+          rec[dep.field] = keeper.id;
+          rec.synced = false;
+          await DB.put(dep.store, rec);
+          Sync.pushEntry(dep.sheet, rec).then(() => { rec.synced = true; DB.put(dep.store, rec); });
+          reassignedRecords++;
+        }
+      }
+    }
+
+    // Keeper stays visible even if it happened to be a hidden copy that just won on
+    // reference count — a merge shouldn't leave the survivor invisible.
+    if (keeper.hidden) { keeper.hidden = false; keeper.synced = false; await DB.put(store, keeper); Sync.pushEntry(sheetName, keeper).then(() => DB.put(store, keeper)); }
+
+    for (const dupe of dupes) {
+      dupe.deleted = true;
+      dupe.synced = false;
+      await DB.put(store, dupe);
+      Sync.pushEntry(sheetName, dupe).then(() => DB.put(store, dupe));
+      deletedDuplicates++;
+    }
+  }
+
+  return { mergedGroups, reassignedRecords, deletedDuplicates };
+}
+
+async function cleanUpIssueTypeDuplicates() {
+  if (!confirm('Merge duplicate issue types (same name)? Any Jazz entries using a duplicate get moved to the one kept, then the extras are permanently deleted — not just hidden.')) return;
+  const result = await mergeDuplicatesByName('issueTypes', 'IssueTypes', [{ store: 'jazzIssues', field: 'typeId', sheet: 'Jazz' }]);
+  alert(result.mergedGroups ? `Done. Merged ${result.mergedGroups} duplicate name${result.mergedGroups===1?'':'s'}, moved ${result.reassignedRecords} Jazz entr${result.reassignedRecords===1?'y':'ies'}, removed ${result.deletedDuplicates} duplicate type${result.deletedDuplicates===1?'':'s'}.` : 'No duplicates found — nothing to merge.');
+  renderIssueTypesManager();
+}
+
+async function cleanUpExpenseRepairDuplicates() {
+  if (!confirm('Merge duplicate expense AND repair types (same name)? Any Garage costs using a duplicate get moved to the one kept, then the extras are permanently deleted — not just hidden.')) return;
+  const expenseResult = await mergeDuplicatesByName('expenseTypes', 'ExpenseTypes', [{ store: 'garageCosts', field: 'expenseTypeId', sheet: 'GarageCosts' }]);
+  const repairResult = await mergeDuplicatesByName('repairTypes', 'RepairTypes', [{ store: 'garageCosts', field: 'repairTypeId', sheet: 'GarageCosts' }]);
+  const totalGroups = expenseResult.mergedGroups + repairResult.mergedGroups;
+  const totalReassigned = expenseResult.reassignedRecords + repairResult.reassignedRecords;
+  const totalDeleted = expenseResult.deletedDuplicates + repairResult.deletedDuplicates;
+  alert(totalGroups ? `Done. Merged ${totalGroups} duplicate name${totalGroups===1?'':'s'} across expense/repair types, moved ${totalReassigned} garage cost${totalReassigned===1?'':'s'}, removed ${totalDeleted} duplicate type${totalDeleted===1?'':'s'}.` : 'No duplicates found — nothing to merge.');
+  renderExpenseRepairManager();
+}
+
 async function renderIssueTypesManager() {
-  const all = (await DB.getAll('issueTypes')).sort((a, b) => a.name.localeCompare(b.name));
+  const all = (await DB.getAll('issueTypes')).filter((t) => !t.deleted).sort((a, b) => a.name.localeCompare(b.name));
   const list = showHiddenIssueTypes ? all : all.filter((t) => !t.hidden);
   const hiddenCount = all.filter((t) => t.hidden).length;
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Issue types</span></div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="openIssueTypeModal(false)"><i class="ti ti-plus"></i> Add issue type</button>
+    <button class="btn" style="margin-bottom:14px" onclick="cleanUpIssueTypeDuplicates()"><i class="ti ti-git-merge"></i> Merge duplicate names</button>
     ${hiddenCount ? `<div class="list-row" onclick="showHiddenIssueTypes=!showHiddenIssueTypes;renderIssueTypesManager()" style="margin-bottom:8px"><span style="font-size:12px;color:var(--ink-soft)">${showHiddenIssueTypes?'Hide':'Show'} ${hiddenCount} hidden</span><i class="ti ti-chevron-${showHiddenIssueTypes?'down':'right'}"></i></div>` : ''}
     <div>${list.map((t) => `<div class="list-row" style="${t.hidden?'opacity:0.55':''}" onclick="${t.hidden ? `restoreIssueType('${t.id}')` : `editIssueTypeModal('${t.id}')`}"><span><i class="ti ${t.icon||'ti-stethoscope'}"></i> ${esc(t.name)}${t.hidden?' (hidden)':''}</span><i class="ti ti-chevron-right"></i></div>`).join('') || '<div class="empty-state">None yet.</div>'}</div>
   `;
@@ -3909,8 +3998,8 @@ async function editCarPrompt(id) {
 // ---------- Garage Expense & Repair types manager ----------
 let expenseRepairTab = 'expense';
 async function renderExpenseRepairManager() {
-  const expenseTypes = await DB.getAll('expenseTypes');
-  const repairTypes = await DB.getAll('repairTypes');
+  const expenseTypes = (await DB.getAll('expenseTypes')).filter((t) => !t.deleted);
+  const repairTypes = (await DB.getAll('repairTypes')).filter((t) => !t.deleted);
   const list = expenseRepairTab === 'expense' ? expenseTypes : repairTypes;
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Expense & repair types</span></div>
@@ -3919,6 +4008,7 @@ async function renderExpenseRepairManager() {
       <button class="chip ${expenseRepairTab==='repair'?'active':''}" onclick="expenseRepairTab='repair';renderExpenseRepairManager()">Repair types</button>
     </div>
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="${expenseRepairTab==='expense'?'addExpenseTypePrompt()':'addRepairTypePrompt()'}"><i class="ti ti-plus"></i> Add ${expenseRepairTab==='expense'?'expense type':'repair type'}</button>
+    <button class="btn" style="margin-bottom:14px" onclick="cleanUpExpenseRepairDuplicates()"><i class="ti ti-git-merge"></i> Merge duplicate names</button>
     <div>${list.map((item) => expenseRepairTab==='expense'
       ? `<div class="list-row" onclick="editExpenseTypePrompt('${item.id}')"><span><i class="ti ${item.icon||'ti-tool'}"></i> ${esc(item.name)}</span><i class="ti ti-chevron-right"></i></div>`
       : `<div class="list-row" onclick="editRepairTypePrompt('${item.id}')"><span>${esc(item.name)}</span><i class="ti ti-chevron-right"></i></div>`
@@ -3927,12 +4017,43 @@ async function renderExpenseRepairManager() {
 }
 function addExpenseTypePrompt() {
   const name = prompt('Expense type name:'); if (!name) return;
-  const hasRepair = confirm('Needs a repair-subtype dropdown (like Mechanical Repairs)?');
-  DB.put('expenseTypes', { id: uid(), name, icon: 'ti-tool', hasRepairSubtype: hasRepair }).then(renderExpenseRepairManager);
+  DB.getAll('expenseTypes').then(async (all) => {
+    const dupe = all.find((t) => !t.deleted && t.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (dupe && !confirm(`"${dupe.name}" already exists. Add another one with the same name anyway?`)) return;
+    const hasRepair = confirm('Needs a repair-subtype dropdown (like Mechanical Repairs)?');
+    const t = { id: uid(), name, icon: 'ti-tool', hasRepairSubtype: hasRepair, synced: false };
+    await DB.put('expenseTypes', t);
+    Sync.pushEntry('ExpenseTypes', t).then(() => { t.synced = true; DB.put('expenseTypes', t); });
+    renderExpenseRepairManager();
+  });
 }
-function addRepairTypePrompt() { const name = prompt('Repair type name:'); if (!name) return; DB.put('repairTypes', { id: uid(), name }).then(renderExpenseRepairManager); }
-async function editExpenseTypePrompt(id) { const t = await DB.get('expenseTypes', id); const name = prompt('Expense type name:', t.name); if (!name) return; t.name = name; await DB.put('expenseTypes', t); renderExpenseRepairManager(); }
-async function editRepairTypePrompt(id) { const t = await DB.get('repairTypes', id); const name = prompt('Repair type name:', t.name); if (!name) return; t.name = name; await DB.put('repairTypes', t); renderExpenseRepairManager(); }
+function addRepairTypePrompt() {
+  const name = prompt('Repair type name:'); if (!name) return;
+  DB.getAll('repairTypes').then(async (all) => {
+    const dupe = all.find((t) => !t.deleted && t.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (dupe && !confirm(`"${dupe.name}" already exists. Add another one with the same name anyway?`)) return;
+    const t = { id: uid(), name, synced: false };
+    await DB.put('repairTypes', t);
+    Sync.pushEntry('RepairTypes', t).then(() => { t.synced = true; DB.put('repairTypes', t); });
+    renderExpenseRepairManager();
+  });
+}
+async function editExpenseTypePrompt(id) {
+  const t = await DB.get('expenseTypes', id);
+  const name = prompt('Expense type name:', t.name); if (!name) return;
+  t.name = name; t.synced = false;
+  await DB.put('expenseTypes', t);
+  Sync.pushEntry('ExpenseTypes', t).then(() => { t.synced = true; DB.put('expenseTypes', t); });
+  renderExpenseRepairManager();
+}
+async function editRepairTypePrompt(id) {
+  const t = await DB.get('repairTypes', id);
+  const name = prompt('Repair type name:', t.name); if (!name) return;
+  t.name = name; t.synced = false;
+  await DB.put('repairTypes', t);
+  Sync.pushEntry('RepairTypes', t).then(() => { t.synced = true; DB.put('repairTypes', t); });
+  renderExpenseRepairManager();
+}
 
 function promptNewCarInline() {
   const name = prompt('New car name:'); if (!name) { document.getElementById('f_car').value = ''; return; }
