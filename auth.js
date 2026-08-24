@@ -32,6 +32,37 @@ const Auth = {
 
     if (this.isTokenValid()) {
       onSignedIn();
+      return;
+    }
+
+    // The cached token's expired — Google ID tokens only last about an hour, so this
+    // happens on essentially every "closed the app a while ago, opened it again" case,
+    // not just once in a while. The browser's own Google session is very often still
+    // active though, so try a SILENT renewal first (Google's One Tap, invisible if it
+    // works) before ever showing the blocking sign-in screen. Previously this only got
+    // attempted underneath the sign-in screen after it was already displayed — so even
+    // a successful silent refresh still meant a visible "please sign in" flash every
+    // single time. Falls back to the real sign-in screen only if the silent attempt
+    // genuinely can't produce a token (session truly expired, One Tap suppressed after
+    // being dismissed a few times, third-party cookies blocked, etc — a real platform
+    // limit, not something fixable from here).
+    this._trySilentReauth(0);
+  },
+
+  _trySilentReauth(attempt) {
+    if (window.google && google.accounts && google.accounts.id) {
+      if (!this._initialized) {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: (response) => this._handleCredential(response) });
+        this._initialized = true;
+      }
+      google.accounts.id.prompt((notification) => {
+        const gotCredential = typeof notification.isNotDisplayed === 'function' ? !notification.isNotDisplayed() && !notification.isSkippedMoment() : true;
+        if (!gotCredential && !this.isTokenValid()) this.showSignInScreen();
+        // If a credential WAS produced, _handleCredential already fired and called
+        // onSignedIn() itself — nothing further needed here.
+      });
+    } else if (attempt < 20) {
+      setTimeout(() => this._trySilentReauth(attempt + 1), 250); // up to ~5 seconds waiting for the Google library to load
     } else {
       this.showSignInScreen();
     }
