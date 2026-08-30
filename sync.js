@@ -157,14 +157,35 @@ const Sync = {
         // signal for it. This closes that gap: anything present locally with no
         // pending changes of its own, but missing from the Sheet's current full set
         // for this store, really has been deleted elsewhere — remove it here too.
+        //
+        // BUT: a single missing-from-this-pull isn't proof of a real deletion. Right
+        // after a save, there's a real (if usually brief) window where Google Sheets'
+        // own read path hasn't caught up with a very recent write from a separate
+        // Apps Script execution yet — worse for anything that also does a Drive
+        // upload first (e.g. a new Documents folder), since that stretches out the
+        // round-trip. A single unlucky poll landing in that window used to delete the
+        // record locally immediately, with no way to recover since the very next pull
+        // never gets a chance to prove it was wrong. Requiring 2 consecutive misses
+        // before deleting fixes that: a real deletion elsewhere will still show
+        // missing on every following pull (caught within ~20s either way), but a
+        // one-off consistency lag now self-corrects on the very next pull instead of
+        // silently erasing something that's still genuinely there.
         if (rows.length > 0) { // an empty response usually means "couldn't reach this sheet" — don't wipe local data on that basis
+          if (!this._missingStreak) this._missingStreak = {};
+          if (!this._missingStreak[job.store]) this._missingStreak[job.store] = {};
+          const streak = this._missingStreak[job.store];
           const toRemoveLocally = [];
           for (const [id, local] of localById) {
-            if (local.synced !== false && !remoteIds.has(id)) toRemoveLocally.push(id);
+            if (local.synced !== false && !remoteIds.has(id)) {
+              streak[id] = (streak[id] || 0) + 1;
+              if (streak[id] >= 2) toRemoveLocally.push(id);
+            } else {
+              delete streak[id]; // seen it (or it has pending local changes) — clear any prior strike
+            }
           }
           if (toRemoveLocally.length) {
             try {
-              for (const id of toRemoveLocally) await DB.delete(job.store, id);
+              for (const id of toRemoveLocally) { await DB.delete(job.store, id); delete streak[id]; }
               anyChanged = true;
             } catch (e) { /* store may not exist locally yet, skip */ }
           }
