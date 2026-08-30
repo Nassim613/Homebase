@@ -1,4 +1,4 @@
-const CACHE = 'homebase-v8';
+const CACHE = 'homebase-v9';
 const ASSETS = ['./', './index.html', './styles.css', './storage.js', './auth.js', './sync.js', './garage.js', './builds.js', './import.js', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
