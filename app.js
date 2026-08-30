@@ -181,6 +181,15 @@ async function route() {
     if (currentView === 'sellVehicle') return renderSellVehicle();
     if (currentView === 'allRepairs') return renderAllRepairs();
     if (currentView === 'garageReport') return renderGarageReport();
+  } else if (currentTab === 'builds') {
+    $fab.style.display = 'none'; // Builds has its own "+" buttons per screen, not the global FAB
+    if (currentView === 'main') return renderBuildsMain();
+    if (currentView === 'addBuild') return renderAddBuild();
+    if (currentView === 'buildDetail') return renderBuildDetail();
+    if (currentView === 'addSubBuild') return renderAddSubBuild();
+    if (currentView === 'subBuildDetail') return renderSubBuildDetail();
+    if (currentView === 'addBuildExpense') return renderAddBuildExpense();
+    if (currentView === 'contractorForm') return renderContractorForm();
   } else if (currentTab === 'more') {
     $fab.style.display = 'none';
     return renderMore();
@@ -2152,7 +2161,7 @@ async function renderStoreForm() {
   if (existing) { storeLogoDraft = existing.logo || null; storeLogoDriveUrl = payeeLogoUrl({ logoLink: existing.logoLink }) || null; }
 
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${storeFormReturnTo === 'add' ? "currentView='add';route()" : storeFormReturnTo === 'buildExpense' ? "currentView='addBuildExpense';route()" : "currentView='categories';route()"}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit' : 'Add'} store</span></div>
 
     <div class="field"><label class="field-label">Name</label><input id="store_name" placeholder="e.g. Costco" value="${existing ? esc(existing.name) : ''}"></div>
     <div class="field"><label class="field-label">Default amount</label><input type="number" step="0.01" id="store_defaultAmount" placeholder="Leave blank if it varies" value="${existing && existing.defaultAmount ? existing.defaultAmount : ''}"></div>
@@ -2292,6 +2301,9 @@ async function saveStoreForm() {
   if (storeFormReturnTo === 'add') {
     currentView = 'add'; route();
     setTimeout(() => { const sel = document.getElementById('f_store'); if (sel) { sel.value = payee.id; updateStoreButtonDisplay(); } }, 0);
+  } else if (storeFormReturnTo === 'buildExpense') {
+    currentView = 'addBuildExpense'; route();
+    setTimeout(() => { selectBuildExpenseStore(payee.id); }, 0);
   } else {
     currentView = 'categories'; route();
   }
@@ -2784,6 +2796,9 @@ function renderPhotoGrid(drafts, prefix) {
 function getPhotoDraftArray(prefix) {
   if (prefix === 'jazz') return jazzPhotoDrafts;
   if (prefix === 'docs') return docFileDrafts;
+  if (prefix === 'buildTop') return buildTopPhotoDrafts;
+  if (prefix === 'buildSub') return buildSubPhotoDrafts;
+  if (prefix === 'buildExp') return buildExpPhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
 // Which Drive folder each context's uploads land in. 'docs' isn't listed here since its
@@ -2792,16 +2807,19 @@ function getPhotoDraftArray(prefix) {
 const PHOTO_LINK_CONTEXT = {
   jazz: { folder: 'Jazz Photos' },
   garage: { folder: 'Vehicle Photos' },
-  garage2: { folder: 'Garage Receipts' }
+  garage2: { folder: 'Garage Receipts' },
+  buildTop: { folder: 'Build Photos' },
+  buildSub: { folder: 'Build Photos' },
+  buildExp: { folder: 'Build Receipts' }
 };
-let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
-let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [] }; // parallel too — the actual reason, so it's reportable without a dev console
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // in-flight upload promises, per context — Save must await these before finishing
+let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
-let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [] };
+let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] };
 
 // Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
 // photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
@@ -2901,7 +2919,7 @@ async function waitForPendingUploads(prefix) {
 // multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
 // indices got removed in THIS edit session — the actual removal only takes effect
 // when the form is saved, so backing out is always safe.
-let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [] };
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [] };
 
 function renderExistingLinksGrid(links, context, label) {
   if (!links || !links.length) return '';
@@ -2927,6 +2945,9 @@ function removeExistingLink(context, index) {
   else if (context === 'vehicle') renderAddVehicle();
   else if (context === 'cost') renderAddCost();
   else if (context === 'docFolder') renderDocFolderForm();
+  else if (context === 'buildTop') renderAddBuild();
+  else if (context === 'buildSub') renderAddSubBuild();
+  else if (context === 'buildExp') renderAddBuildExpense();
 }
 function keptExistingLinks(links, context) {
   if (!links) return [];
@@ -3429,6 +3450,8 @@ async function renderMore() {
   if (moreView === 'docFolders') return renderDocFoldersManager();
   if (moreView === 'docFolderView') return renderDocFolderView();
   if (moreView === 'docFolderForm') return renderDocFolderForm();
+  if (moreView === 'buildCategories') return renderBuildCategoriesManager();
+  if (moreView === 'buildCategoryForm') return renderBuildCategoryForm();
 
   $main.innerHTML = `
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
@@ -3446,6 +3469,10 @@ async function renderMore() {
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Garage</p>
     <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>
+
+    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Builds</p>
+    <div class="list-row" onclick="currentTab='builds';currentView='main';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='builds'));route()"><span><i class="ti ti-hammer"></i> Builds</span><i class="ti ti-chevron-right"></i></div>
+    <div class="list-row" onclick="moreView='buildCategories';renderMore()"><span><i class="ti ti-tag"></i> Build categories</span><i class="ti ti-chevron-right"></i></div>
 
     <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Documents</p>
     <div class="list-row" onclick="moreView='docFolders';renderMore()"><span><i class="ti ti-folder"></i> Documents</span><i class="ti ti-chevron-right"></i></div>

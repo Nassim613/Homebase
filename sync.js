@@ -20,7 +20,11 @@ const SYNC_JOBS = [
   { store: 'garagePlaces', sheet: 'Places', strip: [] },
   { store: 'recurring', sheet: 'Recurring', strip: [] },
   { store: 'passwords', sheet: 'Passwords', strip: [] },
-  { store: 'docFolders', sheet: 'DocFolders', strip: [] }
+  { store: 'docFolders', sheet: 'DocFolders', strip: [] },
+  { store: 'builds', sheet: 'Builds', strip: ['photos'] },
+  { store: 'subBuilds', sheet: 'SubBuilds', strip: ['photos'] },
+  { store: 'buildExpenses', sheet: 'BuildExpenses', strip: ['photos'] },
+  { store: 'buildCategories', sheet: 'BuildCategories', strip: [] }
 ];
 
 const Sync = {
@@ -66,11 +70,25 @@ const Sync = {
     if (!token) { this.setStatus('pending'); return false; }
     this.setStatus('syncing');
     try {
-      await fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ sheet: sheetName, entry, token })
       });
+      // Apps Script's ContentService always answers with HTTP 200, even when it
+      // rejected the write (bad/expired token, not on the allowlist, etc) — so
+      // res.ok alone can't tell success from failure. The real signal is the
+      // {ok:true}/{ok:false} JSON body doPost() sends back. Without checking this,
+      // a silently-rejected write still got marked synced:true here, and the next
+      // background pull would then see the record genuinely missing from the Sheet
+      // and delete it locally too — a real bug that made freshly-created records
+      // (e.g. a brand-new Documents folder) intermittently vanish.
+      let data;
+      try { data = await res.json(); } catch (e) { data = null; }
+      if (!res.ok || !data || data.ok === false) {
+        this.setStatus('pending');
+        return false;
+      }
       entry.synced = true;
       this.setStatus('synced');
       return true;
@@ -251,11 +269,19 @@ const Sync = {
     if (!token) return false;
     this.setStatus('syncing');
     try {
-      await fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ sheet: sheetName, entries, token })
       });
+      // Same fix as pushEntry above — Apps Script returns HTTP 200 even on a
+      // rejected write, so the JSON {ok:...} body is the only real success signal.
+      let data;
+      try { data = await res.json(); } catch (e) { data = null; }
+      if (!res.ok || !data || data.ok === false) {
+        this.setStatus('pending');
+        return false;
+      }
       this.setStatus('synced');
       return true;
     } catch (err) {
@@ -354,7 +380,7 @@ const Sync = {
 
   // Screens where re-rendering mid-use would wipe out whatever the person is currently
   // typing — never auto-refresh these, no matter how new the incoming data is.
-  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle'],
+  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm'],
 
   startPolling() {
     window.addEventListener('online', () => this.fullSync());
