@@ -1,0 +1,148 @@
+/* Homebase — report sending sheet
+   Append to styles.css. Everything is namespaced .hbr- so it can't collide
+   with existing rules. */
+
+.hbr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(43, 38, 64, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.hbr-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: #F7F3E9;
+  border-radius: 22px 22px 0 0;
+  padding: 20px 18px calc(28px + env(safe-area-inset-bottom));
+  font-family: Georgia, serif;
+  color: #2B2640;
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+@media (min-width: 520px) {
+  .hbr-overlay { align-items: center; }
+  .hbr-sheet { border-radius: 22px; }
+}
+
+.hbr-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.hbr-title { font-size: 20px; font-weight: 600; }
+.hbr-x {
+  background: none; border: none; font-size: 24px; line-height: 1;
+  color: #8a8296; cursor: pointer; padding: 0 4px;
+}
+
+.hbr-tabs {
+  display: flex; background: #EFE7D5; border-radius: 10px; padding: 3px; margin-bottom: 18px;
+}
+.hbr-tab {
+  flex: 1; padding: 9px 0; border: none; background: none; border-radius: 8px;
+  font-family: inherit; font-size: 14px; color: #8a8296; cursor: pointer;
+}
+.hbr-tab.is-on {
+  background: #F7F3E9; color: #2B2640; font-weight: 600;
+  border: 1px solid #E4DCC8;
+}
+
+.hbr-label {
+  font-size: 11px; color: #8a8296; letter-spacing: 0.06em;
+  text-transform: uppercase; margin: 0 0 8px;
+}
+.hbr-note { font-size: 12px; color: #8a8296; margin: 0 0 18px; }
+.hbr-rowhead { display: flex; align-items: baseline; justify-content: space-between; margin-top: 20px; }
+
+.hbr-period {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;
+  padding: 11px 12px; margin-bottom: 8px; font-family: inherit; font-size: 14px;
+  color: #2B2640; text-align: left; cursor: pointer;
+}
+.hbr-period.is-on { background: #EFE7D5; border-color: #BA7517; font-weight: 600; }
+.hbr-period em { font-style: normal; font-size: 11px; color: #8a8296; }
+.hbr-check { color: #BA7517; }
+
+.hbr-more { margin-bottom: 8px; }
+.hbr-more summary {
+  font-size: 12px; color: #8a6412; cursor: pointer; padding: 6px 0; list-style: none;
+}
+
+.hbr-range { display: flex; gap: 10px; margin-bottom: 14px; }
+.hbr-field { flex: 1; display: block; }
+.hbr-field span { display: block; font-size: 11px; color: #8a8296; margin-bottom: 5px; }
+.hbr-field input,
+.hbr-input {
+  width: 100%; box-sizing: border-box; border: 1px solid #E4DCC8; border-radius: 10px;
+  padding: 10px 11px; font-family: inherit; font-size: 14px; color: #2B2640; background: #FFFDF7;
+}
+
+.hbr-chips { display: flex; gap: 6px; margin-bottom: 8px; }
+.hbr-chip {
+  flex: 1; border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 20px;
+  padding: 7px 0; font-family: inherit; font-size: 12px; color: #2B2640; cursor: pointer;
+}
+
+.hbr-checkrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+.hbr-checkrow input { width: 18px; height: 18px; accent-color: #BA7517; flex: none; }
+.hbr-checkrow em { font-style: normal; font-size: 11px; color: #8a8296; }
+
+.hbr-card {
+  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;
+  padding: 12px; margin-bottom: 8px;
+}
+.hbr-cardrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.hbr-cardrow em { display: block; font-style: normal; font-size: 11px; color: #8a8296; }
+.hbr-meta { display: block; font-style: normal; font-size: 11px; color: #8a8296; margin-top: 6px; }
+.hbr-cardactions { display: flex; gap: 6px; margin-top: 10px; }
+.hbr-pos { color: #0F6E56; font-weight: 600; }
+.hbr-neg { color: #C9564F; font-weight: 600; }
+
+.hbr-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.hbr-edit input {
+  border: 1px solid #E4DCC8; border-radius: 8px; padding: 9px 10px;
+  font-family: inherit; font-size: 14px; background: #F7F3E9; color: #2B2640;
+}
+
+.hbr-add { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 20px; }
+.hbr-add input {
+  border: 1px dashed #C9C2B2; border-radius: 10px; padding: 10px 11px;
+  font-family: inherit; font-size: 14px; background: transparent; color: #2B2640;
+}
+
+.hbr-btn {
+  flex: 1; border: 1px solid #C9C2B2; background: #F7F3E9; border-radius: 10px;
+  padding: 11px 12px; font-family: inherit; font-size: 14px; color: #2B2640; cursor: pointer;
+}
+.hbr-btn[disabled] { opacity: 0.55; cursor: default; }
+.hbr-btn--primary { background: #2B2640; border-color: #2B2640; color: #F7F3E9; }
+.hbr-btn--danger { background: #F4E3E5; border-color: #E3C4C7; color: #C9564F; }
+
+.hbr-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+
+.hbr-link {
+  background: none; border: none; font-family: inherit; font-size: 12px;
+  color: #8a6412; cursor: pointer; padding: 0;
+}
+.hbr-link--center { display: block; width: 100%; text-align: center; margin-top: 14px; }
+
+.hbr-error { font-size: 13px; color: #C9564F; margin: 14px 0 0; }
+.hbr-ok { font-size: 13px; color: #0F6E56; margin: 14px 0 0; }
+.hbr-warn {
+  font-size: 12px; color: #854F0B; background: #FAEEDA;
+  padding: 10px 14px; margin: 0;
+}
+
+.hbr-preview {
+  position: fixed; inset: 0; z-index: 950; background: rgba(43, 38, 64, 0.6);
+  display: flex; flex-direction: column;
+}
+.hbr-previewbar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #F7F3E9; padding: 12px 16px; font-family: Georgia, serif;
+  font-size: 14px; color: #2B2640; padding-top: calc(12px + env(safe-area-inset-top));
+}
+.hbr-preview iframe { flex: 1; width: 100%; border: none; background: #F7F3E9; }
