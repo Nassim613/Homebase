@@ -899,6 +899,10 @@ async function renderReportsStub() {
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
 
+    <button class="btn" style="margin-bottom:14px;text-align:left" onclick="HomebaseReports.open()">
+      <i class="ti ti-mail"></i> Email a report
+    </button>
+
     <div class="chip-row">
       <button class="chip ${reportsDateRange==='thisMonth'?'active':''}" onclick="setReportsDateRange('thisMonth')">This month</button>
       <button class="chip ${reportsDateRange==='last3'?'active':''}" onclick="setReportsDateRange('last3')">Last 3 months</button>

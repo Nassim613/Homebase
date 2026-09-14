@@ -1,21 +1,29 @@
 // Homebase — report sending
 // ---------------------------------------------------------------
-// Self-contained module. Wire it up once with the same endpoint and token
-// getter sync.js already uses:
+// Drop-in. Add ONE line to index.html, before </body>:
+//
+//   <script src="reports.js"></script>
+//
+// It injects its own styles, finds the Apps Script endpoint and the signed-in
+// Google token by looking through the page the way sync.js stores them, and
+// mounts a "Send report" button. Nothing in app.js needs touching.
+//
+// If the auto-detection ever misses (renamed variables, a different storage
+// key), override it explicitly and everything else keeps working:
 //
 //   HomebaseReports.init({ endpoint: API_URL, getToken: () => idToken });
 //
-// then open it from a button anywhere:
-//
-//   HomebaseReports.open();
-//
-// Everything below talks to the Apps Script actions reportPreview,
-// reportSend, reportResend, reportView, reportLog and reportRecipients.
+// To place the button yourself instead of using the floating one, give any
+// element id="hb-send-report" — or call HomebaseReports.open() from your own
+// button and set HomebaseReports.init({ floatingButton: false }).
 
 window.HomebaseReports = (function () {
   'use strict';
 
-  var cfg = { endpoint: null, getToken: null };
+  var STYLES = '/* Homebase — report sending sheet\n   Append to styles.css. Everything is namespaced .hbr- so it can\'t collide\n   with existing rules. */\n\n.hbr-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 900;\n  background: rgba(43, 38, 64, 0.45);\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  overflow-y: auto;\n}\n\n.hbr-sheet {\n  width: 100%;\n  max-width: 480px;\n  background: #F7F3E9;\n  border-radius: 22px 22px 0 0;\n  padding: 20px 18px calc(28px + env(safe-area-inset-bottom));\n  font-family: Georgia, serif;\n  color: #2B2640;\n  max-height: 92vh;\n  overflow-y: auto;\n}\n\n@media (min-width: 520px) {\n  .hbr-overlay { align-items: center; }\n  .hbr-sheet { border-radius: 22px; }\n}\n\n.hbr-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }\n.hbr-title { font-size: 20px; font-weight: 600; }\n.hbr-x {\n  background: none; border: none; font-size: 24px; line-height: 1;\n  color: #8a8296; cursor: pointer; padding: 0 4px;\n}\n\n.hbr-tabs {\n  display: flex; background: #EFE7D5; border-radius: 10px; padding: 3px; margin-bottom: 18px;\n}\n.hbr-tab {\n  flex: 1; padding: 9px 0; border: none; background: none; border-radius: 8px;\n  font-family: inherit; font-size: 14px; color: #8a8296; cursor: pointer;\n}\n.hbr-tab.is-on {\n  background: #F7F3E9; color: #2B2640; font-weight: 600;\n  border: 1px solid #E4DCC8;\n}\n\n.hbr-label {\n  font-size: 11px; color: #8a8296; letter-spacing: 0.06em;\n  text-transform: uppercase; margin: 0 0 8px;\n}\n.hbr-note { font-size: 12px; color: #8a8296; margin: 0 0 18px; }\n.hbr-rowhead { display: flex; align-items: baseline; justify-content: space-between; margin-top: 20px; }\n\n.hbr-period {\n  display: flex; align-items: center; justify-content: space-between; width: 100%;\n  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;\n  padding: 11px 12px; margin-bottom: 8px; font-family: inherit; font-size: 14px;\n  color: #2B2640; text-align: left; cursor: pointer;\n}\n.hbr-period.is-on { background: #EFE7D5; border-color: #BA7517; font-weight: 600; }\n.hbr-period em { font-style: normal; font-size: 11px; color: #8a8296; }\n.hbr-check { color: #BA7517; }\n\n.hbr-more { margin-bottom: 8px; }\n.hbr-more summary {\n  font-size: 12px; color: #8a6412; cursor: pointer; padding: 6px 0; list-style: none;\n}\n\n.hbr-range { display: flex; gap: 10px; margin-bottom: 14px; }\n.hbr-field { flex: 1; display: block; }\n.hbr-field span { display: block; font-size: 11px; color: #8a8296; margin-bottom: 5px; }\n.hbr-field input,\n.hbr-input {\n  width: 100%; box-sizing: border-box; border: 1px solid #E4DCC8; border-radius: 10px;\n  padding: 10px 11px; font-family: inherit; font-size: 14px; color: #2B2640; background: #FFFDF7;\n}\n\n.hbr-chips { display: flex; gap: 6px; margin-bottom: 8px; }\n.hbr-chip {\n  flex: 1; border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 20px;\n  padding: 7px 0; font-family: inherit; font-size: 12px; color: #2B2640; cursor: pointer;\n}\n\n.hbr-checkrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }\n.hbr-checkrow input { width: 18px; height: 18px; accent-color: #BA7517; flex: none; }\n.hbr-checkrow em { font-style: normal; font-size: 11px; color: #8a8296; }\n\n.hbr-card {\n  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;\n  padding: 12px; margin-bottom: 8px;\n}\n.hbr-cardrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }\n.hbr-cardrow em { display: block; font-style: normal; font-size: 11px; color: #8a8296; }\n.hbr-meta { display: block; font-style: normal; font-size: 11px; color: #8a8296; margin-top: 6px; }\n.hbr-cardactions { display: flex; gap: 6px; margin-top: 10px; }\n.hbr-pos { color: #0F6E56; font-weight: 600; }\n.hbr-neg { color: #C9564F; font-weight: 600; }\n\n.hbr-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }\n.hbr-edit input {\n  border: 1px solid #E4DCC8; border-radius: 8px; padding: 9px 10px;\n  font-family: inherit; font-size: 14px; background: #F7F3E9; color: #2B2640;\n}\n\n.hbr-add { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 20px; }\n.hbr-add input {\n  border: 1px dashed #C9C2B2; border-radius: 10px; padding: 10px 11px;\n  font-family: inherit; font-size: 14px; background: transparent; color: #2B2640;\n}\n\n.hbr-btn {\n  flex: 1; border: 1px solid #C9C2B2; background: #F7F3E9; border-radius: 10px;\n  padding: 11px 12px; font-family: inherit; font-size: 14px; color: #2B2640; cursor: pointer;\n}\n.hbr-btn[disabled] { opacity: 0.55; cursor: default; }\n.hbr-btn--primary { background: #2B2640; border-color: #2B2640; color: #F7F3E9; }\n.hbr-btn--danger { background: #F4E3E5; border-color: #E3C4C7; color: #C9564F; }\n\n.hbr-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }\n\n.hbr-link {\n  background: none; border: none; font-family: inherit; font-size: 12px;\n  color: #8a6412; cursor: pointer; padding: 0;\n}\n.hbr-link--center { display: block; width: 100%; text-align: center; margin-top: 14px; }\n\n.hbr-error { font-size: 13px; color: #C9564F; margin: 14px 0 0; }\n.hbr-ok { font-size: 13px; color: #0F6E56; margin: 14px 0 0; }\n.hbr-warn {\n  font-size: 12px; color: #854F0B; background: #FAEEDA;\n  padding: 10px 14px; margin: 0;\n}\n\n.hbr-preview {\n  position: fixed; inset: 0; z-index: 950; background: rgba(43, 38, 64, 0.6);\n  display: flex; flex-direction: column;\n}\n.hbr-previewbar {\n  display: flex; align-items: center; justify-content: space-between;\n  background: #F7F3E9; padding: 12px 16px; font-family: Georgia, serif;\n  font-size: 14px; color: #2B2640; padding-top: calc(12px + env(safe-area-inset-top));\n}\n.hbr-preview iframe { flex: 1; width: 100%; border: none; background: #F7F3E9; }\n\n.hbr-fab {\n  position: fixed;\n  right: 16px;\n  bottom: calc(76px + env(safe-area-inset-bottom));\n  z-index: 880;\n  border: 1px solid #2B2640;\n  background: #2B2640;\n  color: #F7F3E9;\n  font-family: Georgia, serif;\n  font-size: 14px;\n  padding: 11px 16px;\n  border-radius: 22px;\n  box-shadow: 0 4px 14px rgba(43, 38, 64, 0.25);\n  cursor: pointer;\n}\n';
+
+  var cfg = { endpoint: null, getToken: null, floatingButton: true };
+  var found = { endpoint: null, tokenSource: null };
   var root = null;
 
   var state = {
@@ -118,13 +126,43 @@ window.HomebaseReports = (function () {
     };
   }
 
+  // ---------- config ----------
+
+  // Config resolution. Both of these come straight out of the app: the Web App
+  // URL is what saveSheetUrl() stores under settings/meta.sheetUrl, and the ID
+  // token hangs off the Auth object auth.js sets up. init() can override either,
+  // but normally neither is needed.
+  function resolveEndpoint() {
+    if (cfg.endpoint) return Promise.resolve(cfg.endpoint);
+    if (typeof DB === 'undefined') return Promise.reject(new Error('storage.js has not loaded yet'));
+    return DB.get('settings', 'meta').then(function (meta) {
+      if (!meta || !meta.sheetUrl) throw new Error('No Google Sheet connected yet — set one under Settings, Sync & data.');
+      return meta.sheetUrl;
+    });
+  }
+
+  // Re-read on every request rather than cached: Google ID tokens expire after
+  // an hour, so one that worked earlier in the session may already be dead.
+  function resolveToken() {
+    if (cfg.getToken) {
+      try { var t = cfg.getToken(); if (t) return t; } catch (e) { /* fall through */ }
+    }
+    if (!window.Auth) return null;
+    return Auth.token || Auth.idToken || Auth.credential || Auth.id_token || null;
+  }
+
   // ---------- server ----------
 
   function post(payload) {
-    if (!cfg.endpoint) return Promise.reject(new Error('HomebaseReports.init() was never called'));
-    var token = cfg.getToken ? cfg.getToken() : null;
-    if (!token) return Promise.reject(new Error('Not signed in'));
-    return fetch(cfg.endpoint, {
+    return resolveEndpoint().then(function (endpoint) {
+      var token = resolveToken();
+      if (!token) throw new Error('Not signed in, or the session expired — sign in again and reopen this.');
+      return send(endpoint, token, payload);
+    });
+  }
+
+  function send(endpoint, token, payload) {
+    return fetch(endpoint, {
       method: 'POST',
       body: JSON.stringify(Object.assign({ token: token }, payload))
     }).then(function (res) {
@@ -489,9 +527,65 @@ window.HomebaseReports = (function () {
   }
 
   function init(options) {
-    cfg.endpoint = options.endpoint;
-    cfg.getToken = options.getToken;
+    options = options || {};
+    if (options.endpoint) cfg.endpoint = options.endpoint;
+    if (options.getToken) cfg.getToken = options.getToken;
+    if (options.floatingButton === false) cfg.floatingButton = false;
+    if (cfg.floatingButton) mountButton();
+    return api;
   }
 
-  return { init: init, open: open, close: close };
+  // ---------- self-mounting ----------
+
+  function injectStyles() {
+    if (document.getElementById('hbr-styles')) return;
+    var tag = document.createElement('style');
+    tag.id = 'hbr-styles';
+    tag.textContent = STYLES;
+    document.head.appendChild(tag);
+  }
+
+  // Prefers an element you placed yourself (id="hb-send-report"); falls back to
+  // a floating button so the feature is reachable without editing app.js.
+  function mountButton() {
+    injectStyles();
+    var existing = document.getElementById('hb-send-report');
+    if (existing) {
+      if (!existing.getAttribute('data-hbr-bound')) {
+        existing.setAttribute('data-hbr-bound', '1');
+        existing.addEventListener('click', function (e) { e.preventDefault(); open(); });
+      }
+      return;
+    }
+    if (!cfg.floatingButton || document.getElementById('hbr-fab')) return;
+    var btn = document.createElement('button');
+    btn.id = 'hbr-fab';
+    btn.className = 'hbr-fab';
+    btn.type = 'button';
+    btn.textContent = 'Send report';
+    btn.addEventListener('click', open);
+    document.body.appendChild(btn);
+  }
+
+  function boot() {
+    injectStyles();
+    mountButton();
+    // The button may need to wait for a sign-in screen to clear, or for the
+    // app to render its own #hb-send-report. Check a few times, then stop.
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      mountButton();
+      if (tries > 20) clearInterval(timer);
+    }, 500);
+  }
+
+  // Boot whenever the DOM is ready enough, from whichever of these fires first.
+  // Everything inside boot() is idempotent, so running it more than once is safe.
+  if (document.body) boot();
+  document.addEventListener('DOMContentLoaded', boot);
+  window.addEventListener('load', boot);
+
+  var api = { init: init, open: open, close: close, mountButton: mountButton };
+  return api;
 })();
