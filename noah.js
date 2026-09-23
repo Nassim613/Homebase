@@ -81,12 +81,13 @@ async function renderNoahHealth() {
     ${noahSectionSwitcher()}
     ${ongoing.length ? ongoing.map((i) => renderNoahOngoingCard(i, typeById)).join('') : ''}
     <div style="display:flex;gap:8px;margin-bottom:14px">
-      <button class="btn" style="flex:1" onclick="currentView='noahReport';route()"><i class="ti ti-chart-bar"></i> Report</button>
-      <button class="btn" style="flex:1" onclick="noahFabAction()"><i class="ti ti-plus"></i> Log an issue</button>
+      <button class="btn" style="flex:1;padding:12px 6px" onclick="currentView='noahReport';route()"><i class="ti ti-chart-bar"></i> Report</button>
+      <button class="btn" style="flex:1;padding:12px 6px" onclick="currentView='noahPhotos';route()"><i class="ti ti-photo"></i> Photos</button>
+      <button class="btn" style="flex:1;padding:12px 6px" onclick="noahFabAction()"><i class="ti ti-plus"></i> Log</button>
     </div>
     <div class="search-box"><i class="ti ti-search"></i><input id="noahSearch" placeholder="Search issues, meds, notes..."></div>
     ${collapseAllControls('noahList')}
-    <div id="noahList">${days.length ? days.map((d, i) => renderNoahDayGroup(d, byDay[d], typeById, i === 0)).join('') : '<div class="empty-state">Nothing logged yet. Tap + to log an issue.</div>'}</div>
+    <div id="noahList">${days.length ? days.map((d, i) => renderNoahDayGroup(d, byDay[d], typeById, dayOpenByDefault(i, byDay[d], noahIssueOngoing))).join('') : '<div class="empty-state">Nothing logged yet. Tap + to log an issue.</div>'}</div>
   `;
   const search = document.getElementById('noahSearch');
   if (search) search.addEventListener('input', (e) => filterNoahHealth(e.target.value, days, byDay, typeById));
@@ -157,13 +158,19 @@ function noah24h(t) {
   return String(h).padStart(2, '0') + ':' + m[2];
 }
 
+function noahIssueName(issue, typeById) { return (typeById[issue.typeId] || {}).name || 'Issue'; }
+function noahIssueOngoing(issue) { return issue.status === 'ongoing'; }
+
 function renderNoahDayGroup(date, dayIssues, typeById, openByDefault) {
+  const open = openByDefault !== false;
+  const summary = daySummaryLabel(dayIssues, (i) => noahIssueName(i, typeById));
+  const hasOngoing = dayIssues.some(noahIssueOngoing);
   return `
     <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
-      <span>${fmtDateYear(date)} <i class="ti collapse-chevron ti-chevron-${openByDefault !== false ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-      <span></span>
+      <span>${fmtDateYear(date)} <i class="ti collapse-chevron ti-chevron-${open ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i>${summary ? `<span class="day-summary"> · ${esc(summary)}</span>` : ''}</span>
+      <span>${hasOngoing ? '<span class="pill-sm pill-ongoing">Ongoing</span>' : ''}</span>
     </div>
-    <div class="collapse-body" style="display:${openByDefault !== false ? 'block' : 'none'}">${dayIssues.map((i) => renderNoahIssueRow(i, typeById)).join('')}</div>
+    <div class="collapse-body" style="display:${open ? 'block' : 'none'}">${dayIssues.map((i) => renderNoahIssueRow(i, typeById)).join('')}</div>
   `;
 }
 
@@ -185,7 +192,7 @@ function renderNoahIssueRow(issue, typeById) {
 function filterNoahHealth(term, days, byDay, typeById) {
   const q = term.trim().toLowerCase();
   const list = document.getElementById('noahList');
-  if (!q) { list.innerHTML = days.map((d, i) => renderNoahDayGroup(d, byDay[d], typeById, i === 0)).join(''); return; }
+  if (!q) { list.innerHTML = days.map((d, i) => renderNoahDayGroup(d, byDay[d], typeById, dayOpenByDefault(i, byDay[d], noahIssueOngoing))).join(''); return; }
   const hits = [];
   days.forEach((d) => {
     byDay[d].forEach((issue) => {
@@ -811,6 +818,30 @@ async function deleteNoahMilestone(id) {
   noahMilestoneEditId = null;
   currentView = 'main';
   route();
+}
+
+// ---------- photos ----------
+
+// Both places Noah's photos live: health entries and milestones. A milestone tile is
+// captioned with its title rather than a type, since that's what identifies it.
+async function renderNoahPhotos() {
+  const issues = await getActiveNoahIssues();
+  const milestones = await getActiveNoahMilestones();
+  const typeById = Object.fromEntries((await DB.getAll('noahIssueTypes')).map((t) => [t.id, t]));
+  const photos = [];
+  issues.forEach((issue) => {
+    (issue.photoLinks || []).forEach((link) => {
+      if (!link || !link.isImage || !link.url) return;
+      photos.push({ url: link.url, date: issue.startDate, label: (typeById[issue.typeId] || {}).name || 'Issue', onclick: `openNoahIssue('${issue.id}')` });
+    });
+  });
+  milestones.forEach((m) => {
+    (m.photoLinks || []).forEach((link) => {
+      if (!link || !link.isImage || !link.url) return;
+      photos.push({ url: link.url, date: m.date, label: m.title || (m.kind === 'note' ? 'Note' : 'Milestone'), onclick: `editNoahMilestone('${m.id}')` });
+    });
+  });
+  $main.innerHTML = renderPhotoGallery(photos, "Noah's photos", 'goNoahMain()', 'No photos yet. Add one to an entry or a milestone and it\'ll show up here.');
 }
 
 // ---------- report ----------

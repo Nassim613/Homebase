@@ -220,6 +220,7 @@ async function route() {
     if (currentView === 'addIssue') return renderAddIssue();
     if (currentView === 'issueDetail') return renderIssueDetail();
     if (currentView === 'report') return renderJazzReport();
+    if (currentView === 'jazzPhotos') return renderJazzPhotos();
   } else if (currentTab === 'noah') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderNoahMain();
@@ -228,6 +229,7 @@ async function route() {
     if (currentView === 'addNoahGrowth') return renderAddNoahGrowth();
     if (currentView === 'addNoahMilestone') return renderAddNoahMilestone();
     if (currentView === 'noahReport') return renderNoahReport();
+    if (currentView === 'noahPhotos') return renderNoahPhotos();
   } else if (currentTab === 'weight') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderWeightMain();
@@ -356,6 +358,24 @@ function collapseAllIn(containerId, collapse) {
   container.querySelectorAll('.collapse-body').forEach((body) => { body.style.display = collapse ? 'none' : 'block'; });
   container.querySelectorAll('.collapse-chevron').forEach((icon) => { icon.className = 'ti collapse-chevron ti-chevron-' + (collapse ? 'right' : 'down'); });
 }
+// Which day groups start expanded: the newest few, plus any day holding something
+// still ongoing however far back it is — an unresolved issue shouldn't be hidden
+// behind a chevron just because it started months ago.
+const OPEN_DAY_COUNT = 3;
+function dayOpenByDefault(dayIndex, dayItems, isOngoing) {
+  if (dayIndex < OPEN_DAY_COUNT) return true;
+  return (dayItems || []).some((it) => isOngoing(it));
+}
+
+// The label on a collapsed day: what's actually inside it, so a closed row still
+// tells you something. Two names, then a count, so it never wraps on a phone.
+function daySummaryLabel(dayItems, nameOf) {
+  const names = (dayItems || []).map(nameOf).filter(Boolean);
+  if (!names.length) return '';
+  const shown = names.slice(0, 2).join(', ');
+  return names.length > 2 ? shown + ' +' + (names.length - 2) : shown;
+}
+
 function collapseAllControls(containerId) {
   return `<div style="display:flex;gap:8px;margin-bottom:10px">
     <button class="btn" style="flex:1;padding:8px;font-size:12px" onclick="collapseAllIn('${containerId}', false)"><i class="ti ti-chevrons-down"></i> Show all</button>
@@ -2630,6 +2650,51 @@ let jazzPhotoDrafts = [];
 function goJazzMain() { currentView = 'main'; route(); }
 function goJazzReport() { currentView = 'report'; route(); }
 
+// Every photo across every Jazz issue, newest first, grouped by month. Tapping one
+// opens the entry it belongs to — the point is finding "that picture of his ear"
+// without remembering which month it was.
+async function renderJazzPhotos() {
+  const issues = (await DB.getAll('jazzIssues')).filter((i) => !i.deleted);
+  const typeById = Object.fromEntries((await DB.getAll('issueTypes')).map((t) => [t.id, t]));
+  const photos = [];
+  issues.forEach((issue) => {
+    (issue.photoLinks || []).forEach((link) => {
+      // PDFs and other attachments have no thumbnail to show, so the gallery sticks
+      // to real images; they're still on the entry itself.
+      if (!link || !link.isImage || !link.url) return;
+      photos.push({ url: link.url, date: issue.startDate, label: (typeById[issue.typeId] || {}).name || 'Issue', onclick: `openIssue('${issue.id}')` });
+    });
+  });
+  $main.innerHTML = renderPhotoGallery(photos, 'Jazz photos', 'goJazzMain()', 'No photos yet. Add one to an issue and it\'ll show up here.');
+}
+
+// Shared by both galleries: group by month, caption each thumbnail with what it
+// belongs to, and make the whole tile the tap target.
+function renderPhotoGallery(photos, title, backAction, emptyText) {
+  photos.sort((a, b) => b.date.localeCompare(a.date));
+  const byMonth = {};
+  photos.forEach((p) => { const key = (p.date || '').slice(0, 7); (byMonth[key] = byMonth[key] || []).push(p); });
+  const months = Object.keys(byMonth).sort().reverse();
+  return `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="${backAction}"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${title}</span></div>
+    ${photos.length ? months.map((m) => `
+      <p class="section-label settings-group">${monthLabelOf(m)}</p>
+      <div class="gallery-grid">
+        ${byMonth[m].map((p) => `
+          <div class="gallery-tile" onclick="${p.onclick}">
+            <img src="${p.url}" loading="lazy" alt="${esc(p.label)}">
+            <span class="gallery-caption">${esc(p.label)} · ${fmtDate(p.date)}</span>
+          </div>`).join('')}
+      </div>`).join('') : `<div class="empty-state">${emptyText}</div>`}
+  `;
+}
+
+function monthLabelOf(key) {
+  if (!key) return 'Undated';
+  const d = new Date(key + '-01T00:00:00');
+  return d.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+}
+
 async function renderJazzMain() {
   const issues = (await DB.getAll('jazzIssues')).sort((a, b) => b.startDate.localeCompare(a.startDate));
   const weighIns = (await getActiveWeightEntries()).filter((w) => w.subject === 'jazz').sort((a, b) => b.date.localeCompare(a.date));
@@ -2653,21 +2718,32 @@ async function renderJazzMain() {
       <div class="stat"><p class="label">Current weight</p><p class="value">${latestWeight}</p></div>
       <div class="stat" style="background:${ongoingCount ? 'var(--gold-soft)' : 'var(--surface-raised)'}"><p class="label" style="color:${ongoingCount ? '#8a6412' : 'var(--ink-soft)'}">Ongoing issues</p><p class="value" style="color:${ongoingCount ? '#8a6412' : 'var(--ink)'}">${ongoingCount}</p></div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn" style="flex:1" onclick="goJazzReport()"><i class="ti ti-chart-bar"></i> Report</button><button class="btn" style="flex:1" onclick="logJazzWeighIn()"><i class="ti ti-scale"></i> Log weigh-in</button></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn" style="flex:1;padding:12px 6px" onclick="goJazzReport()"><i class="ti ti-chart-bar"></i> Report</button><button class="btn" style="flex:1;padding:12px 6px" onclick="currentView='jazzPhotos';route()"><i class="ti ti-photo"></i> Photos</button><button class="btn" style="flex:1;padding:12px 6px" onclick="logJazzWeighIn()"><i class="ti ti-scale"></i> Weigh-in</button></div>
     <div class="search-box"><i class="ti ti-search"></i><input id="jazzSearch" placeholder="Search issues, meds, notes..."></div>
     ${collapseAllControls('jazzList')}
-    <div id="jazzList">${days.length ? days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, i === 0)).join('') : '<div class="empty-state">Nothing logged yet. Tap + to add an issue or weigh-in.</div>'}</div>
+    <div id="jazzList">${days.length ? days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, dayOpenByDefault(i, byDay[d], jazzItemOngoing))).join('') : '<div class="empty-state">Nothing logged yet. Tap + to add an issue or weigh-in.</div>'}</div>
   `;
   document.getElementById('jazzSearch').addEventListener('input', (e) => filterJazz(e.target.value, days, byDay, typeById));
 }
 
+function jazzItemName(it, typeById) {
+  if (it.kind === 'weight') return 'Weigh-in';
+  return (typeById[it.data.typeId] || {}).name || 'Issue';
+}
+function jazzItemOngoing(it) {
+  return it.kind === 'issue' && it.data.status === 'ongoing';
+}
+
 function renderJazzDayGroup(date, dayItems, typeById, openByDefault) {
+  const open = openByDefault !== false;
+  const summary = daySummaryLabel(dayItems, (it) => jazzItemName(it, typeById));
+  const hasOngoing = dayItems.some(jazzItemOngoing);
   return `
     <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
-      <span>${fmtDateYear(date)} <i class="ti collapse-chevron ti-chevron-${openByDefault !== false ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-      <span></span>
+      <span>${fmtDateYear(date)} <i class="ti collapse-chevron ti-chevron-${open ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i>${summary ? `<span class="day-summary"> · ${esc(summary)}</span>` : ''}</span>
+      <span>${hasOngoing ? '<span class="pill-sm pill-ongoing">Ongoing</span>' : ''}</span>
     </div>
-    <div class="collapse-body" style="display:${openByDefault !== false ? 'block' : 'none'}">${dayItems.map((it) => renderJazzItem(it, typeById)).join('')}</div>
+    <div class="collapse-body" style="display:${open ? 'block' : 'none'}">${dayItems.map((it) => renderJazzItem(it, typeById)).join('')}</div>
   `;
 }
 
@@ -2692,7 +2768,7 @@ function renderJazzItem(it, typeById) {
 function filterJazz(q, days, byDay, typeById) {
   q = q.trim().toLowerCase();
   const list = document.getElementById('jazzList');
-  if (!q) { list.innerHTML = days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, i === 0)).join(''); return; }
+  if (!q) { list.innerHTML = days.map((d, i) => renderJazzDayGroup(d, byDay[d], typeById, dayOpenByDefault(i, byDay[d], jazzItemOngoing))).join(''); return; }
   const filtered = {};
   days.forEach((d) => {
     const m = byDay[d].filter((it) => {

@@ -118,6 +118,22 @@ input[type="checkbox"] {
 .pill-sm { font-size: 10px; padding: 2px 8px; border-radius: 999px; }
 .pill-ongoing { background: var(--gold-soft); color: #8a6412; }
 .pill-resolved { background: var(--sage-soft); color: #0F6E56; }
+/* The "what's in this day" label on a collapsed group header */
+.day-summary { text-transform: none; letter-spacing: 0; color: var(--ink-soft); font-weight: 400; }
+
+/* Photo galleries — Jazz and Noah */
+.gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 6px; }
+@media (min-width: 768px) { .gallery-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; } }
+.gallery-tile { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--surface-raised); border: 1px solid var(--line); cursor: pointer; }
+.gallery-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gallery-tile:active { transform: scale(0.98); }
+.gallery-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 6px 4px;
+  font-size: 10px; line-height: 1.25; color: #fff;
+  background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 .empty-state { text-align: center; color: var(--ink-soft); font-size: 14px; padding: 30px 10px; }
 
 .fab { position: fixed; right: calc(50% - 240px + 20px); bottom: 90px; width: 52px; height: 52px; border-radius: 50%; background: var(--ink); color: #fff; border: none; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); font-size: 24px; cursor: pointer; z-index: 20; }
