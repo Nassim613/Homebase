@@ -1,7 +1,7 @@
 // ---------- IndexedDB wrapper ----------
 const DB_NAME = 'homebase';
-const DB_VERSION = 6;
-const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories'];
+const DB_VERSION = 7; // 7 adds Noah's five stores
+const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories', 'noahIssues', 'noahGrowth', 'noahMilestones', 'noahIssueTypes', 'noahClinics'];
 
 let dbPromise = null;
 
@@ -127,6 +127,19 @@ const DEFAULT_EXPENSE_TYPES_GARAGE = [
 
 const DEFAULT_REPAIR_TYPES = ['Brakes', 'Suspension', 'Air conditioning', 'Battery', 'Oil change', 'Tires', 'Exhaust', 'Starter'];
 
+// Noah's issue types are his own list, deliberately separate from Jazz's — a dog and a
+// child don't get sick in the same ways, and mixing them would make both lists worse.
+const DEFAULT_NOAH_ISSUE_TYPES = [
+  { name: 'Cold', icon: 'ti-virus' },
+  { name: 'Fever', icon: 'ti-temperature' },
+  { name: 'Ear infection', icon: 'ti-ear' },
+  { name: 'Stomach bug', icon: 'ti-stomach' },
+  { name: 'Cough', icon: 'ti-lungs' },
+  { name: 'Rash', icon: 'ti-bandage' },
+  { name: 'Teething', icon: 'ti-dental' },
+  { name: 'Injury', icon: 'ti-bandage' }
+];
+
 const DEFAULT_ISSUE_TYPES = [
   { name: 'Skin', icon: 'ti-droplet' },
   { name: 'Behavior / panic', icon: 'ti-brain' },
@@ -161,6 +174,10 @@ async function seedIfEmpty() {
   const issueTypes = await DB.getAll('issueTypes');
   if (issueTypes.length === 0) {
     for (const t of DEFAULT_ISSUE_TYPES) await DB.put('issueTypes', { id: uid(), ...t, hidden: false });
+  }
+  const noahTypes = await DB.getAll('noahIssueTypes');
+  if (noahTypes.length === 0) {
+    for (const t of DEFAULT_NOAH_ISSUE_TYPES) await DB.put('noahIssueTypes', { id: uid(), ...t, hidden: false });
   }
   const expenseTypes = await DB.getAll('expenseTypes');
   if (expenseTypes.length === 0) {

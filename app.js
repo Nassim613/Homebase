@@ -63,7 +63,7 @@ async function getActiveGarageCosts() { return (await DB.getAll('garageCosts')).
 function renderHeader() {
   const now = new Date();
   document.getElementById('dateLine').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  const titles = { finance: 'Finances', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', more: 'Settings' };
+  const titles = { finance: 'Finances', noah: 'Noah', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', builds: 'Builds', more: 'Settings' };
   document.getElementById('pageTitle').textContent = titles[currentTab] || '';
   const whoEl = document.getElementById('signedInAs');
   if (whoEl) whoEl.textContent = Auth.email ? Auth.email : '';
@@ -100,20 +100,72 @@ async function manualRefresh() {
 }
 
 // ---------- Tab nav ----------
-document.querySelectorAll('nav.tabs button').forEach((btn) => {
+// Sidebar entries can point at a sub-screen as well as a tab (Documents and Passwords
+// are views inside the Settings tab; the report entries are views inside their own
+// tabs), so a button may carry data-view or data-moreview alongside data-tab.
+document.querySelectorAll('nav.tabs button[data-tab]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentTab = btn.dataset.tab;
-    currentView = 'main';
-    renderHeader();
-    route();
+    goTab(btn.dataset.tab, btn.dataset.view || 'main', btn.dataset.moreview);
   });
 });
+
+// Every screen change should go through here rather than setting currentTab directly,
+// so the highlighted nav entry, the header and the router never disagree.
+function goTab(tab, view, mv) {
+  currentTab = tab;
+  currentView = view || 'main';
+  if (mv) moreView = mv;
+  else if (tab === 'more') moreView = 'main';
+  closeModal();
+  renderHeader();
+  syncNavActive();
+  route();
+}
+
+// Anything reachable only through the More sheet keeps More lit while you're in it,
+// so the bar still tells you where you are.
+const MORE_SHEET_TABS = ['garage', 'builds', 'more'];
+function syncNavActive() {
+  document.querySelectorAll('nav.tabs button').forEach((b) => {
+    if (b.id === 'moreSheetBtn') { b.classList.toggle('active', MORE_SHEET_TABS.includes(currentTab)); return; }
+    const tabMatches = b.dataset.tab === currentTab;
+    const viewMatches = !b.dataset.view || b.dataset.view === currentView;
+    const moreMatches = !b.dataset.moreview || b.dataset.moreview === moreView;
+    b.classList.toggle('active', tabMatches && viewMatches && moreMatches);
+  });
+}
+
+// The phone bar holds the four tabs used most; everything else lives one tap away in
+// this sheet rather than being crammed into a seventh slot.
+function openMoreSheet() {
+  const tile = (label, icon, onclick) => `<button class="btn more-tile" onclick="closeModal();${onclick}"><i class="ti ${icon}"></i> ${label}</button>`;
+  const row = (label, icon, onclick) => `<div class="list-row" onclick="closeModal();${onclick}"><span><i class="ti ${icon}"></i> ${label}</span><i class="ti ti-chevron-right"></i></div>`;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p class="more-label">Home and car</p>
+    <div class="more-grid">
+      ${tile('Garage', 'ti-car', "goTab('garage')")}
+      ${tile('Builds', 'ti-hammer', "goTab('builds')")}
+    </div>
+    <p class="more-label">Household</p>
+    <div class="more-grid">
+      ${tile('Documents', 'ti-folder', "goTab('more','main','docFolders')")}
+      ${tile('Passwords', 'ti-lock', "goTab('more','main','passwords')")}
+    </div>
+    <p class="more-label">Reports</p>
+    ${row('Finance reports', 'ti-chart-bar', "goTab('finance','reports')")}
+    ${row("Jazz's health report", 'ti-heart-rate-monitor', "goTab('jazz','report')")}
+    ${row("Noah's health report", 'ti-heart-rate-monitor', "goTab('noah','noahReport')")}
+    <div style="height:10px"></div>
+    ${row('Settings', 'ti-settings', "goTab('more','main','main')")}
+  `;
+  openModal();
+}
 
 $fab.addEventListener('click', () => {
   if (currentTab === 'finance' && currentView === 'main') { currentView = 'add'; route(); }
   else if (currentTab === 'jazz' && currentView === 'main') { jazzDuplicate = null; jazzPhotoDrafts = []; photoUploadLinks.jazz = []; pendingPhotoUploads.jazz = []; photoUploadStatus.jazz = []; photoUploadErrors.jazz = []; existingLinksRemoved.jazz = []; currentView = 'addIssue'; route(); }
+  else if (currentTab === 'noah' && currentView === 'main') { noahFabAction(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
 });
@@ -131,7 +183,7 @@ window.addEventListener('popstate', (e) => {
     isHandlingPopState = true;
     currentTab = e.state.tab;
     currentView = e.state.view || 'main';
-    document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === currentTab));
+    syncNavActive();
     if (typeof renderHeader === 'function') renderHeader();
     route();
   }
@@ -168,6 +220,14 @@ async function route() {
     if (currentView === 'addIssue') return renderAddIssue();
     if (currentView === 'issueDetail') return renderIssueDetail();
     if (currentView === 'report') return renderJazzReport();
+  } else if (currentTab === 'noah') {
+    $fab.style.display = currentView === 'main' ? 'flex' : 'none';
+    if (currentView === 'main') return renderNoahMain();
+    if (currentView === 'addNoahIssue') return renderAddNoahIssue();
+    if (currentView === 'noahIssueDetail') return renderNoahIssueDetail();
+    if (currentView === 'addNoahGrowth') return renderAddNoahGrowth();
+    if (currentView === 'addNoahMilestone') return renderAddNoahMilestone();
+    if (currentView === 'noahReport') return renderNoahReport();
   } else if (currentTab === 'weight') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderWeightMain();
@@ -2803,6 +2863,8 @@ function getPhotoDraftArray(prefix) {
   if (prefix === 'buildTop') return buildTopPhotoDrafts;
   if (prefix === 'buildSub') return buildSubPhotoDrafts;
   if (prefix === 'buildExp') return buildExpPhotoDrafts;
+  if (prefix === 'noahIssue') return noahIssuePhotoDrafts;
+  if (prefix === 'noahMilestone') return noahMilestonePhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
 // Which Drive folder each context's uploads land in. 'docs' isn't listed here since its
@@ -2814,16 +2876,18 @@ const PHOTO_LINK_CONTEXT = {
   garage2: { folder: 'Garage Receipts' },
   buildTop: { folder: 'Build Photos' },
   buildSub: { folder: 'Build Photos' },
-  buildExp: { folder: 'Build Receipts' }
+  buildExp: { folder: 'Build Receipts' },
+  noahIssue: { folder: 'Noah Photos' },
+  noahMilestone: { folder: 'Noah Photos' }
 };
-let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
-let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] }; // parallel too — the actual reason, so it's reportable without a dev console
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // in-flight upload promises, per context — Save must await these before finishing
+let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
-let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [] };
+let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] };
 
 // Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
 // photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
@@ -2923,7 +2987,18 @@ async function waitForPendingUploads(prefix) {
 // multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
 // indices got removed in THIS edit session — the actual removal only takes effect
 // when the form is saved, so backing out is always safe.
-let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [] };
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] };
+
+// Clears every parallel array for one photo context in a single call. Opening a fresh
+// form has to reset all four or a previous form's links leak into the new record —
+// easy to get wrong one line at a time, which is why Noah's screens call this instead.
+function resetPhotoContext(prefix) {
+  photoUploadLinks[prefix] = [];
+  pendingPhotoUploads[prefix] = [];
+  photoUploadStatus[prefix] = [];
+  photoUploadErrors[prefix] = [];
+  existingLinksRemoved[prefix] = [];
+}
 
 function renderExistingLinksGrid(links, context, label) {
   if (!links || !links.length) return '';
@@ -2952,6 +3027,8 @@ function removeExistingLink(context, index) {
   else if (context === 'buildTop') renderAddBuild();
   else if (context === 'buildSub') renderAddSubBuild();
   else if (context === 'buildExp') renderAddBuildExpense();
+  else if (context === 'noahIssue') renderAddNoahIssue();
+  else if (context === 'noahMilestone') renderAddNoahMilestone();
 }
 function keptExistingLinks(links, context) {
   if (!links) return [];
@@ -3455,37 +3532,37 @@ async function renderMore() {
   if (moreView === 'docFolderView') return renderDocFolderView();
   if (moreView === 'docFolderForm') return renderDocFolderForm();
   if (moreView === 'buildCategories') return renderBuildCategoriesManager();
+  if (moreView === 'noahIssueTypes') return renderNoahIssueTypesManager();
+  if (moreView === 'noahClinics') return renderNoahClinicsManager();
   if (moreView === 'buildCategoryForm') return renderBuildCategoryForm();
 
+  // Settings is configuration only now. Anything that's a place you GO — Garage,
+  // Builds, Documents, Passwords, the reports — lives in the More sheet on a phone
+  // and in the sidebar on desktop, so it isn't buried two taps deep in here.
+  const group = (label) => `<p class="section-label settings-group">${label}</p>`;
+  const row = (label, icon, onclick, trailing) => `<div class="list-row" onclick="${onclick}"><span><i class="ti ${icon}"></i> ${label}</span>${trailing || '<i class="ti ti-chevron-right"></i>'}</div>`;
+
   $main.innerHTML = `
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft)">Overview</p>
-    <div class="list-row" onclick="currentTab='finance';currentView='reports';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-chart-bar"></i> Finance reports</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="currentTab='jazz';currentView='report';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='jazz'));route()"><span><i class="ti ti-heart-rate-monitor"></i> Jazz's health report</span><i class="ti ti-chevron-right"></i></div>
+    ${group('Finance')}
+    ${row('Categories, stores &amp; projects', 'ti-tag', "goTab('finance','categories')")}
+    ${row('Cars', 'ti-car', "moreView='carsProjects';renderMore()")}
+    ${row('Recurring entries', 'ti-repeat', "moreView='recurring';renderMore()")}
 
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Finance</p>
-    <div class="list-row" onclick="currentTab='finance';currentView='categories';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-tag"></i> Categories, Stores & Projects</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="currentTab='finance';currentView='reports';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='finance'));route()"><span><i class="ti ti-chart-bar"></i> Reports</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="moreView='carsProjects';renderMore()"><span><i class="ti ti-car"></i> Cars</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="moreView='recurring';renderMore()"><span><i class="ti ti-repeat"></i> Recurring entries</span><i class="ti ti-chevron-right"></i></div>
+    ${group('Noah')}
+    ${row('Issue types', 'ti-stethoscope', "moreView='noahIssueTypes';renderMore()")}
+    ${row('Clinics', 'ti-building-hospital', "moreView='noahClinics';renderMore()")}
 
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Jazz</p>
-    <div class="list-row" onclick="moreView='issueTypes';renderMore()"><span><i class="ti ti-stethoscope"></i> Issue types</span><i class="ti ti-chevron-right"></i></div>
+    ${group('Jazz')}
+    ${row('Issue types', 'ti-stethoscope', "moreView='issueTypes';renderMore()")}
 
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Garage</p>
-    <div class="list-row" onclick="moreView='expenseRepairTypes';renderMore()"><span><i class="ti ti-tool"></i> Expense & repair types</span><i class="ti ti-chevron-right"></i></div>
+    ${group('Garage')}
+    ${row('Expense &amp; repair types', 'ti-tool', "moreView='expenseRepairTypes';renderMore()")}
 
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Builds</p>
-    <div class="list-row" onclick="currentTab='builds';currentView='main';document.querySelectorAll('nav.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab==='builds'));route()"><span><i class="ti ti-hammer"></i> Builds</span><i class="ti ti-chevron-right"></i></div>
-    <div class="list-row" onclick="moreView='buildCategories';renderMore()"><span><i class="ti ti-tag"></i> Build categories</span><i class="ti ti-chevron-right"></i></div>
+    ${group('Builds')}
+    ${row('Build categories', 'ti-tag', "moreView='buildCategories';renderMore()")}
 
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Documents</p>
-    <div class="list-row" onclick="moreView='docFolders';renderMore()"><span><i class="ti ti-folder"></i> Documents</span><i class="ti ti-chevron-right"></i></div>
-
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Security</p>
-    <div class="list-row" onclick="moreView='passwords';renderMore()"><span><i class="ti ti-lock"></i> Passwords</span><i class="ti ti-chevron-right"></i></div>
-
-    <p class="section-label" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-top:16px">Sync & data</p>
-    <div class="list-row" onclick="moreView='syncData';renderMore()"><span><i class="ti ti-cloud"></i> Google Sheet sync & import</span><span class="status-pill ${Sync.status}" style="font-size:11px"><i class="ti ti-cloud"></i></span></div>
+    ${group('Sync &amp; data')}
+    ${row('Google Sheet sync &amp; import', 'ti-cloud', "moreView='syncData';renderMore()", `<span class="status-pill ${Sync.status}" style="font-size:11px"><i class="ti ti-cloud"></i></span>`)}
   `;
 }
 

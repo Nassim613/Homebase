@@ -1,68 +1,85 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Homebase</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#2B2640">
-<link rel="apple-touch-icon" href="icon-192.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="reports.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Homebase</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2B2640">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.44.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="reports.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 </head>
 <body>
-<div id="app">
-  <header class="top" id="pageHeader">
-    <div class="back" id="headerLeft">
-      <div>
-        <div class="eyebrow" id="dateLine"></div>
-        <div id="signedInAs" style="font-size:11px;color:var(--ink-soft);margin-top:-2px"></div>
-        <h1 id="pageTitle">Finances</h1>
+  <div id="app">
+    <header class="top" id="pageHeader">
+      <div class="back" id="headerLeft">
+        <div>
+          <div class="eyebrow" id="dateLine"></div>
+          <div id="signedInAs" style="font-size:11px;color:var(--ink-soft);margin-top:-2px"></div>
+          <h1 id="pageTitle">Finances</h1>
+        </div>
       </div>
+      <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
+      <div style="position:relative;display:inline-block">
+        <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
+        <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
+      </div>
+    </header>
+
+    <main id="mainContent">
+      <!-- Views are rendered here by app.js -->
+      <div class="empty-state">Loading…</div>
+    </main>
+
+    <button class="fab" id="fab" style="display:none"><i class="ti ti-plus"></i></button>
+
+    <!-- One nav element serves both layouts. On a phone only the five .bar-item buttons
+         show — four tabs plus More, which opens a sheet. On desktop the group labels and
+         every .sidebar-item show instead, and More is hidden, since nothing needs hiding
+         when there's room for all of it. -->
+    <nav class="tabs">
+      <p class="sidebar-title">Homebase</p>
+      <p class="nav-group">Money</p>
+      <button class="bar-item sidebar-item active" data-tab="finance"><i class="ti ti-report-money"></i><span class="label">Finance</span></button>
+      <p class="nav-group">Family</p>
+      <button class="bar-item sidebar-item" data-tab="noah"><i class="ti ti-mood-kid"></i><span class="label">Noah</span></button>
+      <button class="bar-item sidebar-item" data-tab="jazz"><i class="ti ti-paw"></i><span class="label">Jazz</span></button>
+      <button class="bar-item sidebar-item" data-tab="weight"><i class="ti ti-scale"></i><span class="label">Weight</span></button>
+      <p class="nav-group">Home and car</p>
+      <button class="sidebar-item" data-tab="garage"><i class="ti ti-car"></i><span class="label">Garage</span></button>
+      <button class="sidebar-item" data-tab="builds"><i class="ti ti-hammer"></i><span class="label">Builds</span></button>
+      <p class="nav-group">Household</p>
+      <button class="sidebar-item" data-tab="more" data-moreview="docFolders"><i class="ti ti-folder"></i><span class="label">Documents</span></button>
+      <button class="sidebar-item" data-tab="more" data-moreview="passwords"><i class="ti ti-lock"></i><span class="label">Passwords</span></button>
+      <p class="nav-group">Reports</p>
+      <button class="sidebar-item" data-tab="finance" data-view="reports"><i class="ti ti-chart-bar"></i><span class="label">Finance</span></button>
+      <button class="sidebar-item" data-tab="jazz" data-view="report"><i class="ti ti-heart-rate-monitor"></i><span class="label">Jazz</span></button>
+      <button class="sidebar-item" data-tab="noah" data-view="noahReport"><i class="ti ti-heart-rate-monitor"></i><span class="label">Noah</span></button>
+      <button class="bar-item" id="moreSheetBtn" onclick="openMoreSheet()"><i class="ti ti-dots"></i><span class="label">More</span></button>
+      <button class="sidebar-item nav-settings" data-tab="more" data-moreview="main"><i class="ti ti-settings"></i><span class="label">Settings</span></button>
+    </nav>
+
+    <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
+      <div class="modal-sheet" id="modalSheet"></div>
     </div>
-    <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
-    <div style="position:relative;display:inline-block">
-      <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
-      <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
-    </div>
-  </header>
-
-  <main id="mainContent">
-    <!-- Views are rendered here by app.js -->
-    <div class="empty-state">Loading…</div>
-  </main>
-
-  <button class="fab" id="fab" style="display:none"><i class="ti ti-plus"></i></button>
-
-  <nav class="tabs">
-    <p class="sidebar-title">Homebase</p>
-    <button data-tab="finance" class="active"><i class="ti ti-report-money"></i><span class="label">Finance</span></button>
-    <button data-tab="jazz"><i class="ti ti-paw"></i><span class="label">Jazz</span></button>
-    <button data-tab="weight"><i class="ti ti-scale"></i><span class="label">Weight</span></button>
-    <button data-tab="garage"><i class="ti ti-car"></i><span class="label">Garage</span></button>
-    <button data-tab="builds"><i class="ti ti-hammer"></i><span class="label">Builds</span></button>
-    <button data-tab="more"><i class="ti ti-settings"></i><span class="label">Settings</span></button>
-  </nav>
-
-  <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
-    <div class="modal-sheet" id="modalSheet"></div>
   </div>
-</div>
 
-<script src="https://accounts.google.com/gsi/client"></script>
-<script src="storage.js"></script>
-<script src="auth.js"></script>
-<script src="sync.js"></script>
-<script src="garage.js"></script>
-<script src="builds.js"></script>
-<script src="import.js"></script>
-<script src="reports.js"></script>
-<script src="app.js"></script>
+  <script src="https://accounts.google.com/gsi/client"></script>
+  <script src="storage.js"></script>
+  <script src="auth.js"></script>
+  <script src="sync.js"></script>
+  <script src="garage.js"></script>
+  <script src="builds.js"></script>
+  <script src="noah.js"></script>
+  <script src="import.js"></script>
+  <script src="reports.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

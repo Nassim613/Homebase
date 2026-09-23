@@ -111,6 +111,10 @@ input[type="checkbox"] {
 .entry-value.pos { color: #0F6E56; }
 .entry-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 .entry-desc { font-size: 12px; color: #6b6578; margin-top: 2px; }
+/* Long text the person typed keeps the line breaks they typed. HTML collapses
+   newlines by default, which turned a multi-line description into one run-on
+   paragraph everywhere it was displayed. */
+.entry-desc, .thread-item .note, .multiline { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pill-sm { font-size: 10px; padding: 2px 8px; border-radius: 999px; }
 .pill-ongoing { background: var(--gold-soft); color: #8a6412; }
 .pill-resolved { background: var(--sage-soft); color: #0F6E56; }
@@ -124,6 +128,15 @@ nav.tabs button { flex: 1; background: none; border: none; padding: 6px 2px; dis
 nav.tabs button.active { color: var(--ink); }
 nav.tabs i { font-size: 20px; }
 nav.tabs .label { font-size: 10px; font-weight: 500; }
+nav.tabs .nav-group { display: none; }
+nav.tabs button:not(.bar-item) { display: none; }
+
+/* More sheet — the phone's overflow for everything not in the bottom bar */
+.more-label { font-size: 11px; color: var(--ink-soft); letter-spacing: .04em; text-transform: uppercase; margin: 10px 0 6px; }
+.more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 4px; }
+.more-tile { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; padding: 14px 8px; }
+.settings-group { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin-top: 16px; }
+.settings-group:first-child { margin-top: 0; }
 
 .photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
 .photo-slot { aspect-ratio: 1; border-radius: 10px; background: var(--surface); border: 1px dashed var(--ink-soft); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); cursor: pointer; overflow: hidden; }
@@ -194,6 +207,12 @@ nav.tabs .label { font-size: 10px; font-weight: 500; }
   nav.tabs button.active { background: var(--ink); color: #fff; }
   nav.tabs i { font-size: 19px; }
   nav.tabs .label { font-size: 14px; font-weight: 500; }
+  nav.tabs { overflow-y: auto; }
+  nav.tabs button:not(.bar-item) { display: flex; }
+  nav.tabs button.bar-item:not(.sidebar-item) { display: none; }
+  nav.tabs .nav-group { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); padding: 0 14px; margin: 12px 0 2px; }
+  /* Settings sits at the bottom of the sidebar, under a rule, away from the sections */
+  nav.tabs .nav-settings { margin-top: auto; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; padding-top: 14px; }
   main { padding-bottom: 40px; }
   .fab { right: 40px; bottom: 40px; }
 }
