@@ -2587,7 +2587,18 @@ async function init() {
   });
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    // Tapping a notification focuses this window rather than opening a second copy,
+    // so the service worker tells us which tab to show once we're back in front.
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'notification-tab' && e.data.tab) goTab(e.data.tab);
+    });
   }
+  // Opened cold from a notification tap.
+  const tabParam = new URLSearchParams(location.search).get('tab');
+  if (tabParam) goTab(tabParam);
+  // A push token can be rotated by the browser at any time; re-checking on start
+  // keeps the stored one current so notifications don't quietly stop months later.
+  if (typeof Notify !== 'undefined') Notify.refreshTokenIfOn();
 }
 // The app doesn't start until Auth confirms a signed-in, approved Google account —
 // this is the actual access control. Everything before this point (loading the page
@@ -3534,6 +3545,7 @@ async function renderMore() {
   if (moreView === 'buildCategories') return renderBuildCategoriesManager();
   if (moreView === 'noahIssueTypes') return renderNoahIssueTypesManager();
   if (moreView === 'noahClinics') return renderNoahClinicsManager();
+  if (moreView === 'notifications') return renderNotificationsSettings();
   if (moreView === 'buildCategoryForm') return renderBuildCategoryForm();
 
   // Settings is configuration only now. Anything that's a place you GO — Garage,
@@ -3543,6 +3555,9 @@ async function renderMore() {
   const row = (label, icon, onclick, trailing) => `<div class="list-row" onclick="${onclick}"><span><i class="ti ${icon}"></i> ${label}</span>${trailing || '<i class="ti ti-chevron-right"></i>'}</div>`;
 
   $main.innerHTML = `
+    ${group('Notifications')}
+    ${row('Notifications', 'ti-bell', "moreView='notifications';renderMore()")}
+
     ${group('Finance')}
     ${row('Categories, stores &amp; projects', 'ti-tag', "goTab('finance','categories')")}
     ${row('Cars', 'ti-car', "moreView='carsProjects';renderMore()")}

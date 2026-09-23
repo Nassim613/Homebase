@@ -1,7 +1,7 @@
 // ---------- IndexedDB wrapper ----------
 const DB_NAME = 'homebase';
-const DB_VERSION = 7; // 7 adds Noah's five stores
-const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories', 'noahIssues', 'noahGrowth', 'noahMilestones', 'noahIssueTypes', 'noahClinics'];
+const DB_VERSION = 8; // 7 added Noah's stores, 8 adds notifyDevices
+const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories', 'noahIssues', 'noahGrowth', 'noahMilestones', 'noahIssueTypes', 'noahClinics', 'notifyDevices'];
 
 let dbPromise = null;
 
