@@ -220,7 +220,10 @@ async function renderVehicleDetail() {
 
     ${vehicle.status === 'owned' ? `<button class="btn" style="margin-bottom:10px" onclick="goSellVehicle()"><i class="ti ti-tag"></i> Mark as sold</button>` : `<div class="card tight"><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Buyer</span><span style="font-size:12px">${esc(vehicle.buyerName||'—')}</span></div><div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Date sold</span><span style="font-size:12px">${fmtDateFull(vehicle.dateSold)}</span></div></div>`}
 
-    <button class="btn btn-primary" style="margin-bottom:16px" onclick="goAddCost()"><i class="ti ti-plus"></i> Add a cost</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn btn-primary" style="flex:1" onclick="goAddCost()"><i class="ti ti-plus"></i> Add a cost</button>
+      <button class="btn" style="flex:1" onclick="currentView='vehiclePhotos';route()"><i class="ti ti-photo"></i> Photos${vehiclePhotoCount(vehicle, t.costs) ? ' (' + vehiclePhotoCount(vehicle, t.costs) + ')' : ''}</button>
+    </div>
 
     <p class="section-label">Related costs (${sortedCosts.length})</p>
     ${sortedCosts.length ? `<div class="search-box" style="margin-bottom:10px"><i class="ti ti-search"></i><input placeholder="Search comments, place, type..." oninput="filterRelatedCosts(this)"></div>` : ''}
@@ -284,6 +287,43 @@ function renderCostRow(c, typeById, repairById) {
 }
 
 let costDetailId = null;
+// How many images this car has across its own photos and every receipt on its costs.
+// Shown on the button so an empty gallery is obvious before tapping into it.
+function vehiclePhotoCount(vehicle, costs) {
+  let n = (vehicle.photoLinks || []).filter((p) => p && p.isImage && p.url).length;
+  (costs || []).forEach((c) => { n += (c.receiptLinks || []).filter((p) => p && p.isImage && p.url).length; });
+  return n;
+}
+
+// Every image for one car, newest first: the car's own photos plus the receipts
+// attached to its costs. Tapping a receipt opens that expense over the gallery, so
+// closing it drops you back where you were rather than at the top of the page.
+async function renderVehiclePhotos() {
+  const vehicle = await DB.get('vehicles', currentVehicleId);
+  if (!vehicle) { currentView = 'main'; return route(); }
+  const t = await computeVehicleTotals(currentVehicleId);
+  const expenseTypes = await DB.getAll('expenseTypes');
+  const repairTypes = await DB.getAll('repairTypes');
+  const typeById = Object.fromEntries(expenseTypes.map((e) => [e.id, e]));
+  const repairById = Object.fromEntries(repairTypes.map((r) => [r.id, r]));
+
+  const photos = [];
+  (vehicle.photoLinks || []).forEach((link) => {
+    if (!link || !link.isImage || !link.url) return;
+    photos.push({ url: link.url, date: vehicle.dateBought || '', label: 'Car photo', onclick: `currentView='vehicleDetail';route()` });
+  });
+  (t.costs || []).forEach((cost) => {
+    const typeName = (typeById[cost.expenseTypeId] || {}).name || 'Cost';
+    const repair = cost.repairTypeId ? (repairById[cost.repairTypeId] || {}).name : '';
+    (cost.receiptLinks || []).forEach((link) => {
+      if (!link || !link.isImage || !link.url) return;
+      photos.push({ url: link.url, date: cost.date, label: typeName + (repair ? ' — ' + repair : ''), onclick: `openCostDetail('${cost.id}')` });
+    });
+  });
+
+  $main.innerHTML = renderPhotoGallery(photos, esc(vehicle.name) + ' photos', "currentView='vehicleDetail';route()", 'No photos yet for this car. Add one to the car or to a receipt and it\'ll show up here.');
+}
+
 async function openCostDetail(id) {
   costDetailId = id;
   const cost = await DB.get('garageCosts', id);

@@ -243,6 +243,7 @@ async function route() {
     if (currentView === 'sellVehicle') return renderSellVehicle();
     if (currentView === 'allRepairs') return renderAllRepairs();
     if (currentView === 'garageReport') return renderGarageReport();
+    if (currentView === 'vehiclePhotos') return renderVehiclePhotos();
   } else if (currentTab === 'builds') {
     $fab.style.display = 'none'; // Builds has its own "+" buttons per screen, not the global FAB
     if (currentView === 'main') return renderBuildsMain();
