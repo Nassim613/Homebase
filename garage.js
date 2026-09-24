@@ -555,6 +555,9 @@ async function confirmSale(totalSpent) {
   vehicle.dateSold = document.getElementById('s_dateSold').value || todayStr();
   vehicle.buyerName = document.getElementById('s_buyerName').value.trim();
   vehicle.buyerPhone = document.getElementById('s_buyerPhone').value.trim();
+  // Marked unsynced before saving: the pull leaves a record alone only when this is
+  // false, so without it a pull landing mid-push would revert the sale.
+  vehicle.synced = false;
   await DB.put('vehicles', vehicle);
   const { photos, ownershipDoc, ...syncable } = vehicle;
   Sync.pushEntry('Vehicles', syncable).then(() => { vehicle.synced = true; DB.put('vehicles', vehicle); });

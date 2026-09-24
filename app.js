@@ -221,6 +221,7 @@ async function route() {
     if (currentView === 'issueDetail') return renderIssueDetail();
     if (currentView === 'report') return renderJazzReport();
     if (currentView === 'jazzPhotos') return renderJazzPhotos();
+    if (currentView === 'addJazzUpdate') return renderAddJazzUpdate();
   } else if (currentTab === 'noah') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderNoahMain();
@@ -230,6 +231,7 @@ async function route() {
     if (currentView === 'addNoahMilestone') return renderAddNoahMilestone();
     if (currentView === 'noahReport') return renderNoahReport();
     if (currentView === 'noahPhotos') return renderNoahPhotos();
+    if (currentView === 'addNoahUpdate') return renderAddNoahUpdate();
   } else if (currentTab === 'weight') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderWeightMain();
@@ -251,6 +253,7 @@ async function route() {
     if (currentView === 'buildDetail') return renderBuildDetail();
     if (currentView === 'addSubBuild') return renderAddSubBuild();
     if (currentView === 'subBuildDetail') return renderSubBuildDetail();
+    if (currentView === 'buildPhotos') return renderBuildPhotos();
     if (currentView === 'addBuildExpense') return renderAddBuildExpense();
     if (currentView === 'contractorForm') return renderContractorForm();
   } else if (currentTab === 'more') {
@@ -363,6 +366,27 @@ function collapseAllIn(containerId, collapse) {
 // still ongoing however far back it is — an unresolved issue shouldn't be hidden
 // behind a chevron just because it started months ago.
 const OPEN_DAY_COUNT = 3;
+// One update in a thread: its own photos sit right under the note, since an update
+// is often mostly "here's what it looks like today".
+function renderUpdateThreadItem(update, metaLine) {
+  const photos = (update.photoLinks || []).filter((l) => l && l.url);
+  return `
+    <div class="thread-item thread-update">
+      <p class="meta">${esc(metaLine)}</p>
+      ${update.note ? `<p class="note">${esc(update.note)}</p>` : ''}
+      ${photos.length ? `<div class="update-photos">${photos.map((l) => `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener">${l.isImage ? `<img src="${l.url}" alt="">` : `<span class="update-file"><i class="ti ti-file"></i> File</span>`}</a>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+// The heading above the updates in an issue thread, with the count and a shortcut to
+// add another without scrolling to the buttons at the bottom.
+function updatesHeading(count, addAction) {
+  return `<div class="section-title" style="cursor:default">
+    <span>Updates${count ? ' · ' + count : ''}</span>
+    <span style="color:var(--gold);cursor:pointer;text-transform:none;letter-spacing:0" onclick="${addAction}">+ Add update</span>
+  </div>`;
+}
+
 function dayOpenByDefault(dayIndex, dayItems, isOngoing) {
   if (dayIndex < OPEN_DAY_COUNT) return true;
   return (dayItems || []).some((it) => isOngoing(it));
@@ -2659,11 +2683,20 @@ async function renderJazzPhotos() {
   const typeById = Object.fromEntries((await DB.getAll('issueTypes')).map((t) => [t.id, t]));
   const photos = [];
   issues.forEach((issue) => {
+    const label = (typeById[issue.typeId] || {}).name || 'Issue';
     (issue.photoLinks || []).forEach((link) => {
       // PDFs and other attachments have no thumbnail to show, so the gallery sticks
       // to real images; they're still on the entry itself.
       if (!link || !link.isImage || !link.url) return;
-      photos.push({ url: link.url, date: issue.startDate, label: (typeById[issue.typeId] || {}).name || 'Issue', onclick: `openIssue('${issue.id}')` });
+      photos.push({ url: link.url, date: issue.startDate, label, onclick: `openIssue('${issue.id}')` });
+    });
+    // Photos attached to an update belong in here too, dated by the update rather
+    // than by when the issue started.
+    (issue.updates || []).forEach((u) => {
+      (u.photoLinks || []).forEach((link) => {
+        if (!link || !link.isImage || !link.url) return;
+        photos.push({ url: link.url, date: u.date || issue.startDate, label, onclick: `openIssue('${issue.id}')` });
+      });
     });
   });
   $main.innerHTML = renderPhotoGallery(photos, 'Jazz photos', 'goJazzMain()', 'No photos yet. Add one to an issue and it\'ll show up here.');
@@ -2953,6 +2986,8 @@ function getPhotoDraftArray(prefix) {
   if (prefix === 'buildExp') return buildExpPhotoDrafts;
   if (prefix === 'noahIssue') return noahIssuePhotoDrafts;
   if (prefix === 'noahMilestone') return noahMilestonePhotoDrafts;
+  if (prefix === 'jazzUpdate') return jazzUpdatePhotoDrafts;
+  if (prefix === 'noahUpdate') return noahUpdatePhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
 // Which Drive folder each context's uploads land in. 'docs' isn't listed here since its
@@ -2966,16 +3001,18 @@ const PHOTO_LINK_CONTEXT = {
   buildSub: { folder: 'Build Photos' },
   buildExp: { folder: 'Build Receipts' },
   noahIssue: { folder: 'Noah Photos' },
-  noahMilestone: { folder: 'Noah Photos' }
+  noahMilestone: { folder: 'Noah Photos' },
+  jazzUpdate: { folder: 'Jazz Photos' },
+  noahUpdate: { folder: 'Noah Photos' }
 };
-let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
-let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] }; // parallel too — the actual reason, so it's reportable without a dev console
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // in-flight upload promises, per context — Save must await these before finishing
+let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
-let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] };
+let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] };
 
 // Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
 // photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
@@ -3075,7 +3112,7 @@ async function waitForPendingUploads(prefix) {
 // multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
 // indices got removed in THIS edit session — the actual removal only takes effect
 // when the form is saved, so backing out is always safe.
-let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [] };
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] };
 
 // Clears every parallel array for one photo context in a single call. Opening a fresh
 // form has to reset all four or a previous form's links leak into the new record —
@@ -3117,6 +3154,8 @@ function removeExistingLink(context, index) {
   else if (context === 'buildExp') renderAddBuildExpense();
   else if (context === 'noahIssue') renderAddNoahIssue();
   else if (context === 'noahMilestone') renderAddNoahMilestone();
+  else if (context === 'jazzUpdate') renderAddJazzUpdate();
+  else if (context === 'noahUpdate') renderAddNoahUpdate();
 }
 function keptExistingLinks(links, context) {
   if (!links) return [];
@@ -3377,28 +3416,89 @@ async function renderIssueDetail() {
     <p style="font-size:11px;color:var(--ink-soft);margin-bottom:16px">Started ${fmtDate(issue.startDate)} · ${days} day${days===1?'':'s'} so far</p>
 
     <div class="thread-item"><p class="meta">${fmtDate(issue.startDate)} · ${issue.severity}</p><p class="note">${esc(issue.description||'')}</p>${issue.medGiven ? `<p class="meta">Medication: ${esc(issue.medName)}</p>` : ''}${issue.weather || issue.stool || issue.snowCovered ? `<p class="meta">${[issue.weather, issue.snowCovered ? 'Snow covered' : '', issue.stool ? 'Stool: ' + issue.stool : ''].filter(Boolean).join(' · ')}</p>` : ''}</div>
-    ${(issue.updates||[]).map((u) => `<div class="thread-item"><p class="meta">${fmtDate(u.date)} · ${u.severity}</p><p class="note">${esc(u.note)}</p></div>`).join('')}
     ${renderLinkPreviewList(issue.photoLinks, 'Photo')}
+    ${updatesHeading((issue.updates || []).length, 'goAddJazzUpdate()')}
+    ${(issue.updates || []).length
+      ? issue.updates.map((u) => renderUpdateThreadItem(u, fmtDate(u.date) + ' · ' + (u.severity || ''))).join('')
+      : '<p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">No updates yet.</p>'}
 
+    <button class="btn" style="margin-bottom:10px" onclick="goAddJazzUpdate()"><i class="ti ti-plus"></i> Add update</button>
     <button class="btn" style="margin-bottom:10px" onclick="editIssue('${issue.id}')"><i class="ti ti-edit"></i> Edit</button>
-    <button class="btn" style="margin-bottom:10px" onclick="addIssueUpdate()"><i class="ti ti-plus"></i> Add update</button>
     ${issue.status === 'ongoing' ? `<button class="btn" style="background:var(--sage-soft);color:#0F6E56;border-color:var(--sage)" onclick="markIssueResolved()"><i class="ti ti-check"></i> Mark resolved</button>` : ''}
   `;
 }
 
-async function addIssueUpdate() {
-  const note = prompt('What\'s the update?'); if (!note) return;
-  const severity = prompt('Severity now (Mild/Moderate/Severe)?', 'Mild') || 'Mild';
+// An update used to be two browser prompts, then a popup sheet. It's a full page
+// now: prompts can't hold a line break and often don't appear at all in an installed
+// PWA, and a sheet is a cramped place to attach photos to.
+let jazzUpdatePhotoDrafts = [];
+
+function goAddJazzUpdate() {
+  jazzUpdatePhotoDrafts = [];
+  resetPhotoContext('jazzUpdate');
+  currentView = 'addJazzUpdate';
+  route();
+}
+
+async function renderAddJazzUpdate() {
+  const issue = await DB.get('jazzIssues', currentIssueId);
+  if (!issue) { currentView = 'main'; return route(); }
+  const types = await DB.getAll('issueTypes');
+  const type = types.find((t) => t.id === issue.typeId) || {};
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="currentView='issueDetail';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Add update</span></div>
+    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:16px">${esc(type.name || 'Issue')} · started ${fmtDate(issue.startDate)}</p>
+
+    <div class="field"><label class="field-label">Date</label><input type="date" id="ju_date" value="${todayStr()}"></div>
+    <label class="field-label">Severity now</label>
+    <div class="btn-toggle-row" id="jazzUpdateSeverity">
+      <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Mild')">Mild</button>
+      <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Moderate')">Moderate</button>
+      <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Severe')">Severe</button>
+    </div>
+    <div class="field"><label class="field-label">Notes</label><textarea id="ju_note" placeholder="How he's doing, what changed..."></textarea></div>
+    <label class="field-label">Add photos</label>
+    <div class="photo-grid" id="jazzUpdatePhotoGrid">${renderPhotoGrid(jazzUpdatePhotoDrafts, 'jazzUpdate')}</div>
+    <button class="btn btn-primary" id="saveJazzUpdateBtn" onclick="saveJazzUpdate()">Save update</button>
+  `;
+  selectJazzUpdateSeverity(document.querySelector('#jazzUpdateSeverity .btn-toggle'), issue.severity || 'Mild');
+}
+function selectJazzUpdateSeverity(btn, val) {
+  if (!btn) return;
+  btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
+  btn.classList.add('active-neutral');
+  window.__jazzUpdateSeverity = val;
+}
+
+async function saveJazzUpdate() {
+  const btn = document.getElementById('saveJazzUpdateBtn');
+  if (pendingPhotoUploads.jazzUpdate && pendingPhotoUploads.jazzUpdate.length && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
+  await waitForPendingUploads('jazzUpdate');
+  if (btn) { btn.disabled = false; btn.textContent = 'Save update'; }
+  const note = document.getElementById('ju_note').value.trim();
+  const severity = window.__jazzUpdateSeverity || 'Mild';
+  const photoLinks = photoUploadLinks.jazzUpdate.filter(Boolean);
+  if (!note && !photoLinks.length) { alert('Add a note or a photo first.'); return; }
   const issue = await DB.get('jazzIssues', currentIssueId);
   issue.updates = issue.updates || [];
-  issue.updates.push({ date: todayStr(), severity, note });
+  issue.updates.push({ date: document.getElementById('ju_date').value || todayStr(), severity, note, photoLinks });
+  issue.severity = severity; // the list should show where things stand now, not day one
+  // MUST be set before the local save: the pull only leaves a record alone when it's
+  // marked unsynced. Without this, a background pull landing before the push finished
+  // overwrote the issue with the Sheet's older copy and the update just disappeared.
+  issue.synced = false;
   await DB.put('jazzIssues', issue);
-  Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue)); // appends a fresh snapshot row; the Sheet is an append-only log, not an editable mirror
-  renderIssueDetail();
+  Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
+  jazzUpdatePhotoDrafts = [];
+  resetPhotoContext('jazzUpdate');
+  currentView = 'issueDetail';
+  route();
 }
 async function markIssueResolved() {
   const issue = await DB.get('jazzIssues', currentIssueId);
   issue.status = 'resolved'; issue.endDate = todayStr();
+  issue.synced = false; // same reason as above — otherwise a pull can undo the resolve
   await DB.put('jazzIssues', issue);
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
   renderIssueDetail();

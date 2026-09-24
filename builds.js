@@ -217,6 +217,8 @@ async function renderBuildDetail() {
   const subBuilds = (await getActiveSubBuilds(currentBuildId)).sort((a, b) => a.name.localeCompare(b.name));
   const total = await computeBuildTotal(currentBuildId);
 
+  const buildPhotoTotal = await countBuildPhotos(currentBuildId);
+
   const rows = await Promise.all(subBuilds.map(async (sb) => {
     const sbTotal = await computeSubBuildTotal(sb.id);
     const cover = (sb.photoLinks && sb.photoLinks[0]) || null;
@@ -248,8 +250,73 @@ async function renderBuildDetail() {
     </div>
     <p class="section-label">Sub-projects</p>
     ${rows.join('') || '<div class="empty-state">No sub-projects yet.</div>'}
-    <button class="btn btn-primary" style="margin-top:10px" onclick="goAddSubBuild('${build.id}')"><i class="ti ti-plus"></i> Add sub-project</button>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="goAddSubBuild('${build.id}')"><i class="ti ti-plus"></i> Add sub-project</button>
+      <button class="btn" style="flex:1" onclick="buildPhotoScope='build';currentView='buildPhotos';route()"><i class="ti ti-photo"></i> Photos${buildPhotoTotal ? ' (' + buildPhotoTotal + ')' : ''}</button>
+    </div>
   `;
+}
+
+// Everything under one project: its own photos, each sub-project's, and every photo
+// on their expenses. Counting is cheap enough to do on render and it means the button
+// can say whether there's anything in there before you tap it.
+async function countBuildPhotos(buildId) {
+  const photos = await collectBuildPhotos(buildId, null);
+  return photos.length;
+}
+
+// scope 'sub' narrows the gallery to one sub-project (and its expenses), which is
+// what the button on a sub-project page uses. Otherwise it's the whole project.
+let buildPhotoScope = 'build';
+
+async function collectBuildPhotos(buildId, onlySubBuildId) {
+  const out = [];
+  const imagesOf = (links) => (links || []).filter((l) => l && l.isImage && l.url);
+
+  if (!onlySubBuildId) {
+    const build = await DB.get('builds', buildId);
+    if (build) {
+      imagesOf(build.photoLinks).forEach((l) => {
+        out.push({ url: l.url, date: build.startDate || '', label: build.name || 'Project', onclick: `openBuild('${build.id}')` });
+      });
+    }
+  }
+
+  const subBuilds = onlySubBuildId
+    ? [await DB.get('subBuilds', onlySubBuildId)].filter(Boolean)
+    : await getActiveSubBuilds(buildId);
+  const categories = await getActiveBuildCategories();
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+
+  for (const sb of subBuilds) {
+    imagesOf(sb.photoLinks).forEach((l) => {
+      out.push({ url: l.url, date: sb.startDate || '', label: sb.name || 'Sub-project', onclick: `openSubBuild('${sb.id}')` });
+    });
+    const expenses = await getActiveBuildExpenses(sb.id);
+    expenses.forEach((e) => {
+      imagesOf(e.photoLinks).forEach((l) => {
+        const cat = catById[e.categoryId] || {};
+        out.push({ url: l.url, date: e.date || '', label: (e.description || cat.name || 'Expense'), onclick: `openBuildExpenseDetail('${e.id}')` });
+      });
+    });
+  }
+  return out;
+}
+
+async function renderBuildPhotos() {
+  const scopedToSub = buildPhotoScope === 'sub' && currentSubBuildId;
+  const photos = await collectBuildPhotos(currentBuildId, scopedToSub ? currentSubBuildId : null);
+  let title, back;
+  if (scopedToSub) {
+    const sb = await DB.get('subBuilds', currentSubBuildId);
+    title = esc(sb ? sb.name : 'Sub-project') + ' photos';
+    back = `buildPhotoScope='build';currentView='subBuildDetail';route()`;
+  } else {
+    const build = await DB.get('builds', currentBuildId);
+    title = esc(build ? build.name : 'Project') + ' photos';
+    back = `currentView='buildDetail';route()`;
+  }
+  $main.innerHTML = renderPhotoGallery(photos, title, back, 'No photos yet. Add one to the project, a sub-project or an expense and it\'ll show up here.');
 }
 
 function subBuildTypeLabel(type) {
@@ -402,7 +469,10 @@ async function renderSubBuildDetail() {
     ` : ''}
     <p class="section-label">Expenses</p>
     <div>${expenses.map((e) => renderBuildExpenseRow(e, catById)).join('') || '<div class="empty-state">No expenses yet.</div>'}</div>
-    <button class="btn btn-primary" style="margin-top:10px" onclick="goAddBuildExpense('${sb.id}')"><i class="ti ti-plus"></i> Add expense</button>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="goAddBuildExpense('${sb.id}')"><i class="ti ti-plus"></i> Add expense</button>
+      <button class="btn" style="flex:1" onclick="buildPhotoScope='sub';currentView='buildPhotos';route()"><i class="ti ti-photo"></i> Photos</button>
+    </div>
   `;
 }
 function renderBuildExpenseRow(e, catById) {

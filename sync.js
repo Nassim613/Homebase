@@ -406,7 +406,7 @@ const Sync = {
 
   // Screens where re-rendering mid-use would wipe out whatever the person is currently
   // typing — never auto-refresh these, no matter how new the incoming data is.
-  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone'],
+  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate'],
 
   startPolling() {
     window.addEventListener('online', () => this.fullSync());

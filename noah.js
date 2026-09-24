@@ -409,40 +409,58 @@ async function renderNoahIssueDetail() {
       <p class="meta">${fmtDate(issue.startDate)}${firstMeta ? ' · ' + firstMeta : ''}</p>
       ${issue.description ? `<p class="note">${esc(issue.description)}</p>` : ''}
     </div>
-    ${(issue.updates || []).map((u) => renderNoahUpdate(u, clinicName)).join('')}
     ${issue.doctorVisit ? `<div class="thread-item" style="border-left-color:var(--gold)">
       <p class="meta"><i class="ti ti-stethoscope"></i> ${fmtDate(issue.visitDate || issue.startDate)} · Doctor visit${clinicName(issue.clinicId) ? ' · ' + esc(clinicName(issue.clinicId)) : ''}</p>
       ${issue.visitNotes ? `<p class="note">${esc(issue.visitNotes)}</p>` : ''}
     </div>` : ''}
     ${renderLinkPreviewList(issue.photoLinks, 'Photo')}
+    ${updatesHeading((issue.updates || []).length, 'goAddNoahUpdate()')}
+    ${(issue.updates || []).length
+      ? issue.updates.map((u) => renderNoahUpdate(u, clinicName)).join('')
+      : '<p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">No updates yet.</p>'}
 
-    <button class="btn" style="margin-bottom:10px" onclick="openNoahUpdateModal()"><i class="ti ti-plus"></i> Add update</button>
+    <button class="btn" style="margin-bottom:10px" onclick="goAddNoahUpdate()"><i class="ti ti-plus"></i> Add update</button>
     <button class="btn" style="margin-bottom:10px" onclick="editNoahIssue('${issue.id}')"><i class="ti ti-edit"></i> Edit</button>
     ${issue.status === 'ongoing' ? `<button class="btn" style="margin-bottom:10px;background:var(--sage-soft);color:#0F6E56;border-color:var(--sage)" onclick="resolveNoahIssue()"><i class="ti ti-check"></i> Mark resolved</button>` : ''}
     <button class="btn" style="color:var(--red);border-color:var(--red-soft)" onclick="deleteNoahIssue('${issue.id}')"><i class="ti ti-trash"></i> Delete</button>
   `;
 }
 
+// Temperature, dose and visit stay folded into the update's header line rather than
+// becoming separate rows — one glance down the thread reads as a timeline.
 function renderNoahUpdate(u, clinicName) {
   const meta = [fmtDate(u.date), u.time || '', u.severity || '', u.temp ? u.temp + NOAH_TEMP_UNIT : '', u.medName ? u.medName + (u.medDose ? ' ' + u.medDose : '') : ''].filter(Boolean).join(' · ');
-  if (u.doctorVisit) {
-    return `<div class="thread-item" style="border-left-color:var(--gold)">
-      <p class="meta"><i class="ti ti-stethoscope"></i> ${esc(meta)} · Doctor visit${u.clinicId && clinicName(u.clinicId) ? ' · ' + esc(clinicName(u.clinicId)) : ''}</p>
-      ${u.note ? `<p class="note">${esc(u.note)}</p>` : ''}
-    </div>`;
-  }
-  return `<div class="thread-item"><p class="meta">${esc(meta)}</p>${u.note ? `<p class="note">${esc(u.note)}</p>` : ''}</div>`;
+  const visitSuffix = u.doctorVisit ? ' · Doctor visit' + (u.clinicId && clinicName(u.clinicId) ? ' · ' + clinicName(u.clinicId) : '') : '';
+  const html = renderUpdateThreadItem(u, meta + visitSuffix);
+  return u.doctorVisit ? html.replace('class="thread-item thread-update"', 'class="thread-item thread-update" style="border-left-color:var(--gold)"') : html;
 }
 
-// Updates get a proper form rather than a browser prompt, because a doctor visit or a
-// new dose usually happens partway through an illness, not on day one — and because a
-// prompt can't hold multi-line notes.
-async function openNoahUpdateModal() {
+// An update is its own page rather than a popup: a doctor visit or a new dose
+// usually happens partway through an illness, and it's a natural place to attach a
+// photo of a rash or a prescription label — cramped in a sheet, fine on a page.
+let noahUpdatePhotoDrafts = [];
+
+function goAddNoahUpdate() {
+  noahUpdatePhotoDrafts = [];
+  resetPhotoContext('noahUpdate');
+  currentView = 'addNoahUpdate';
+  route();
+}
+
+async function renderAddNoahUpdate() {
+  const issue = await DB.get('noahIssues', noahIssueId);
+  if (!issue) { currentView = 'main'; return route(); }
+  const types = await DB.getAll('noahIssueTypes');
+  const type = types.find((t) => t.id === issue.typeId) || {};
   const clinics = await getActiveNoahClinics();
-  document.getElementById('modalSheet').innerHTML = `
-    <div class="sheet-handle"></div>
-    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Add update</p>
-    <div class="field-row" style="margin-bottom:12px">
+  const past = await getActiveNoahIssues();
+  const medHistory = [...new Set(past.flatMap((i) => noahAllMeds(i).map((m) => m.name)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="currentView='noahIssueDetail';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Add update</span></div>
+    <p style="font-size:11px;color:var(--ink-soft);margin-bottom:16px">${esc(type.name || 'Issue')} · started ${fmtDate(issue.startDate)}</p>
+
+    <div class="field-row" style="margin-bottom:14px">
       <div><label class="field-label">Date</label><input type="date" id="nu_date" value="${todayStr()}"></div>
       <div><label class="field-label">Time</label><input id="nu_time" placeholder="7:10 pm"></div>
     </div>
@@ -452,11 +470,12 @@ async function openNoahUpdateModal() {
       <button class="btn-toggle" onclick="selectNoahUpdateSeverity(this,'Moderate')">Moderate</button>
       <button class="btn-toggle" onclick="selectNoahUpdateSeverity(this,'Severe')">Severe</button>
     </div>
-    <div class="field-row" style="margin-bottom:12px">
+    <div class="field-row" style="margin-bottom:14px">
       <div><label class="field-label">Temperature</label><input id="nu_temp" type="number" step="0.1" placeholder="38.4 ${NOAH_TEMP_UNIT}"></div>
-      <div><label class="field-label">Medication</label><input id="nu_medName" placeholder="Tylenol"></div>
+      <div><label class="field-label">Medication</label><input id="nu_medName" list="noahUpdateMedList" placeholder="Tylenol"><datalist id="noahUpdateMedList">${medHistory.map((m) => `<option value="${esc(m)}">`).join('')}</datalist></div>
     </div>
     <div class="field"><label class="field-label">Dose</label><input id="nu_medDose" placeholder="5 ${NOAH_DOSE_UNIT}"></div>
+
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="field-label" style="margin:0">Doctor visit</label>
@@ -469,17 +488,33 @@ async function openNoahUpdateModal() {
         </div>
       </div>
     </div>
+
     <div class="field"><label class="field-label">Notes</label><textarea id="nu_note" placeholder="How he's doing, what changed..."></textarea></div>
-    <button class="btn btn-primary" onclick="saveNoahUpdate()">Add update</button>
+    <label class="field-label">Add photos</label>
+    <div class="photo-grid" id="noahUpdatePhotoGrid">${renderPhotoGrid(noahUpdatePhotoDrafts, 'noahUpdate')}</div>
+    <button class="btn btn-primary" id="saveNoahUpdateBtn" onclick="saveNoahUpdate()">Save update</button>
   `;
   window.__noahUpdateVisit = false;
-  openModal();
-  selectNoahUpdateSeverity(document.querySelector('#noahUpdateSeverity .btn-toggle'), 'Mild');
+  selectNoahUpdateSeverity(document.querySelector('#noahUpdateSeverity .btn-toggle'), issue.severity || 'Mild');
 }
-function selectNoahUpdateSeverity(btn, val) { if (!btn) return; btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral')); btn.classList.add('active-neutral'); window.__noahUpdateSeverity = val; }
-function toggleNoahUpdateVisit() { window.__noahUpdateVisit = !window.__noahUpdateVisit; document.getElementById('nuVisitToggle').textContent = window.__noahUpdateVisit ? 'Yes' : 'No'; document.getElementById('nuVisitFields').style.display = window.__noahUpdateVisit ? 'block' : 'none'; }
+
+function selectNoahUpdateSeverity(btn, val) {
+  if (!btn) return;
+  btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
+  btn.classList.add('active-neutral');
+  window.__noahUpdateSeverity = val;
+}
+function toggleNoahUpdateVisit() {
+  window.__noahUpdateVisit = !window.__noahUpdateVisit;
+  document.getElementById('nuVisitToggle').textContent = window.__noahUpdateVisit ? 'Yes' : 'No';
+  document.getElementById('nuVisitFields').style.display = window.__noahUpdateVisit ? 'block' : 'none';
+}
 
 async function saveNoahUpdate() {
+  const btn = document.getElementById('saveNoahUpdateBtn');
+  if (pendingPhotoUploads.noahUpdate && pendingPhotoUploads.noahUpdate.length && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
+  await waitForPendingUploads('noahUpdate');
+  if (btn) { btn.disabled = false; btn.textContent = 'Save update'; }
   const issue = await DB.get('noahIssues', noahIssueId);
   if (!issue) return;
   const clinicSel = document.getElementById('nu_clinic');
@@ -492,8 +527,13 @@ async function saveNoahUpdate() {
     medDose: document.getElementById('nu_medDose').value.trim(),
     doctorVisit: !!window.__noahUpdateVisit,
     clinicId: window.__noahUpdateVisit && clinicSel ? clinicSel.value : null,
-    note: document.getElementById('nu_note').value.trim()
+    note: document.getElementById('nu_note').value.trim(),
+    photoLinks: photoUploadLinks.noahUpdate.filter(Boolean)
   };
+  if (!update.note && !update.photoLinks.length && !update.temp && !update.medName && !update.doctorVisit) {
+    alert('Add something to the update first — a note, a photo, a temperature, a dose or a visit.');
+    return;
+  }
   issue.updates = issue.updates || [];
   issue.updates.push(update);
   // Any severity change on an update becomes the issue's current severity, so the list
@@ -502,8 +542,10 @@ async function saveNoahUpdate() {
   issue.synced = false;
   await DB.put('noahIssues', issue);
   Sync.pushEntry('Noah', issue).then(() => DB.put('noahIssues', issue));
-  closeModal();
-  renderNoahIssueDetail();
+  noahUpdatePhotoDrafts = [];
+  resetPhotoContext('noahUpdate');
+  currentView = 'noahIssueDetail';
+  route();
 }
 
 async function resolveNoahIssue() {
@@ -569,7 +611,18 @@ async function saveNoahClinic(fromUpdate) {
   await DB.put('noahClinics', clinic);
   Sync.pushEntry('NoahClinics', clinic).then(() => DB.put('noahClinics', clinic));
   closeModal();
-  if (fromUpdate) { openNoahUpdateModal(); return; }
+  // Adding a clinic from the update page: the page is still underneath, so just drop
+  // the new clinic into its picker rather than rebuilding the whole form and losing
+  // whatever's already typed into it.
+  if (fromUpdate) {
+    const updateSel = document.getElementById('nu_clinic');
+    if (updateSel) {
+      const opt = document.createElement('option');
+      opt.value = clinic.id; opt.textContent = clinic.name;
+      updateSel.appendChild(opt); updateSel.value = clinic.id;
+    }
+    return;
+  }
   const sel = document.getElementById('n_clinic');
   if (sel) {
     const opt = document.createElement('option');
@@ -830,9 +883,16 @@ async function renderNoahPhotos() {
   const typeById = Object.fromEntries((await DB.getAll('noahIssueTypes')).map((t) => [t.id, t]));
   const photos = [];
   issues.forEach((issue) => {
+    const label = (typeById[issue.typeId] || {}).name || 'Issue';
     (issue.photoLinks || []).forEach((link) => {
       if (!link || !link.isImage || !link.url) return;
-      photos.push({ url: link.url, date: issue.startDate, label: (typeById[issue.typeId] || {}).name || 'Issue', onclick: `openNoahIssue('${issue.id}')` });
+      photos.push({ url: link.url, date: issue.startDate, label, onclick: `openNoahIssue('${issue.id}')` });
+    });
+    (issue.updates || []).forEach((u) => {
+      (u.photoLinks || []).forEach((link) => {
+        if (!link || !link.isImage || !link.url) return;
+        photos.push({ url: link.url, date: u.date || issue.startDate, label, onclick: `openNoahIssue('${issue.id}')` });
+      });
     });
   });
   milestones.forEach((m) => {
