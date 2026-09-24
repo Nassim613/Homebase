@@ -1951,12 +1951,30 @@ function openStorePickerModal() {
   `;
   openModal();
 }
+// True once YOU pick a store on this form. A store that a category filled in for you
+// doesn't count — otherwise the Groceries default that lands before you've touched
+// anything would block every later category from applying its own store, which is
+// worse than the overwriting it's meant to prevent. Reset whenever the form opens.
+let storePickedByUser = false;
+
 function selectStoreFromPicker(id) {
+  storePickedByUser = true;
   document.getElementById('f_store').value = id;
   closeModal();
   updateStoreButtonDisplay();
   const store = (window.__payeesCache || []).find((p) => p.id === id);
-  if (store && store.defaultAmount) document.getElementById('f_amount').value = store.defaultAmount;
+  if (store && store.defaultAmount) applyDefaultAmount(store.defaultAmount);
+}
+
+// A default amount is a convenience for a blank field, not a correction. Typing the
+// amount first and then picking the store used to wipe what you'd entered, which is
+// the natural order to fill the form in — so an amount you actually typed always wins.
+function applyDefaultAmount(amount) {
+  const field = document.getElementById('f_amount');
+  if (!field) return;
+  const current = (field.value || '').trim();
+  if (current !== '' && parseFloat(current) !== 0) return; // leave what's there alone
+  field.value = amount;
 }
 async function updateStoreButtonDisplay() {
   const el = document.getElementById('f_storeButtonContent');
@@ -2029,6 +2047,9 @@ async function renderAddEntry() {
   `;
 
   window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
+  // An edit or a duplicate arrives with a store that was chosen deliberately, once —
+  // so treat it as picked and leave it be. A fresh form starts with nothing chosen.
+  storePickedByUser = !!(src && src.storeId);
   if (src && src.categoryId) {
     onCategoryChange(true);
     setType(src.type);
@@ -2102,8 +2123,10 @@ function onCategoryChange(skipAutofill) {
   if (!cat) { area.innerHTML = ''; return; }
   if (!skipAutofill) setType(cat.type || 'expense');
 
-  if (!skipAutofill && cat.defaultStoreId) { document.getElementById('f_store').value = cat.defaultStoreId; updateStoreButtonDisplay(); }
-  if (!skipAutofill && cat.defaultAmount) document.getElementById('f_amount').value = cat.defaultAmount;
+  // Same rule as the amount: a category's default store fills a gap, it doesn't
+  // overrule a store you chose yourself.
+  if (!skipAutofill && cat.defaultStoreId && !storePickedByUser) { document.getElementById('f_store').value = cat.defaultStoreId; updateStoreButtonDisplay(); }
+  if (!skipAutofill && cat.defaultAmount) applyDefaultAmount(cat.defaultAmount);
 
   if (cat.conditionalField === 'car') {
     area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><div style="display:flex;gap:6px"><select id="f_car" style="flex:1">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewCarInline()"><i class="ti ti-plus"></i></button></div></div>`;
