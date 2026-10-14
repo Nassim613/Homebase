@@ -4,18 +4,22 @@
 // day-grouped list, issue threads with follow-up updates, resolve — but with the
 // dog-specific fields (weather, stool, snow) replaced by kid-specific ones.
 //
-// Four local stores, four Sheet tabs:
+// Local stores and the Sheet tabs they sync to:
 //   noahIssues     -> Noah
 //   noahGrowth     -> NoahGrowth
 //   noahMilestones -> NoahMilestones
 //   noahIssueTypes -> NoahIssueTypes
 //   noahClinics    -> NoahClinics
+//   noahVisits     -> NoahVisits
+//   noahVisitTypes -> NoahVisitTypes
 //
-// Doctor visits are deliberately NOT their own section: a visit always belongs to
-// whatever was going on, so it's recorded on the health entry (or on one of its
-// updates, since a visit usually happens on day 2 or 3, not day 1).
+// Two kinds of "visit" live here. A sick visit (walk-in for an ear infection) can
+// still be ticked on the health entry itself, as before. The Visits section is for
+// appointments in their own right — dentist, allergist, checkups — with comments,
+// photos and files, and a cost. A visit can optionally point at a health entry
+// (linkedIssueId) when it was about something that was going on.
 
-let noahSection = 'health';        // health | growth | milestones
+let noahSection = 'health';        // health | growth | visits | milestones
 let noahIssueId = null;            // issue currently open in the detail view
 let noahEditSource = null;         // issue being edited (with __editId), or null
 let noahMilestoneEditId = null;
@@ -34,9 +38,11 @@ async function getActiveNoahClinics() { return (await DB.getAll('noahClinics')).
 
 function noahSectionSwitcher() {
   const tab = (key, icon, label) => `<button class="btn-toggle ${noahSection === key ? 'active-neutral' : ''}" onclick="setNoahSection('${key}')"><i class="ti ${icon}"></i> ${label}</button>`;
-  return `<div class="btn-toggle-row">
+  // Four sections don't fit in one row on a phone, so they sit two by two.
+  return `<div class="btn-toggle-row" style="display:grid;grid-template-columns:1fr 1fr">
     ${tab('health', 'ti-heartbeat', 'Health')}
     ${tab('growth', 'ti-ruler-measure', 'Growth')}
+    ${tab('visits', 'ti-stethoscope', 'Visits')}
     ${tab('milestones', 'ti-star', 'Milestones')}
   </div>`;
 }
@@ -49,6 +55,7 @@ function setNoahSection(section) {
 // The FAB adds whatever makes sense for the section you're looking at.
 function noahFabAction() {
   if (noahSection === 'growth') { noahGrowthEditId = null; currentView = 'addNoahGrowth'; route(); return; }
+  if (noahSection === 'visits') { goAddNoahVisit(); return; }
   if (noahSection === 'milestones') {
     noahMilestoneEditId = null;
     noahMilestonePhotoDrafts = []; resetPhotoContext('noahMilestone');
@@ -64,6 +71,7 @@ function noahFabAction() {
 async function renderNoahMain() {
   if (noahSection === 'growth') return renderNoahGrowth();
   if (noahSection === 'milestones') return renderNoahMilestones();
+  if (noahSection === 'visits') return renderNoahVisits();
   return renderNoahHealth();
 }
 
@@ -395,6 +403,8 @@ async function renderNoahIssueDetail() {
   const clinics = await getActiveNoahClinics();
   const clinicName = (id) => (clinics.find((c) => c.id === id) || {}).name || '';
   const day = noahDayCount(issue);
+  const linkedVisits = (await getActiveNoahVisits()).filter((v) => v.linkedIssueId === issue.id).sort((a, b) => a.date.localeCompare(b.date));
+  const visitTypeById = Object.fromEntries((await DB.getAll('noahVisitTypes')).map((t) => [t.id, t]));
 
   const firstMeta = [issue.severity, issue.temp ? issue.temp + NOAH_TEMP_UNIT : '', issue.medName ? esc(issue.medName) + (issue.medDose ? ' ' + esc(issue.medDose) : '') : ''].filter(Boolean).join(' · ');
 
@@ -413,6 +423,13 @@ async function renderNoahIssueDetail() {
       <p class="meta"><i class="ti ti-stethoscope"></i> ${fmtDate(issue.visitDate || issue.startDate)} · Doctor visit${clinicName(issue.clinicId) ? ' · ' + esc(clinicName(issue.clinicId)) : ''}</p>
       ${issue.visitNotes ? `<p class="note">${esc(issue.visitNotes)}</p>` : ''}
     </div>` : ''}
+    ${linkedVisits.map((v) => {
+      const vt = visitTypeById[v.typeId] || {};
+      return `<div class="thread-item" style="border-left-color:var(--gold);cursor:pointer" onclick="openNoahVisit('${v.id}')">
+        <p class="meta"><i class="ti ${vt.icon || 'ti-stethoscope'}"></i> ${fmtDate(v.date)} · ${esc(vt.name || 'Visit')}${v.reason ? ' · ' + esc(v.reason) : ''} <i class="ti ti-chevron-right" style="font-size:11px"></i></p>
+        ${v.comments ? `<p class="note">${esc(v.comments)}</p>` : ''}
+      </div>`;
+    }).join('')}
     ${renderLinkPreviewList(issue.photoLinks, 'Photo')}
     ${updatesHeading((issue.updates || []).length, 'goAddNoahUpdate()')}
     ${(issue.updates || []).length
@@ -420,6 +437,7 @@ async function renderNoahIssueDetail() {
       : '<p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">No updates yet.</p>'}
 
     <button class="btn" style="margin-bottom:10px" onclick="goAddNoahUpdate()"><i class="ti ti-plus"></i> Add update</button>
+    <button class="btn" style="margin-bottom:10px" onclick="goAddNoahVisit('${issue.id}')"><i class="ti ti-stethoscope"></i> Log a visit for this</button>
     <button class="btn" style="margin-bottom:10px" onclick="editNoahIssue('${issue.id}')"><i class="ti ti-edit"></i> Edit</button>
     ${issue.status === 'ongoing' ? `<button class="btn" style="margin-bottom:10px;background:var(--sage-soft);color:#0F6E56;border-color:var(--sage)" onclick="resolveNoahIssue()"><i class="ti ti-check"></i> Mark resolved</button>` : ''}
     <button class="btn" style="color:var(--red);border-color:var(--red-soft)" onclick="deleteNoahIssue('${issue.id}')"><i class="ti ti-trash"></i> Delete</button>
@@ -614,16 +632,10 @@ async function saveNoahClinic(fromUpdate) {
   // Adding a clinic from the update page: the page is still underneath, so just drop
   // the new clinic into its picker rather than rebuilding the whole form and losing
   // whatever's already typed into it.
-  if (fromUpdate) {
-    const updateSel = document.getElementById('nu_clinic');
-    if (updateSel) {
-      const opt = document.createElement('option');
-      opt.value = clinic.id; opt.textContent = clinic.name;
-      updateSel.appendChild(opt); updateSel.value = clinic.id;
-    }
-    return;
-  }
-  const sel = document.getElementById('n_clinic');
+  // Same idea for the visit form: whichever clinic picker is on screen gets the new
+  // clinic, already selected. Only one of these forms is ever open at a time.
+  const sel = document.getElementById(fromUpdate ? 'nu_clinic' : 'nv_clinic') || document.getElementById('n_clinic');
+  if (fromUpdate && !sel) return;
   if (sel) {
     const opt = document.createElement('option');
     opt.value = clinic.id; opt.textContent = clinic.name;
@@ -895,6 +907,14 @@ async function renderNoahPhotos() {
       });
     });
   });
+  const visits = await getActiveNoahVisits();
+  const visitTypeById = Object.fromEntries((await DB.getAll('noahVisitTypes')).map((t) => [t.id, t]));
+  visits.forEach((v) => {
+    (v.photoLinks || []).forEach((link) => {
+      if (!link || !link.isImage || !link.url) return;
+      photos.push({ url: link.url, date: v.date, label: (visitTypeById[v.typeId] || {}).name || 'Visit', onclick: `openNoahVisit('${v.id}')` });
+    });
+  });
   milestones.forEach((m) => {
     (m.photoLinks || []).forEach((link) => {
       if (!link || !link.isImage || !link.url) return;
@@ -914,7 +934,14 @@ async function renderNoahReport() {
   const year = todayStr().slice(0, 4);
   const thisYear = issues.filter((i) => i.startDate.startsWith(year));
   const sickDays = thisYear.filter((i) => i.missedSchool).length;
-  const visits = thisYear.filter((i) => i.doctorVisit).length + thisYear.reduce((n, i) => n + (i.updates || []).filter((u) => u.doctorVisit).length, 0);
+  // Sick visits ticked on a health entry, plus appointments from the Visits section.
+  // A Visits entry linked to a health entry that ALSO has its visit ticked would be
+  // the same trip twice, so linked ones are only counted when the entry has no tick.
+  const visitRecords = (await getActiveNoahVisits()).filter((v) => v.date.startsWith(year) && v.date <= todayStr());
+  const issueById = Object.fromEntries(issues.map((i) => [i.id, i]));
+  const separateVisits = visitRecords.filter((v) => !(v.linkedIssueId && issueById[v.linkedIssueId] && issueById[v.linkedIssueId].doctorVisit));
+  const visits = thisYear.filter((i) => i.doctorVisit).length + thisYear.reduce((n, i) => n + (i.updates || []).filter((u) => u.doctorVisit).length, 0) + separateVisits.length;
+  const visitCost = noahVisitTotals(visitRecords);
 
   const byType = {};
   thisYear.forEach((i) => { const name = (typeById[i.typeId] || {}).name || 'Other'; byType[name] = (byType[name] || 0) + 1; });
@@ -928,9 +955,458 @@ async function renderNoahReport() {
       <div class="stat"><p class="label">Doctor visits</p><p class="value">${visits}</p></div>
       <div class="stat"><p class="label">Days home sick</p><p class="value">${sickDays}</p></div>
     </div>
+    <div class="stat-grid">
+      <div class="stat"><p class="label">Visits billed in ${year}</p><p class="value">${fmtMoney(visitCost.billed)}</p></div>
+      <div class="stat"><p class="label">Out of pocket</p><p class="value">${fmtMoney(visitCost.outOfPocket)}</p></div>
+    </div>
     <p class="section-title"><span>Most common this year</span></p>
     ${ranked.length ? ranked.map(([name, count]) => `<div class="list-row" style="cursor:default"><span>${esc(name)}</span><span>${count}</span></div>`).join('') : '<div class="empty-state">Nothing logged this year.</div>'}
     <p class="section-title"><span>Latest measurement</span></p>
     ${growth[0] ? `<div class="list-row" style="cursor:default"><span>${fmtDateYear(growth[0].date)}</span><span>${[growth[0].heightCm ? growth[0].heightCm + ' cm' : '', growth[0].weightLbs ? growth[0].weightLbs + ' lbs' : ''].filter(Boolean).join(' · ')}</span></div>` : '<div class="empty-state">No measurements yet.</div>'}
   `;
+}
+
+// ---------- visits ----------
+// Appointments in their own right: dentist, allergist, checkups. Each one has a type,
+// a date, optional clinic/doctor, comments, photos and files (report PDFs, a picture
+// of a prescription), a cost with what insurance covered, an optional follow-up date,
+// and an optional link to a health entry. Costs stay here — nothing is copied into
+// Finance — and every total is worked out on screen, never stored in the Sheet.
+
+let noahVisitId = null;            // visit open in the detail view
+let noahVisitEditId = null;        // visit being edited, or null for a new one
+let noahVisitPresetIssueId = null; // health entry a new visit starts linked to
+let noahVisitReturnTo = 'main';    // main | issue | detail — where Back goes from the form
+let noahVisitFilter = null;        // a visit type id, or null for all
+let noahVisitPhotoDrafts = [];
+
+async function getActiveNoahVisits() { return (await DB.getAll('noahVisits')).filter((r) => !r.deleted); }
+async function getActiveNoahVisitTypes() { return (await DB.getAll('noahVisitTypes')).filter((r) => !r.deleted); }
+
+function noahVisitOutOfPocket(v) {
+  const cost = Number(v.cost) || 0;
+  const covered = Number(v.insuranceCovered) || 0;
+  return Math.max(0, cost - covered);
+}
+function noahVisitTotals(visits) {
+  return visits.reduce((t, v) => {
+    t.billed += Number(v.cost) || 0;
+    t.outOfPocket += noahVisitOutOfPocket(v);
+    return t;
+  }, { billed: 0, outOfPocket: 0 });
+}
+// Visit times come from a time picker as "15:30"; shown the way the rest of the app
+// writes times.
+function noahFmtTime(t) {
+  const m = String(t || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return t || '';
+  let h = parseInt(m[1], 10);
+  const suffix = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return h + ':' + m[2] + ' ' + suffix;
+}
+function noahVisitTitle(v, typeById) {
+  const type = typeById[v.typeId] || {};
+  return (type.name || 'Visit') + (v.reason ? ', ' + v.reason : '');
+}
+
+function setNoahVisitFilter(typeId) {
+  noahVisitFilter = noahVisitFilter === typeId ? null : typeId;
+  renderNoahVisits();
+}
+
+async function renderNoahVisits() {
+  const all = await getActiveNoahVisits();
+  const types = await DB.getAll('noahVisitTypes');
+  const typeById = Object.fromEntries(types.map((t) => [t.id, t]));
+  const clinics = await getActiveNoahClinics();
+  const clinicName = (id) => (clinics.find((c) => c.id === id) || {}).name || '';
+  const today = todayStr();
+  const year = today.slice(0, 4);
+
+  const thisYear = all.filter((v) => v.date.startsWith(year));
+  const totals = noahVisitTotals(thisYear);
+
+  // Only types that actually have a visit get a filter chip, so the row stays short.
+  const usedTypeIds = [...new Set(all.map((v) => v.typeId))].filter((id) => typeById[id]);
+  if (noahVisitFilter && !usedTypeIds.includes(noahVisitFilter)) noahVisitFilter = null;
+  const shown = noahVisitFilter ? all.filter((v) => v.typeId === noahVisitFilter) : all;
+
+  const upcoming = shown.filter((v) => v.date >= today).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const past = shown.filter((v) => v.date < today).sort((a, b) => b.date.localeCompare(a.date));
+  // A follow-up that's still ahead shows with the upcoming appointments, so it isn't
+  // forgotten just because nobody has booked it yet.
+  const followUps = shown.filter((v) => v.followUpDate && v.followUpDate >= today).sort((a, b) => a.followUpDate.localeCompare(b.followUpDate));
+
+  const byYear = {};
+  past.forEach((v) => { const y = v.date.slice(0, 4); (byYear[y] = byYear[y] || []).push(v); });
+  const years = Object.keys(byYear).sort().reverse();
+
+  $main.innerHTML = `
+    ${noahSectionSwitcher()}
+    <div class="stat-grid">
+      <div class="stat"><p class="label">Billed in ${year}</p><p class="value">${fmtMoney(totals.billed)}</p><p class="label" style="margin-top:2px">${thisYear.length} visit${thisYear.length === 1 ? '' : 's'}</p></div>
+      <div class="stat"><p class="label">Out of pocket</p><p class="value">${fmtMoney(totals.outOfPocket)}</p>${totals.billed > totals.outOfPocket ? `<p class="label" style="margin-top:2px;color:#0F6E56">${fmtMoney(totals.billed - totals.outOfPocket)} covered</p>` : ''}</div>
+    </div>
+    <button class="btn" style="margin:6px 0 14px" onclick="goAddNoahVisit()"><i class="ti ti-plus"></i> Add visit</button>
+    ${usedTypeIds.length > 1 ? `<div class="chip-row">
+      <button class="chip ${!noahVisitFilter ? 'active' : ''}" onclick="noahVisitFilter=null;renderNoahVisits()">All</button>
+      ${usedTypeIds.map((id) => `<button class="chip ${noahVisitFilter === id ? 'active' : ''}" onclick="setNoahVisitFilter('${id}')"><i class="ti ${typeById[id].icon || 'ti-stethoscope'}"></i> ${esc(typeById[id].name)}</button>`).join('')}
+    </div>` : ''}
+
+    ${upcoming.length || followUps.length ? `
+      <p class="section-title" style="cursor:default"><span><i class="ti ti-calendar"></i> Upcoming</span></p>
+      ${upcoming.map((v) => `<div class="card tight" style="background:var(--gold-soft);cursor:pointer" onclick="openNoahVisit('${v.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <span style="font-size:14px;font-weight:600;color:#8a6412"><i class="ti ${(typeById[v.typeId] || {}).icon || 'ti-stethoscope'}"></i> ${esc(noahVisitTitle(v, typeById))}</span>
+          <span style="font-size:12px;color:#8a6412;white-space:nowrap">${v.date === today ? 'Today' : fmtDate(v.date)}</span>
+        </div>
+        ${clinicName(v.clinicId) || v.time ? `<p style="font-size:12px;color:#8a6412;margin-top:3px">${esc([clinicName(v.clinicId), noahFmtTime(v.time)].filter(Boolean).join(', '))}</p>` : ''}
+      </div>`).join('')}
+      ${followUps.map((v) => `<div class="card tight" style="cursor:pointer" onclick="openNoahVisit('${v.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <span style="font-size:13px"><i class="ti ti-repeat"></i> Follow-up · ${esc((typeById[v.typeId] || {}).name || 'Visit')}</span>
+          <span style="font-size:12px;color:var(--ink-soft);white-space:nowrap">${fmtDateYear(v.followUpDate)}</span>
+        </div>
+        <p style="font-size:11px;color:var(--ink-soft);margin-top:2px">From the ${fmtDate(v.date)} visit</p>
+      </div>`).join('')}
+    ` : ''}
+
+    ${years.length ? years.map((y, i) => {
+      const yt = noahVisitTotals(byYear[y]);
+      return `
+      <div class="section-title" onclick="toggleCollapse(this)">
+        <span>${y} <i class="ti collapse-chevron ti-chevron-${i === 0 ? 'down' : 'right'}" style="font-size:11px;vertical-align:-1px"></i><span class="day-summary"> · ${byYear[y].length} visit${byYear[y].length === 1 ? '' : 's'}</span></span>
+        <span class="amt" style="color:var(--ink-soft)">${yt.billed ? fmtMoney(yt.outOfPocket) + ' paid' : ''}</span>
+      </div>
+      <div class="collapse-body" style="display:${i === 0 ? 'block' : 'none'}">${byYear[y].map((v) => renderNoahVisitRow(v, typeById, clinicName)).join('')}</div>`;
+    }).join('') : (upcoming.length || followUps.length ? '' : `<div class="empty-state">${noahVisitFilter ? 'No visits of this type yet.' : 'No visits yet. Add a dentist, allergist or checkup appointment to start.'}</div>`)}
+  `;
+}
+
+function renderNoahVisitRow(v, typeById, clinicName) {
+  const type = typeById[v.typeId] || {};
+  const links = v.photoLinks || [];
+  const imgCount = links.filter((l) => l && l.isImage).length;
+  const fileCount = links.length - imgCount;
+  const firstPhoto = links.find((l) => l && l.isImage);
+  const cost = Number(v.cost) || 0;
+  const oop = noahVisitOutOfPocket(v);
+  const who = v.doctor || clinicName(v.clinicId);
+  return `<div class="entry-row" style="cursor:pointer" onclick="openNoahVisit('${v.id}')">
+    <div class="entry-icon">${firstPhoto ? `<img src="${firstPhoto.url}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${type.icon || 'ti-stethoscope'}" style="color:var(--ink-soft)"></i>`}</div>
+    <div class="entry-body">
+      <div class="entry-top">
+        <span class="entry-title">${esc(noahVisitTitle(v, typeById))}</span>
+        <span class="entry-value" style="${cost ? '' : 'font-weight:400;color:var(--ink-soft)'}">${cost ? fmtMoney(oop) : 'No cost'}</span>
+      </div>
+      <div class="entry-meta" style="display:flex;justify-content:space-between;gap:8px">
+        <span>${fmtDate(v.date)}${who ? ' · ' + esc(who) : ''}</span>
+        <span style="white-space:nowrap">${imgCount ? `<i class="ti ti-photo"></i> ${imgCount}` : ''}${imgCount && fileCount ? ' ' : ''}${fileCount ? `<i class="ti ti-file"></i> ${fileCount}` : ''}${cost && oop < cost ? ` <span style="color:#0F6E56">of ${fmtMoney(cost)}</span>` : ''}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ---------- visits: detail ----------
+
+function openNoahVisit(id) { noahVisitId = id; currentView = 'noahVisitDetail'; route(); }
+
+async function renderNoahVisitDetail() {
+  const v = await DB.get('noahVisits', noahVisitId);
+  if (!v || v.deleted) { noahSection = 'visits'; currentView = 'main'; return route(); }
+  const types = await DB.getAll('noahVisitTypes');
+  const type = types.find((t) => t.id === v.typeId) || {};
+  const clinics = await getActiveNoahClinics();
+  const clinic = clinics.find((c) => c.id === v.clinicId);
+  const linked = v.linkedIssueId ? await DB.get('noahIssues', v.linkedIssueId) : null;
+  const issueTypes = await DB.getAll('noahIssueTypes');
+  const linkedType = linked ? issueTypes.find((t) => t.id === linked.typeId) || {} : null;
+  const cost = Number(v.cost) || 0;
+  const covered = Number(v.insuranceCovered) || 0;
+  const links = v.photoLinks || [];
+  const images = links.filter((l) => l && l.isImage && l.url);
+  const files = links.filter((l) => l && !l.isImage && l.url);
+  const row = (label, value, style) => `<div class="list-row" style="cursor:default"><span style="font-size:13px;color:var(--ink-soft)">${label}</span><span style="font-size:13px;text-align:right;${style || ''}">${value}</span></div>`;
+
+  $main.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div class="back" style="cursor:pointer" onclick="noahSection='visits';goNoahMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Visits</span></div>
+      <button class="chip" onclick="editNoahVisit('${v.id}')"><i class="ti ti-edit"></i> Edit</button>
+    </div>
+    <p style="font-size:18px;font-weight:600;margin:10px 0 2px"><i class="ti ${type.icon || 'ti-stethoscope'}"></i> ${esc(noahVisitTitle(v, Object.fromEntries(types.map((t) => [t.id, t]))))}</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">${new Date(v.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}${v.time ? ' · ' + noahFmtTime(v.time) : ''}${v.date > todayStr() ? ' · <span class="pill-sm pill-ongoing">Upcoming</span>' : ''}</p>
+
+    <div class="card tight">
+      ${clinic ? row('Clinic', esc(clinic.name)) : ''}
+      ${v.doctor ? row('Doctor', esc(v.doctor)) : ''}
+      ${cost ? row('Cost', fmtMoney(cost)) : row('Cost', 'No cost', 'color:var(--ink-soft)')}
+      ${cost && covered ? row('Insurance covered', '−' + fmtMoney(covered), 'color:#0F6E56') : ''}
+      ${cost && covered ? row('Out of pocket', fmtMoney(noahVisitOutOfPocket(v)), 'font-weight:600') : ''}
+      ${v.followUpDate ? row('Follow-up', fmtDateYear(v.followUpDate)) : ''}
+    </div>
+
+    ${linked ? `<div class="list-row" style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0 14px" onclick="openNoahIssue('${linked.id}')">
+      <span style="font-size:13px"><i class="ti ${linkedType.icon || 'ti-virus'}"></i> ${esc(linkedType.name || 'Health entry')}, ${fmtDate(linked.startDate)}${linked.endDate ? ' to ' + fmtDate(linked.endDate) : ''}</span>
+      <i class="ti ti-chevron-right" style="color:var(--ink-soft)"></i>
+    </div>` : ''}
+
+    ${v.comments ? `<p class="field-label" style="margin-top:12px">Comments</p><p class="multiline" style="font-size:14px;margin-bottom:14px">${esc(v.comments)}</p>` : ''}
+
+    ${images.length ? `<p class="field-label">Photos</p>
+      <div class="gallery-grid" style="margin-bottom:14px">${images.map((l) => `<a class="gallery-tile" href="${l.viewUrl || l.url}" target="_blank" rel="noopener"><img src="${l.url}" loading="lazy" alt=""></a>`).join('')}</div>` : ''}
+    ${files.length ? `<p class="field-label">Files</p>
+      ${files.map((l) => `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" class="list-row" style="text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:6px">
+        <span style="font-size:13px"><i class="ti ti-file-type-pdf" style="color:var(--red)"></i> ${esc(l.name ? l.name.replace(/\.[^/.]+$/, '') : 'File')}</span>
+        <i class="ti ti-external-link" style="color:var(--ink-soft)"></i>
+      </a>`).join('')}<div style="height:8px"></div>` : ''}
+
+    <button class="btn" style="margin-top:6px;color:var(--red);border-color:var(--red-soft)" onclick="deleteNoahVisit('${v.id}')"><i class="ti ti-trash"></i> Delete visit</button>
+  `;
+}
+
+// ---------- visits: add / edit ----------
+
+function goAddNoahVisit(presetIssueId) {
+  noahVisitEditId = null;
+  noahVisitPresetIssueId = presetIssueId || null;
+  noahVisitReturnTo = presetIssueId ? 'issue' : 'main';
+  noahVisitPhotoDrafts = []; resetPhotoContext('noahVisit');
+  window.__noahVisitTypeId = null;
+  currentView = 'addNoahVisit';
+  route();
+}
+
+function editNoahVisit(id) {
+  noahVisitEditId = id;
+  noahVisitPresetIssueId = null;
+  noahVisitReturnTo = 'detail';
+  noahVisitPhotoDrafts = []; resetPhotoContext('noahVisit');
+  window.__noahVisitTypeId = null;
+  currentView = 'addNoahVisit';
+  route();
+}
+
+function leaveNoahVisitForm() {
+  const back = noahVisitReturnTo;
+  noahVisitEditId = null;
+  noahVisitPhotoDrafts = []; resetPhotoContext('noahVisit');
+  if (back === 'detail') { currentView = 'noahVisitDetail'; return route(); }
+  if (back === 'issue') { currentView = 'noahIssueDetail'; return route(); }
+  noahSection = 'visits';
+  goNoahMain();
+}
+
+function renderNoahVisitTypeChips(types, selectedId) {
+  return types.map((t) => `<button type="button" class="chip ${t.id === selectedId ? 'active' : ''}" onclick="selectNoahVisitType('${t.id}')"><i class="ti ${t.icon || 'ti-stethoscope'}"></i> ${esc(t.name)}</button>`).join('')
+    + `<button type="button" class="chip" style="border-style:dashed;color:var(--ink-soft)" onclick="openNoahVisitTypeModal(true)"><i class="ti ti-plus"></i> New type</button>`;
+}
+function selectNoahVisitType(id) {
+  window.__noahVisitTypeId = id;
+  document.querySelectorAll('#nvTypeChips .chip').forEach((c) => c.classList.remove('active'));
+  const btn = [...document.querySelectorAll('#nvTypeChips .chip')].find((c) => (c.getAttribute('onclick') || '').includes(`'${id}'`));
+  if (btn) btn.classList.add('active');
+  const err = document.getElementById('nvTypeError');
+  if (err) err.style.display = 'none';
+}
+
+async function renderAddNoahVisit() {
+  const existing = noahVisitEditId ? await DB.get('noahVisits', noahVisitEditId) : null;
+  const types = (await getActiveNoahVisitTypes()).filter((t) => !t.hidden || (existing && t.id === existing.typeId)).sort((a, b) => a.name.localeCompare(b.name));
+  const clinics = (await getActiveNoahClinics()).sort((a, b) => a.name.localeCompare(b.name));
+  const issues = (await getActiveNoahIssues()).sort((a, b) => b.startDate.localeCompare(a.startDate));
+  const issueTypeById = Object.fromEntries((await DB.getAll('noahIssueTypes')).map((t) => [t.id, t]));
+  if (!window.__noahVisitTypeId) window.__noahVisitTypeId = existing ? existing.typeId : null;
+  const linkedId = existing ? existing.linkedIssueId : noahVisitPresetIssueId;
+
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="leaveNoahVisitForm()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${existing ? 'Edit visit' : 'Add visit'}</span></div>
+
+    <label class="field-label">Type</label>
+    <div class="chip-row" id="nvTypeChips">${renderNoahVisitTypeChips(types, window.__noahVisitTypeId)}</div>
+    <p id="nvTypeError" style="font-size:12px;color:var(--red);margin:-6px 0 12px;display:none">Pick a type first.</p>
+
+    <div class="field"><label class="field-label">Reason</label><input id="nv_reason" placeholder="Cleaning, skin test, checkup..." value="${existing && existing.reason ? esc(existing.reason) : ''}"></div>
+    <div class="field-row" style="margin-bottom:14px">
+      <div><label class="field-label">Date</label><input type="date" id="nv_date" value="${existing ? existing.date : todayStr()}"></div>
+      <div><label class="field-label">Time (optional)</label><input type="time" id="nv_time" value="${existing && existing.time ? esc(existing.time) : ''}"></div>
+    </div>
+
+    <div class="field"><label class="field-label">Clinic</label>
+      <div style="display:flex;gap:6px">
+        <select id="nv_clinic" style="flex:1">
+          <option value="">None</option>
+          ${clinics.map((c) => `<option value="${c.id}" ${existing && existing.clinicId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+        <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="openNoahClinicModal()"><i class="ti ti-plus"></i></button>
+      </div>
+    </div>
+    <div class="field"><label class="field-label">Doctor (optional)</label><input id="nv_doctor" placeholder="Dr. Nguyen" value="${existing && existing.doctor ? esc(existing.doctor) : ''}"></div>
+
+    <div class="card tight" style="background:var(--surface)">
+      <div class="field-row">
+        <div><label class="field-label">Cost (optional)</label><input id="nv_cost" type="number" step="0.01" min="0" inputmode="decimal" placeholder="$0.00" value="${existing && existing.cost ? existing.cost : ''}" oninput="updateNoahVisitOutOfPocket()"></div>
+        <div><label class="field-label">Insurance covered</label><input id="nv_covered" type="number" step="0.01" min="0" inputmode="decimal" placeholder="$0.00" value="${existing && existing.insuranceCovered ? existing.insuranceCovered : ''}" oninput="updateNoahVisitOutOfPocket()"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:10px"><span style="color:var(--ink-soft)">Out of pocket</span><span id="nvOutOfPocket" style="font-weight:600">—</span></div>
+      <p id="nvCostError" style="font-size:12px;color:var(--red);margin-top:6px;display:none">Covered can't be more than the cost.</p>
+    </div>
+
+    <div class="field" style="margin-top:6px"><label class="field-label">Comments</label><textarea id="nv_comments" placeholder="What the doctor said, next steps...">${existing && existing.comments ? esc(existing.comments) : ''}</textarea></div>
+    <div class="field"><label class="field-label">Follow-up date (optional)</label><input type="date" id="nv_followUp" value="${existing && existing.followUpDate ? existing.followUpDate : ''}"></div>
+    <div class="field"><label class="field-label">Linked health entry (optional)</label>
+      <select id="nv_issue">
+        <option value="">None</option>
+        ${issues.map((i) => `<option value="${i.id}" ${linkedId === i.id ? 'selected' : ''}>${esc((issueTypeById[i.typeId] || {}).name || 'Issue')}, ${fmtDateYear(i.startDate)}${i.status === 'ongoing' ? ' (ongoing)' : ''}</option>`).join('')}
+      </select>
+    </div>
+
+    ${renderExistingLinksGrid(existing && existing.photoLinks, 'noahVisit', 'Photos and files (tap × to remove)')}
+    <label class="field-label">Add photos or files</label>
+    <div class="photo-grid" id="noahVisitPhotoGrid">${renderPhotoGrid(noahVisitPhotoDrafts, 'noahVisit')}</div>
+
+    <button class="btn btn-primary" id="saveNoahVisitBtn" onclick="saveNoahVisit()">${existing ? 'Save changes' : 'Save visit'}</button>
+  `;
+  updateNoahVisitOutOfPocket();
+}
+
+function updateNoahVisitOutOfPocket() {
+  const costEl = document.getElementById('nv_cost');
+  const covEl = document.getElementById('nv_covered');
+  const out = document.getElementById('nvOutOfPocket');
+  const err = document.getElementById('nvCostError');
+  if (!costEl || !covEl || !out) return;
+  const cost = parseFloat(costEl.value) || 0;
+  const covered = parseFloat(covEl.value) || 0;
+  const bad = covered > cost;
+  err.style.display = bad ? 'block' : 'none';
+  out.textContent = bad ? '—' : (cost ? fmtMoney(cost - covered) : '—');
+  return !bad;
+}
+
+async function saveNoahVisit() {
+  const typeId = window.__noahVisitTypeId;
+  if (!typeId) {
+    document.getElementById('nvTypeError').style.display = 'block';
+    document.getElementById('nvTypeChips').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (!updateNoahVisitOutOfPocket()) { document.getElementById('nv_covered').focus(); return; }
+
+  const btn = document.getElementById('saveNoahVisitBtn');
+  const originalText = noahVisitEditId ? 'Save changes' : 'Save visit';
+  if (pendingPhotoUploads.noahVisit && pendingPhotoUploads.noahVisit.length && btn) { btn.disabled = true; btn.textContent = 'Finishing upload…'; }
+  await waitForPendingUploads('noahVisit');
+  if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  const failed = countFailedUploads('noahVisit');
+  if (failed > 0 && !confirm(`${failed} file${failed === 1 ? '' : 's'} couldn't reach Drive and won't be saved with this visit. Save anyway? Cancel to remove and add ${failed === 1 ? 'it' : 'them'} again.`)) return;
+
+  const existing = noahVisitEditId ? await DB.get('noahVisits', noahVisitEditId) : null;
+  const cost = parseFloat(document.getElementById('nv_cost').value) || null;
+  const covered = cost ? (parseFloat(document.getElementById('nv_covered').value) || null) : null;
+  const visit = {
+    id: existing ? existing.id : uid(),
+    typeId,
+    reason: document.getElementById('nv_reason').value.trim(),
+    date: document.getElementById('nv_date').value || todayStr(),
+    time: document.getElementById('nv_time').value || '',
+    clinicId: document.getElementById('nv_clinic').value || null,
+    doctor: document.getElementById('nv_doctor').value.trim(),
+    cost,
+    insuranceCovered: covered,
+    comments: document.getElementById('nv_comments').value.trim(),
+    followUpDate: document.getElementById('nv_followUp').value || '',
+    linkedIssueId: document.getElementById('nv_issue').value || null,
+    photos: [...noahVisitPhotoDrafts],
+    photoLinks: [...keptExistingLinks(existing && existing.photoLinks ? existing.photoLinks : [], 'noahVisit'), ...photoUploadLinks.noahVisit.filter(Boolean)],
+    synced: false
+  };
+  await DB.put('noahVisits', visit);
+  Sync.pushEntry('NoahVisits', visit).then(() => DB.put('noahVisits', visit));
+
+  const back = noahVisitReturnTo;
+  noahVisitPhotoDrafts = []; resetPhotoContext('noahVisit');
+  noahVisitEditId = null; noahVisitPresetIssueId = null;
+  window.__noahVisitTypeId = null;
+  noahSection = 'visits';
+  if (back === 'issue') { currentView = 'noahIssueDetail'; }
+  else { noahVisitId = visit.id; currentView = existing ? 'noahVisitDetail' : 'main'; }
+  route();
+}
+
+async function deleteNoahVisit(id) {
+  if (!confirm('Delete this visit? This removes it everywhere, including the Sheet. Photos and files already uploaded stay in your Drive.')) return;
+  const v = await DB.get('noahVisits', id);
+  v.deleted = true; v.synced = false;
+  await DB.put('noahVisits', v);
+  Sync.pushEntry('NoahVisits', v).then(() => DB.put('noahVisits', v));
+  noahSection = 'visits';
+  currentView = 'main';
+  route();
+}
+
+// ---------- visit types ----------
+
+let noahVisitTypeIcon = 'ti-stethoscope';
+const NOAH_VISIT_TYPE_ICONS = ['ti-stethoscope', 'ti-dental', 'ti-plant-2', 'ti-eye', 'ti-ear', 'ti-heartbeat', 'ti-vaccine', 'ti-brain', 'ti-bone', 'ti-building-hospital', 'ti-mood-kid', 'ti-first-aid-kit'];
+
+function openNoahVisitTypeModal(fromForm) {
+  noahVisitTypeIcon = 'ti-stethoscope';
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">Add visit type</p>
+    <div class="field"><label class="field-label">Name</label><input id="nvt_name" placeholder="Dermatologist"></div>
+    <label class="field-label">Icon</label>
+    <div class="chip-row" id="noahVisitTypeIcons">${NOAH_VISIT_TYPE_ICONS.map((ic) => `<button type="button" class="chip ${ic === noahVisitTypeIcon ? 'active' : ''}" onclick="pickNoahVisitTypeIcon('${ic}')"><i class="ti ${ic}"></i></button>`).join('')}</div>
+    <button class="btn btn-primary" onclick="saveNoahVisitType(${fromForm ? 'true' : 'false'})">Add</button>
+  `;
+  openModal();
+}
+function pickNoahVisitTypeIcon(icon) {
+  noahVisitTypeIcon = icon;
+  const btns = [...document.querySelectorAll('#noahVisitTypeIcons .chip')];
+  btns.forEach((c) => c.classList.remove('active'));
+  const idx = NOAH_VISIT_TYPE_ICONS.indexOf(icon);
+  if (btns[idx]) btns[idx].classList.add('active');
+}
+async function saveNoahVisitType(fromForm) {
+  const name = document.getElementById('nvt_name').value.trim();
+  if (!name) { alert('Visit type needs a name.'); return; }
+  const all = await getActiveNoahVisitTypes();
+  const dupe = all.find((t) => t.name.trim().toLowerCase() === name.toLowerCase());
+  if (dupe && !confirm(`"${dupe.name}" already exists. Add another one with the same name anyway?`)) return;
+  const type = { id: uid(), name, icon: noahVisitTypeIcon, hidden: false, synced: false };
+  await DB.put('noahVisitTypes', type);
+  Sync.pushEntry('NoahVisitTypes', type).then(() => DB.put('noahVisitTypes', type));
+  closeModal();
+  // On the visit form, only the chip row is redrawn, so nothing already typed is lost.
+  const chips = document.getElementById('nvTypeChips');
+  if (fromForm && chips) {
+    window.__noahVisitTypeId = type.id;
+    const types = (await getActiveNoahVisitTypes()).filter((t) => !t.hidden).sort((a, b) => a.name.localeCompare(b.name));
+    chips.innerHTML = renderNoahVisitTypeChips(types, type.id);
+    const err = document.getElementById('nvTypeError');
+    if (err) err.style.display = 'none';
+  } else if (moreView === 'noahVisitTypes') {
+    renderNoahVisitTypesManager();
+  }
+}
+
+// Settings → Noah → Visit types
+async function renderNoahVisitTypesManager() {
+  const types = (await getActiveNoahVisitTypes()).sort((a, b) => a.name.localeCompare(b.name));
+  $main.innerHTML = `
+    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMoreMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Noah's visit types</span></div>
+    ${types.map((t) => `<div class="list-row" style="${t.hidden ? 'opacity:0.55' : ''}"><span><i class="ti ${t.icon || 'ti-stethoscope'}"></i> ${esc(t.name)}${t.hidden ? ' (hidden)' : ''}</span>
+      <button class="chip" onclick="toggleNoahVisitTypeHidden('${t.id}')">${t.hidden ? 'Restore' : 'Hide'}</button></div>`).join('') || '<div class="empty-state">No visit types yet.</div>'}
+    <p style="font-size:11px;color:var(--ink-soft);margin-top:8px">Hiding a type takes it off the visit form. Past visits keep it.</p>
+    <button class="btn" style="margin-top:14px" onclick="openNoahVisitTypeModal(false)"><i class="ti ti-plus"></i> Add visit type</button>
+  `;
+}
+async function toggleNoahVisitTypeHidden(id) {
+  const t = await DB.get('noahVisitTypes', id);
+  t.hidden = !t.hidden; t.synced = false;
+  await DB.put('noahVisitTypes', t);
+  Sync.pushEntry('NoahVisitTypes', t).then(() => DB.put('noahVisitTypes', t));
+  renderNoahVisitTypesManager();
 }

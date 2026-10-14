@@ -1,7 +1,7 @@
 // ---------- IndexedDB wrapper ----------
 const DB_NAME = 'homebase';
-const DB_VERSION = 8; // 7 added Noah's stores, 8 adds notifyDevices
-const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories', 'noahIssues', 'noahGrowth', 'noahMilestones', 'noahIssueTypes', 'noahClinics', 'notifyDevices'];
+const DB_VERSION = 9; // 7 added Noah's stores, 8 adds notifyDevices, 9 adds Noah's visits
+const STORES = ['entries', 'categories', 'payees', 'cars', 'projects', 'recurring', 'settings', 'weightEntries', 'jazzIssues', 'issueTypes', 'vetClinics', 'vehicles', 'garageCosts', 'expenseTypes', 'repairTypes', 'garagePlaces', 'passwords', 'docFolders', 'builds', 'subBuilds', 'buildExpenses', 'buildCategories', 'noahIssues', 'noahGrowth', 'noahMilestones', 'noahIssueTypes', 'noahClinics', 'notifyDevices', 'noahVisits', 'noahVisitTypes'];
 
 let dbPromise = null;
 
@@ -140,6 +140,15 @@ const DEFAULT_NOAH_ISSUE_TYPES = [
   { name: 'Injury', icon: 'ti-bandage' }
 ];
 
+// Visit types for Noah's Visits section. Fixed IDs on purpose: if two devices both
+// seed at once, they write the SAME four records instead of two copies of each.
+const DEFAULT_NOAH_VISIT_TYPES = [
+  { id: 'nvt-dentist', name: 'Dentist', icon: 'ti-dental' },
+  { id: 'nvt-allergist', name: 'Allergist', icon: 'ti-plant-2' },
+  { id: 'nvt-pediatrician', name: 'Pediatrician', icon: 'ti-stethoscope' },
+  { id: 'nvt-eye', name: 'Eye doctor', icon: 'ti-eye' }
+];
+
 const DEFAULT_ISSUE_TYPES = [
   { name: 'Skin', icon: 'ti-droplet' },
   { name: 'Behavior / panic', icon: 'ti-brain' },
@@ -178,6 +187,14 @@ async function seedIfEmpty() {
   const noahTypes = await DB.getAll('noahIssueTypes');
   if (noahTypes.length === 0) {
     for (const t of DEFAULT_NOAH_ISSUE_TYPES) await DB.put('noahIssueTypes', { id: uid(), ...t, hidden: false });
+  }
+  const visitTypes = await DB.getAll('noahVisitTypes');
+  if (visitTypes.length === 0) {
+    for (const t of DEFAULT_NOAH_VISIT_TYPES) {
+      const rec = { ...t, hidden: false, synced: false };
+      await DB.put('noahVisitTypes', rec);
+      Sync.pushEntry('NoahVisitTypes', rec).then(() => DB.put('noahVisitTypes', rec));
+    }
   }
   const expenseTypes = await DB.getAll('expenseTypes');
   if (expenseTypes.length === 0) {

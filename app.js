@@ -232,6 +232,8 @@ async function route() {
     if (currentView === 'noahReport') return renderNoahReport();
     if (currentView === 'noahPhotos') return renderNoahPhotos();
     if (currentView === 'addNoahUpdate') return renderAddNoahUpdate();
+    if (currentView === 'addNoahVisit') return renderAddNoahVisit();
+    if (currentView === 'noahVisitDetail') return renderNoahVisitDetail();
   } else if (currentTab === 'weight') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderWeightMain();
@@ -2990,14 +2992,18 @@ function renderPhotoGrid(drafts, prefix) {
   let html = drafts.map((d, i) => {
     const failed = statuses[i] === 'failed';
     const isMain = i === 0;
+    // A PDF has no picture to preview, so it shows as a file tile instead of a
+    // broken image — the upload and the saved link work exactly the same either way.
+    const isImageDraft = String(d).startsWith('data:image/');
     return `<div class="photo-slot" style="position:relative">
-      <img src="${d}">
+      ${isImageDraft ? `<img src="${d}">` : `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;height:100%;width:100%;background:var(--surface-raised)"><i class="ti ti-file-type-pdf" style="font-size:26px;color:var(--red)"></i><span style="font-size:9px;font-weight:700;color:var(--ink-soft)">PDF</span></div>`}
       ${!isMain ? `<button type="button" title="Set as main photo" onclick="setMainDraftPhoto('${prefix}',${i})" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-star" style="color:white;font-size:12px"></i></button>` : `<div title="Main photo — shown in lists" style="position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center"><i class="ti ti-star-filled" style="color:white;font-size:12px"></i></div>`}
       <button type="button" title="Remove" onclick="removeDraftPhoto('${prefix}',${i})" style="position:absolute;bottom:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(43,38,64,0.75);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-x" style="color:white;font-size:13px"></i></button>
       ${failed ? `<button type="button" onclick="alert('Upload failed: ${esc((errors[i] || 'unknown reason').replace(/'/g, "\\'"))}')" title="Tap for the reason" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><i class="ti ti-alert-triangle" style="color:white;font-size:12px"></i></button>` : ''}
     </div>`;
   }).join('');
-  if (drafts.length < 6) html += `<div class="photo-slot" onclick="document.getElementById('${prefix}FileInput').click()"><i class="ti ti-plus"></i></div>`;
+  const maxDrafts = prefix === 'noahVisit' ? 10 : 6; // a visit often comes with a few report pages as well as photos
+  if (drafts.length < maxDrafts) html += `<div class="photo-slot" onclick="document.getElementById('${prefix}FileInput').click()"><i class="ti ti-plus"></i></div>`;
   html += `<input type="file" id="${prefix}FileInput" accept="image/*,.pdf" multiple style="display:none" onchange="handlePhotoUpload(event,'${prefix}')">`;
   return html;
 }
@@ -3011,6 +3017,7 @@ function getPhotoDraftArray(prefix) {
   if (prefix === 'noahMilestone') return noahMilestonePhotoDrafts;
   if (prefix === 'jazzUpdate') return jazzUpdatePhotoDrafts;
   if (prefix === 'noahUpdate') return noahUpdatePhotoDrafts;
+  if (prefix === 'noahVisit') return noahVisitPhotoDrafts;
   return garagePhotoDrafts; // 'garage' (add vehicle) and 'garage2' (add cost) share the same draft array, cleared on save
 }
 // Which Drive folder each context's uploads land in. 'docs' isn't listed here since its
@@ -3026,16 +3033,17 @@ const PHOTO_LINK_CONTEXT = {
   noahIssue: { folder: 'Noah Photos' },
   noahMilestone: { folder: 'Noah Photos' },
   jazzUpdate: { folder: 'Jazz Photos' },
-  noahUpdate: { folder: 'Noah Photos' }
+  noahUpdate: { folder: 'Noah Photos' },
+  noahVisit: { folder: 'Noah Visits' }
 };
-let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // in-flight upload promises, per context — Save must await these before finishing
-let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
-let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] }; // parallel too — the actual reason, so it's reportable without a dev console
+let pendingPhotoUploads = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [], noahVisit: [] }; // in-flight upload promises, per context — Save must await these before finishing
+let photoUploadStatus = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [], noahVisit: [] }; // parallel to each context's draft array: 'pending' | 'ok' | 'failed'
+let photoUploadErrors = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [], noahVisit: [] }; // parallel too — the actual reason, so it's reportable without a dev console
 // Kept index-aligned with the draft array (photoUploadLinks[prefix][i] corresponds to
 // drafts[i]), so removing or reordering a photo can't accidentally mix up which link
 // belongs to which preview — a real bug in the earlier version, where links were just
 // appended in whatever order uploads happened to finish, not the order shown on screen.
-let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] };
+let photoUploadLinks = { jazz: [], garage: [], garage2: [], docs: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [], noahVisit: [] };
 
 // Shrinks a photo to a reasonable size before it ever gets uploaded — a modern phone
 // photo is routinely 3-5MB, sent as one uncompressed request that's genuinely prone to
@@ -3135,7 +3143,7 @@ async function waitForPendingUploads(prefix) {
 // multi-photo forms (Jazz issue, Vehicle, Garage cost). Tracks which existing link
 // indices got removed in THIS edit session — the actual removal only takes effect
 // when the form is saved, so backing out is always safe.
-let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [] };
+let existingLinksRemoved = { jazz: [], vehicle: [], cost: [], docFolder: [], buildTop: [], buildSub: [], buildExp: [], noahIssue: [], noahMilestone: [], jazzUpdate: [], noahUpdate: [], noahVisit: [] };
 
 // Clears every parallel array for one photo context in a single call. Opening a fresh
 // form has to reset all four or a previous form's links leak into the new record —
@@ -3179,6 +3187,7 @@ function removeExistingLink(context, index) {
   else if (context === 'noahMilestone') renderAddNoahMilestone();
   else if (context === 'jazzUpdate') renderAddJazzUpdate();
   else if (context === 'noahUpdate') renderAddNoahUpdate();
+  else if (context === 'noahVisit') renderAddNoahVisit();
 }
 function keptExistingLinks(links, context) {
   if (!links) return [];
@@ -3745,6 +3754,7 @@ async function renderMore() {
   if (moreView === 'buildCategories') return renderBuildCategoriesManager();
   if (moreView === 'noahIssueTypes') return renderNoahIssueTypesManager();
   if (moreView === 'noahClinics') return renderNoahClinicsManager();
+  if (moreView === 'noahVisitTypes') return renderNoahVisitTypesManager();
   if (moreView === 'notifications') return renderNotificationsSettings();
   if (moreView === 'buildCategoryForm') return renderBuildCategoryForm();
 
@@ -3766,6 +3776,7 @@ async function renderMore() {
     ${group('Noah')}
     ${row('Issue types', 'ti-stethoscope', "moreView='noahIssueTypes';renderMore()")}
     ${row('Clinics', 'ti-building-hospital', "moreView='noahClinics';renderMore()")}
+    ${row('Visit types', 'ti-calendar-event', "moreView='noahVisitTypes';renderMore()")}
 
     ${group('Jazz')}
     ${row('Issue types', 'ti-stethoscope', "moreView='issueTypes';renderMore()")}

@@ -29,7 +29,9 @@ const SYNC_JOBS = [
   { store: 'noahGrowth', sheet: 'NoahGrowth', strip: [] },
   { store: 'noahMilestones', sheet: 'NoahMilestones', strip: ['photos'] },
   { store: 'noahIssueTypes', sheet: 'NoahIssueTypes', strip: [] },
-  { store: 'noahClinics', sheet: 'NoahClinics', strip: [] }
+  { store: 'noahClinics', sheet: 'NoahClinics', strip: [] },
+  { store: 'noahVisits', sheet: 'NoahVisits', strip: ['photos'] },
+  { store: 'noahVisitTypes', sheet: 'NoahVisitTypes', strip: [] }
 ];
 
 const Sync = {
@@ -406,7 +408,7 @@ const Sync = {
 
   // Screens where re-rendering mid-use would wipe out whatever the person is currently
   // typing — never auto-refresh these, no matter how new the incoming data is.
-  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate'],
+  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate', 'addNoahVisit'],
 
   startPolling() {
     window.addEventListener('online', () => this.fullSync());
