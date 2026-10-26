@@ -238,3 +238,22 @@ nav.tabs button:not(.bar-item) { display: none; }
   main { padding-bottom: 40px; }
   .fab { right: 40px; bottom: 40px; }
 }
+
+/* ---------- Builds: select mode + move expenses ---------- */
+.link-btn { background: none; border: none; padding: 4px 0; font: inherit; font-size: 13px; font-weight: 600; color: var(--gold); cursor: pointer; }
+.build-select-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding: 6px 0; }
+.build-exp-row { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; cursor: pointer; }
+.build-exp-row.picked { background: var(--gold-soft); margin: 0 -10px; padding-left: 10px; padding-right: 10px; border-radius: 10px; }
+.sel-box { width: 20px; height: 20px; margin-top: 10px; border-radius: 6px; border: 1.5px solid var(--ink-soft); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 13px; }
+.build-exp-row.picked .sel-box { background: var(--ink); border-color: var(--ink); color: #fff; }
+/* Sticks to the bottom of the screen, just above the phone tab bar, while you scroll the list */
+.build-select-bar { position: sticky; bottom: calc(76px + env(safe-area-inset-bottom)); display: flex; gap: 8px; margin-top: 12px; padding: 10px 0; background: var(--surface); z-index: 5; }
+.move-group-label { font-size: 11px; color: var(--ink-soft); margin: 10px 0 4px; }
+.move-row { display: flex; align-items: center; gap: 10px; padding: 11px 10px; border-radius: 10px; font-size: 14px; cursor: pointer; }
+.move-row.nested { padding-left: 26px; }
+.move-row.chosen { background: var(--gold-soft); font-weight: 600; }
+.move-row.is-current { color: var(--ink-soft); opacity: 0.6; cursor: default; }
+.move-toast { position: sticky; bottom: calc(76px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 13px; z-index: 6; animation: fadein 0.2s ease; }
+@media (min-width: 768px) {
+  .build-select-bar, .move-toast { bottom: 20px; }
+}

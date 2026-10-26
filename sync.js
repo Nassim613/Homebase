@@ -76,6 +76,11 @@ const Sync = {
     const token = await Auth.ensureToken();
     if (!token) { this.setStatus('pending'); return false; }
     this.setStatus('syncing');
+    // Write stamp (see the read-after-write guard below). It travels inside Raw JSON and
+    // comes back on pull, so a pull can tell "the Sheet has my write now" apart from
+    // "the Sheet is still showing the version this write replaced".
+    const prevMt = entry._mt;
+    entry._mt = this.newStamp();
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -97,12 +102,66 @@ const Sync = {
         return false;
       }
       entry.synced = true;
+      this.noteWrite(sheetName, entry.id, entry._mt, prevMt);
       this.setStatus('synced');
       return true;
     } catch (err) {
       this.setStatus('pending');
       return false;
     }
+  },
+
+  // ---------- read-after-write guard ----------
+  // Apps Script answers {ok:true} once a write is accepted, but a GET from a separate
+  // execution a few seconds later can still read the Sheet as it was BEFORE that write.
+  // The old rule ("only protect local records still marked synced:false") couldn't see
+  // this: by the time that stale pull lands the record is already synced:true, so the
+  // older version overwrote it — e.g. a new update on one of Noah's colds vanished,
+  // then reappeared once the Sheet caught up. Every successful push is now remembered
+  // here with its write stamp AND the stamp of the version it replaced. For
+  // RECENT_WRITE_MS afterwards, a pulled copy still carrying one of those replaced
+  // stamps is stale and skipped, and the record is never counted as "missing". As soon
+  // as the Sheet returns our own stamp, or anything else (an edit from the other
+  // phone), normal pull rules resume. Matching exact stamps rather than comparing
+  // times means the two phones' clocks never have to agree. Kept in memory and
+  // short-lived on purpose: worst case after a reload is the old brief flicker, never
+  // lost data.
+  RECENT_WRITE_MS: 3 * 60 * 1000,
+  _recentWrites: {},
+  _lastStamp: 0,
+
+  newStamp() {
+    // Strictly increasing on this device, so two saves in the same millisecond differ.
+    this._lastStamp = Math.max(Date.now(), this._lastStamp + 1);
+    return this._lastStamp;
+  },
+
+  noteWrite(sheetName, id, mine, prev) {
+    if (!id || !mine) return;
+    if (!this._recentWrites[sheetName]) this._recentWrites[sheetName] = {};
+    const rec = this._recentWrites[sheetName][id] || { replaced: new Set() };
+    if (rec.latest) rec.replaced.add(rec.latest); // an earlier save of ours is now outdated too
+    rec.replaced.add(prev || 0);                  // 0 = a copy from before stamps existed
+    rec.latest = mine;
+    rec.at = Date.now();
+    this._recentWrites[sheetName][id] = rec;
+  },
+
+  hasRecentWrite(sheetName, id) {
+    const map = this._recentWrites[sheetName];
+    const rec = map && map[id];
+    if (!rec) return false;
+    if (Date.now() - rec.at > this.RECENT_WRITE_MS) { delete map[id]; return false; }
+    return true;
+  },
+
+  isStaleAfterOwnWrite(sheetName, remote) {
+    if (!this.hasRecentWrite(sheetName, remote.id)) return false;
+    const rec = this._recentWrites[sheetName][remote.id];
+    const stamp = remote._mt || 0;
+    if (stamp !== rec.latest && rec.replaced.has(stamp)) return true; // a version we already replaced
+    delete this._recentWrites[sheetName][remote.id]; // our write, or someone else's newer one
+    return false;
   },
 
   // Pulls the current state of every sheet down and merges it into local storage.
@@ -147,6 +206,7 @@ const Sync = {
           remoteIds.add(remote.id);
           const local = localById.get(remote.id);
           if (local && local.synced === false) continue; // local has a pending change — don't clobber it
+          if (local && this.isStaleAfterOwnWrite(job.sheet, remote)) continue; // Sheet hasn't caught up with our own write yet — keep local
           job.strip.forEach((f) => { if (local && local[f] !== undefined) remote[f] = local[f]; });
           remote.synced = true;
           // Skip the write entirely if nothing actually changed — avoids pointless
@@ -183,7 +243,7 @@ const Sync = {
           const streak = this._missingStreak[job.store];
           const toRemoveLocally = [];
           for (const [id, local] of localById) {
-            if (local.synced !== false && !remoteIds.has(id)) {
+            if (local.synced !== false && !remoteIds.has(id) && (local.deleted || !this.hasRecentWrite(job.sheet, id))) {
               streak[id] = (streak[id] || 0) + 1;
               if (streak[id] >= 2) toRemoveLocally.push(id);
             } else {
@@ -296,6 +356,8 @@ const Sync = {
     const token = await Auth.ensureToken();
     if (!token) return false;
     this.setStatus('syncing');
+    const prevMts = entries.map((e) => e._mt);
+    entries.forEach((e) => { e._mt = this.newStamp(); }); // write stamps, same as pushEntry
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -310,6 +372,7 @@ const Sync = {
         this.setStatus('pending');
         return false;
       }
+      entries.forEach((e, i) => this.noteWrite(sheetName, e.id, e._mt, prevMts[i]));
       this.setStatus('synced');
       return true;
     } catch (err) {
@@ -337,7 +400,7 @@ const Sync = {
             });
             const ok = await this.pushBatch(job.sheet, payloads);
             if (ok) {
-              chunk.forEach((item) => { item.synced = true; });
+              chunk.forEach((item, idx) => { item.synced = true; item._mt = payloads[idx]._mt; });
               await DB.putMany(job.store, chunk);
             }
           }
@@ -408,6 +471,8 @@ const Sync = {
 
   // Screens where re-rendering mid-use would wipe out whatever the person is currently
   // typing — never auto-refresh these, no matter how new the incoming data is.
+  // (Builds' expense select mode lives on 'subBuildDetail' and keeps its selection in
+  // memory across re-renders, so a background refresh redraws it without losing picks.)
   FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate', 'addNoahVisit'],
 
   startPolling() {

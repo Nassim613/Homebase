@@ -183,7 +183,7 @@ async function saveBuild() {
   });
   await DB.put('builds', build);
   const { photos, ...syncableBuild } = build;
-  Sync.pushEntry('Builds', syncableBuild).then(() => { build.synced = true; DB.put('builds', build); });
+  Sync.pushEntry('Builds', syncableBuild).then((ok) => { if (!ok) return; build.synced = true; DB.put('builds', build); });
   const id = build.id;
   buildEditId = null; buildTopPhotoDrafts = []; existingLinksRemoved.buildTop = [];
   currentView = 'buildDetail'; currentBuildId = id; route();
@@ -196,7 +196,7 @@ async function deleteBuild(id) {
   build.deleted = true; build.synced = false;
   await DB.put('builds', build);
   const { photos, ...syncableBuild } = build;
-  Sync.pushEntry('Builds', syncableBuild).then(() => { build.synced = true; DB.put('builds', build); });
+  Sync.pushEntry('Builds', syncableBuild).then((ok) => { if (!ok) return; build.synced = true; DB.put('builds', build); });
   // Cascade soft-delete to sub-builds and their expenses, so nothing orphaned
   // still shows up in totals or lists elsewhere in the app.
   for (const sb of subBuilds) {
@@ -399,7 +399,7 @@ async function saveSubBuild() {
   }
   await DB.put('subBuilds', sb);
   const { photos, ...syncableSb } = sb;
-  Sync.pushEntry('SubBuilds', syncableSb).then(() => { sb.synced = true; DB.put('subBuilds', sb); });
+  Sync.pushEntry('SubBuilds', syncableSb).then((ok) => { if (!ok) return; sb.synced = true; DB.put('subBuilds', sb); });
   const id = sb.id, buildId = sb.buildId;
   subBuildEditId = null; buildSubPhotoDrafts = []; existingLinksRemoved.buildSub = [];
   currentSubBuildId = id; currentBuildId = buildId;
@@ -413,12 +413,12 @@ async function deleteSubBuildSilently_(id) {
   sb.deleted = true; sb.synced = false;
   await DB.put('subBuilds', sb);
   const { photos, ...syncableSb } = sb;
-  Sync.pushEntry('SubBuilds', syncableSb).then(() => { sb.synced = true; DB.put('subBuilds', sb); });
+  Sync.pushEntry('SubBuilds', syncableSb).then((ok) => { if (!ok) return; sb.synced = true; DB.put('subBuilds', sb); });
   for (const ex of expenses) {
     ex.deleted = true; ex.synced = false;
     await DB.put('buildExpenses', ex);
     const { photos, ...syncableEx } = ex;
-    Sync.pushEntry('BuildExpenses', syncableEx).then(() => { ex.synced = true; DB.put('buildExpenses', ex); });
+    Sync.pushEntry('BuildExpenses', syncableEx).then((ok) => { if (!ok) return; ex.synced = true; DB.put('buildExpenses', ex); });
   }
 }
 async function deleteSubBuild(id) {
@@ -436,7 +436,7 @@ async function deleteSubBuild(id) {
 // SUB-BUILD DETAIL — expense list + contractor card
 // ============================================================
 let currentSubBuildId = null;
-function openSubBuild(id) { currentSubBuildId = id; currentView = 'subBuildDetail'; route(); }
+function openSubBuild(id) { currentSubBuildId = id; buildSelectSubId = null; buildSelectedIds = new Set(); currentView = 'subBuildDetail'; route(); }
 
 async function renderSubBuildDetail() {
   const sb = await DB.get('subBuilds', currentSubBuildId);
@@ -448,12 +448,25 @@ async function renderSubBuildDetail() {
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const total = await computeSubBuildTotal(currentSubBuildId);
   const showsContractorCard = sb.type === 'contractor' || sb.type === 'mixed';
+  const selecting = buildSelectActive();
+  if (selecting) {
+    // Drop picks that no longer belong here (moved or deleted on the other device mid-selection).
+    const here = new Set(expenses.map((e) => e.id));
+    buildSelectedIds = new Set([...buildSelectedIds].filter((id) => here.has(id)));
+  }
+  window.__buildExpenseAmounts = Object.fromEntries(expenses.map((e) => [e.id, e.amount || 0]));
 
   $main.innerHTML = `
+    ${selecting ? `
+    <div class="build-select-head">
+      <button type="button" class="link-btn" onclick="exitBuildSelect()">Cancel</button>
+      <span id="buildSelectCount" style="font-weight:600">${buildSelectedIds.size} selected</span>
+      <button type="button" class="link-btn" id="buildSelectAllBtn" onclick="toggleBuildSelectAll()">${buildSelectedIds.size === expenses.length && expenses.length ? 'None' : 'All'}</button>
+    </div>` : `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div class="back" style="cursor:pointer" onclick="openBuild('${sb.buildId}')"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:16px;margin-left:6px">${esc(sb.name)}</span></div>
       <i class="ti ti-edit" style="font-size:18px;color:var(--ink-soft);cursor:pointer" onclick="goEditSubBuild('${sb.id}','${sb.buildId}')"></i>
-    </div>
+    </div>`}
     <p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">${esc(build.name)} · ${esc(subBuildTypeLabel(sb.type))}</p>
     <div class="card tight" style="margin-bottom:16px">
       <p style="font-size:11px;color:var(--ink-soft);margin-bottom:2px">Total spent</p>
@@ -467,20 +480,32 @@ async function renderSubBuildDetail() {
       <p class="section-label">Photos</p>
       <div class="photo-grid" style="margin-bottom:14px">${sb.photoLinks.map((l) => `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" class="photo-slot"><img src="${l.url}"></a>`).join('')}</div>
     ` : ''}
-    <p class="section-label">Expenses</p>
-    <div>${expenses.map((e) => renderBuildExpenseRow(e, catById)).join('') || '<div class="empty-state">No expenses yet.</div>'}</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <p class="section-label">Expenses</p>
+      ${!selecting && expenses.length ? `<button type="button" class="link-btn" style="font-size:12px" onclick="enterBuildSelect()">Select</button>` : ''}
+    </div>
+    <div>${expenses.map((e) => renderBuildExpenseRow(e, catById, selecting)).join('') || '<div class="empty-state">No expenses yet.</div>'}</div>
+    ${selecting ? `
+    <div class="build-select-bar">
+      <button class="btn btn-primary" style="flex:1" onclick="openBuildMoveSheet()"><i class="ti ti-arrows-right-left"></i> <span id="buildSelectMoveLabel">${buildMoveBarLabel()}</span></button>
+      <button class="btn" style="width:52px;flex-shrink:0;color:var(--red);border-color:var(--red-soft)" aria-label="Delete selected" onclick="deleteSelectedBuildExpenses()"><i class="ti ti-trash"></i></button>
+    </div>` : `
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn btn-primary" style="flex:1" onclick="goAddBuildExpense('${sb.id}')"><i class="ti ti-plus"></i> Add expense</button>
       <button class="btn" style="flex:1" onclick="buildPhotoScope='sub';currentView='buildPhotos';route()"><i class="ti ti-photo"></i> Photos</button>
-    </div>
+    </div>`}
+    ${renderBuildMoveToast()}
   `;
 }
-function renderBuildExpenseRow(e, catById) {
+function renderBuildExpenseRow(e, catById, selecting) {
   const cat = catById[e.categoryId] || {};
   const icon = e.icon || detectExpenseIcon(e.description, cat.icon);
   const thumb = e.photoLinks && e.photoLinks[0];
+  const picked = selecting && buildSelectedIds.has(e.id);
   return `
-    <div class="entry-row" onclick="openBuildExpenseDetail('${e.id}')">
+    <div class="entry-row build-exp-row${picked ? ' picked' : ''}" data-exp-id="${e.id}" onclick="onBuildExpenseRowClick('${e.id}')"
+      onpointerdown="buildRowPressStart('${e.id}')" onpointerup="buildRowPressEnd()" onpointerleave="buildRowPressEnd()" onpointercancel="buildRowPressEnd()" oncontextmenu="return false">
+      ${selecting ? `<div class="sel-box">${picked ? '<i class="ti ti-check"></i>' : ''}</div>` : ''}
       <div class="entry-icon">${thumb ? `<img src="${thumb.url}" style="width:100%;height:100%;object-fit:cover">` : `<i class="ti ${icon}" style="color:var(--gold)"></i>`}</div>
       <div class="entry-body">
         <div class="entry-top"><span class="entry-title">${esc(e.description || '')}${e.photoLinks && e.photoLinks.length ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span><span class="entry-value">${fmtMoney(e.amount)}</span></div>
@@ -508,6 +533,7 @@ async function openBuildExpenseDetail(id) {
     </div>
     ${renderLinkPreviewList(e.photoLinks, 'Photo')}
     <button class="btn" style="margin-bottom:10px" onclick="editBuildExpenseFromDetail()"><i class="ti ti-edit"></i> Edit</button>
+    <button class="btn" style="margin-bottom:10px" onclick="openBuildMoveSheet(['${e.id}'])"><i class="ti ti-arrows-right-left"></i> Move to…</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteBuildExpenseFromDetail()"><i class="ti ti-trash"></i> Delete</button>
   `;
   openModal();
@@ -523,9 +549,236 @@ async function deleteBuildExpenseFromDetail() {
   e.deleted = true; e.synced = false;
   await DB.put('buildExpenses', e);
   const { photos, ...syncableEx } = e;
-  Sync.pushEntry('BuildExpenses', syncableEx).then(() => { e.synced = true; DB.put('buildExpenses', e); });
+  Sync.pushEntry('BuildExpenses', syncableEx).then((ok) => { if (!ok) return; e.synced = true; DB.put('buildExpenses', e); });
   closeModal();
   renderSubBuildDetail();
+}
+
+// ============================================================
+// MOVE EXPENSES — between sub-projects, in this project or any other
+// ============================================================
+// A move only rewrites an expense's subBuildId (expenses don't carry a buildId, so a
+// cross-project move is the same one-field change). Category, store, date, amount and
+// photos stay as they are; the Sheet upsert archives the old row to "BuildExpenses
+// Changes" like any edit, so the history is there without any note on the expense.
+// Totals and budgets on both sides are computed live, so they just follow.
+let buildSelectSubId = null;        // sub-project whose expense list is in select mode
+let buildSelectedIds = new Set();
+let buildMoveIds = [];              // expenses the open "Move to…" sheet is moving
+let buildMoveTargetId = null;
+let buildMoveExpanded = new Set();  // other projects opened in the picker
+let buildMoveUndo = null;           // { moves:[{id, fromSubId}], targetSubId, label, expires }
+let buildLongPressTimer = null;
+let buildLongPressFired = false;
+
+function buildSelectActive() { return !!buildSelectSubId && buildSelectSubId === currentSubBuildId; }
+function enterBuildSelect(firstId) {
+  buildSelectSubId = currentSubBuildId;
+  buildSelectedIds = new Set(firstId ? [firstId] : []);
+  renderSubBuildDetail();
+}
+function exitBuildSelect() { buildSelectSubId = null; buildSelectedIds = new Set(); renderSubBuildDetail(); }
+
+// Long-press a row to start selecting with it already picked. A scroll fires
+// pointercancel, which clears the timer, so scrolling never selects anything.
+function buildRowPressStart(id) {
+  if (buildSelectActive()) return;
+  buildLongPressFired = false;
+  clearTimeout(buildLongPressTimer);
+  buildLongPressTimer = setTimeout(() => {
+    buildLongPressFired = true;
+    if (navigator.vibrate) navigator.vibrate(15);
+    enterBuildSelect(id);
+  }, 500);
+}
+function buildRowPressEnd() { clearTimeout(buildLongPressTimer); }
+
+function onBuildExpenseRowClick(id) {
+  if (buildLongPressFired) { buildLongPressFired = false; return; } // the click that ends a long-press
+  if (buildSelectActive()) { toggleBuildSelected(id); return; }
+  openBuildExpenseDetail(id);
+}
+
+// Ticking a row updates the page in place rather than re-rendering it, so the list
+// doesn't jump while you pick.
+function toggleBuildSelected(id) {
+  if (buildSelectedIds.has(id)) buildSelectedIds.delete(id); else buildSelectedIds.add(id);
+  const row = document.querySelector(`.build-exp-row[data-exp-id="${id}"]`);
+  if (row) {
+    const on = buildSelectedIds.has(id);
+    row.classList.toggle('picked', on);
+    const box = row.querySelector('.sel-box');
+    if (box) box.innerHTML = on ? '<i class="ti ti-check"></i>' : '';
+  }
+  refreshBuildSelectUI();
+}
+function toggleBuildSelectAll() {
+  const all = Object.keys(window.__buildExpenseAmounts || {});
+  buildSelectedIds = buildSelectedIds.size === all.length ? new Set() : new Set(all);
+  renderSubBuildDetail();
+}
+function buildMoveBarLabel() {
+  const amounts = window.__buildExpenseAmounts || {};
+  const total = [...buildSelectedIds].reduce((s, id) => s + (amounts[id] || 0), 0);
+  return buildSelectedIds.size ? `Move · ${fmtMoney(total)}` : 'Move';
+}
+function refreshBuildSelectUI() {
+  const count = document.getElementById('buildSelectCount');
+  if (count) count.textContent = `${buildSelectedIds.size} selected`;
+  const label = document.getElementById('buildSelectMoveLabel');
+  if (label) label.textContent = buildMoveBarLabel();
+  const allBtn = document.getElementById('buildSelectAllBtn');
+  const n = Object.keys(window.__buildExpenseAmounts || {}).length;
+  if (allBtn) allBtn.textContent = buildSelectedIds.size === n && n ? 'None' : 'All';
+}
+
+// Saves a group of expense edits locally, then sends them to the Sheet in one request.
+// After the push, each record is only marked synced if it still matches what was sent —
+// so tapping Undo while the move is still in flight can't be overwritten by it.
+async function pushBuildExpenseBatch_(list) {
+  if (!list.length) return;
+  list.forEach((e) => { e.synced = false; });
+  await DB.putMany('buildExpenses', list);
+  const payloads = list.map(({ photos, ...rest }) => rest);
+  Sync.pushBatch('BuildExpenses', payloads).then(async (ok) => {
+    if (ok) {
+      const fresh = await Promise.all(list.map((e) => DB.get('buildExpenses', e.id)));
+      const sent = Object.fromEntries(payloads.map((p) => [p.id, p]));
+      const done = fresh.filter((f) => f && sent[f.id] && f.subBuildId === sent[f.id].subBuildId && !!f.deleted === !!sent[f.id].deleted);
+      done.forEach((f) => { f.synced = true; f._mt = sent[f.id]._mt; });
+      if (done.length) await DB.putMany('buildExpenses', done);
+    }
+    Sync.refreshStatus();
+  });
+}
+
+async function openBuildMoveSheet(ids) {
+  buildMoveIds = ids && ids.length ? ids : [...buildSelectedIds];
+  if (!buildMoveIds.length) { alert('Select at least one expense first.'); return; }
+  buildMoveTargetId = null;
+  buildMoveExpanded = new Set();
+  await renderBuildMoveSheet();
+  openModal();
+}
+
+async function renderBuildMoveSheet() {
+  const moving = (await Promise.all(buildMoveIds.map((id) => DB.get('buildExpenses', id)))).filter((e) => e && !e.deleted);
+  const sourceIds = new Set(moving.map((e) => e.subBuildId));
+  const allSubs = await getActiveSubBuilds();
+  const builds = (await getActiveBuilds()).sort((a, b) => a.name.localeCompare(b.name));
+  const homeBuildId = currentBuildId;
+  const ordered = [...builds.filter((b) => b.id === homeBuildId), ...builds.filter((b) => b.id !== homeBuildId)];
+  const subIcon = (t) => (t === 'contractor' ? 'ti-briefcase' : t === 'mixed' ? 'ti-arrows-shuffle' : 'ti-hammer');
+  const target = allSubs.find((s) => s.id === buildMoveTargetId);
+  const n = moving.length;
+
+  const groups = await Promise.all(ordered.map(async (b) => {
+    const subs = allSubs.filter((s) => s.buildId === b.id).sort((x, y) => x.name.localeCompare(y.name));
+    if (!subs.length) return '';
+    const isHome = b.id === homeBuildId;
+    const open = isHome || buildMoveExpanded.has(b.id) || (target && target.buildId === b.id);
+    const head = isHome
+      ? `<p class="move-group-label">${esc(b.name)}</p>`
+      : `<div class="move-row" onclick="toggleBuildMoveProject('${b.id}')"><i class="ti ti-folder"></i><span style="flex:1">${esc(b.name)}</span><i class="ti ti-chevron-${open ? 'down' : 'right'}" style="color:var(--ink-soft)"></i></div>`;
+    if (!open) return head;
+    const rows = await Promise.all(subs.map(async (s) => {
+      if (sourceIds.size === 1 && sourceIds.has(s.id)) {
+        return `<div class="move-row is-current"><i class="ti ${subIcon(s.type)}"></i><span style="flex:1">${esc(s.name)}</span><span style="font-size:11px">current</span></div>`;
+      }
+      const chosen = s.id === buildMoveTargetId;
+      return `<div class="move-row${chosen ? ' chosen' : ''}${isHome ? '' : ' nested'}" onclick="pickBuildMoveTarget('${s.id}')"><i class="ti ${subIcon(s.type)}"></i><span style="flex:1">${esc(s.name)}</span>${chosen ? '<i class="ti ti-check" style="color:var(--gold)"></i>' : `<span style="font-size:11px;color:var(--ink-soft)">${fmtMoney(await computeSubBuildTotal(s.id))}</span>`}</div>`;
+    }));
+    return head + rows.join('');
+  }));
+  const others = ordered.length > 1 ? '<p class="move-group-label">Other projects</p>' : '';
+  const homeHtml = groups[0] || '';
+  const otherHtml = groups.slice(1).join('');
+
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:12px">Move ${n} expense${n === 1 ? '' : 's'} to…</p>
+    <div style="max-height:52vh;overflow-y:auto;margin-bottom:14px">${homeHtml}${otherHtml ? others + otherHtml : ''}</div>
+    <button class="btn btn-primary" onclick="confirmBuildMove()">${target ? 'Move to ' + esc(target.name) : 'Pick a sub-project'}</button>
+  `;
+}
+function toggleBuildMoveProject(buildId) {
+  if (buildMoveExpanded.has(buildId)) buildMoveExpanded.delete(buildId); else buildMoveExpanded.add(buildId);
+  renderBuildMoveSheet();
+}
+function pickBuildMoveTarget(subId) { buildMoveTargetId = subId; renderBuildMoveSheet(); }
+
+async function confirmBuildMove() {
+  if (!buildMoveTargetId) { alert('Pick the sub-project to move to.'); return; }
+  const target = await DB.get('subBuilds', buildMoveTargetId);
+  if (!target || target.deleted) { alert('That sub-project no longer exists.'); return; }
+  const moves = [];
+  const changed = [];
+  for (const id of buildMoveIds) {
+    const e = await DB.get('buildExpenses', id);
+    if (!e || e.deleted || e.subBuildId === target.id) continue;
+    moves.push({ id, fromSubId: e.subBuildId });
+    e.subBuildId = target.id;
+    changed.push(e);
+  }
+  closeModal();
+  buildSelectSubId = null; buildSelectedIds = new Set();
+  if (!changed.length) { renderSubBuildDetail(); return; }
+  await pushBuildExpenseBatch_(changed);
+
+  const fromIds = [...new Set(moves.map((m) => m.fromSubId))];
+  const fromName = fromIds.length === 1 ? ((await DB.get('subBuilds', fromIds[0])) || {}).name : null;
+  buildMoveUndo = {
+    moves,
+    targetSubId: target.id,
+    label: `${moves.length} moved${fromName ? ' from ' + fromName : ''}`,
+    expires: Date.now() + 8000
+  };
+  currentSubBuildId = target.id;
+  currentBuildId = target.buildId;
+  currentView = 'subBuildDetail';
+  route();
+}
+
+function renderBuildMoveToast() {
+  const u = buildMoveUndo;
+  if (!u || u.targetSubId !== currentSubBuildId) return '';
+  const left = u.expires - Date.now();
+  if (left <= 0) { buildMoveUndo = null; return ''; }
+  setTimeout(() => {
+    if (buildMoveUndo !== u) return;
+    buildMoveUndo = null;
+    const el = document.getElementById('buildMoveToast');
+    if (el) el.remove();
+  }, left);
+  return `<div class="move-toast" id="buildMoveToast"><span style="flex:1">${esc(u.label)}</span><button type="button" class="link-btn" style="color:#fff" onclick="undoBuildMove()">Undo</button></div>`;
+}
+
+async function undoBuildMove() {
+  const u = buildMoveUndo;
+  if (!u) return;
+  buildMoveUndo = null;
+  const list = [];
+  for (const m of u.moves) {
+    const e = await DB.get('buildExpenses', m.id);
+    if (e && !e.deleted && e.subBuildId === u.targetSubId) { e.subBuildId = m.fromSubId; list.push(e); }
+  }
+  await pushBuildExpenseBatch_(list);
+  const back = await DB.get('subBuilds', u.moves[0].fromSubId);
+  if (back && !back.deleted) { currentSubBuildId = back.id; currentBuildId = back.buildId; }
+  route();
+}
+
+async function deleteSelectedBuildExpenses() {
+  const n = buildSelectedIds.size;
+  if (!n) { alert('Select at least one expense first.'); return; }
+  if (!confirm(`Delete ${n} expense${n === 1 ? '' : 's'}?`)) return;
+  const list = [];
+  for (const id of buildSelectedIds) {
+    const e = await DB.get('buildExpenses', id);
+    if (e && !e.deleted) { e.deleted = true; list.push(e); }
+  }
+  await pushBuildExpenseBatch_(list);
+  exitBuildSelect();
 }
 
 // ---------- Add / edit expense (Phase 2: store, Phase 4: photos + icon) ----------
@@ -688,7 +941,7 @@ async function saveBuildCategoryInline() {
   if (!name) { alert('Name is required.'); return; }
   const cat = { id: uid(), name, icon: 'ti-receipt', hidden: false, synced: false };
   await DB.put('buildCategories', cat);
-  Sync.pushEntry('BuildCategories', cat).then(() => { cat.synced = true; DB.put('buildCategories', cat); });
+  Sync.pushEntry('BuildCategories', cat).then((ok) => { if (!ok) return; cat.synced = true; DB.put('buildCategories', cat); });
   closeModal();
   window.__buildExpenseCategoryDraft = cat.id;
   renderAddBuildExpense();
@@ -720,7 +973,7 @@ async function saveBuildExpense() {
   });
   await DB.put('buildExpenses', e);
   const { photos, ...syncableEx } = e;
-  Sync.pushEntry('BuildExpenses', syncableEx).then(() => { e.synced = true; DB.put('buildExpenses', e); });
+  Sync.pushEntry('BuildExpenses', syncableEx).then((ok) => { if (!ok) return; e.synced = true; DB.put('buildExpenses', e); });
   buildExpenseEditId = null; buildExpPhotoDrafts = []; existingLinksRemoved.buildExp = []; buildExpenseIconDraft = null; buildExpenseStoreDraft = null;
   currentView = 'subBuildDetail'; route();
 }
@@ -840,7 +1093,7 @@ async function saveContractorForm() {
   sb.synced = false;
   await DB.put('subBuilds', sb);
   const { photos, ...syncableSb } = sb;
-  Sync.pushEntry('SubBuilds', syncableSb).then(() => { sb.synced = true; DB.put('subBuilds', sb); });
+  Sync.pushEntry('SubBuilds', syncableSb).then((ok) => { if (!ok) return; sb.synced = true; DB.put('subBuilds', sb); });
   currentSubBuildId = sb.id;
   currentView = 'subBuildDetail'; route();
 }
@@ -908,7 +1161,7 @@ async function saveBuildCategoryForm() {
   cat.icon = buildCategoryIconDraft || 'ti-receipt';
   cat.synced = false;
   await DB.put('buildCategories', cat);
-  Sync.pushEntry('BuildCategories', cat).then(() => { cat.synced = true; DB.put('buildCategories', cat); });
+  Sync.pushEntry('BuildCategories', cat).then((ok) => { if (!ok) return; cat.synced = true; DB.put('buildCategories', cat); });
   buildCategoryFormEditId = null;
   moreView = 'buildCategories'; renderMore();
 }
@@ -917,14 +1170,14 @@ async function hideBuildCategory(id) {
   const cat = await DB.get('buildCategories', id);
   cat.hidden = true; cat.synced = false;
   await DB.put('buildCategories', cat);
-  Sync.pushEntry('BuildCategories', cat).then(() => { cat.synced = true; DB.put('buildCategories', cat); });
+  Sync.pushEntry('BuildCategories', cat).then((ok) => { if (!ok) return; cat.synced = true; DB.put('buildCategories', cat); });
   moreView = 'buildCategories'; renderMore();
 }
 async function restoreBuildCategory(id) {
   const cat = await DB.get('buildCategories', id);
   cat.hidden = false; cat.synced = false;
   await DB.put('buildCategories', cat);
-  Sync.pushEntry('BuildCategories', cat).then(() => { cat.synced = true; DB.put('buildCategories', cat); });
+  Sync.pushEntry('BuildCategories', cat).then((ok) => { if (!ok) return; cat.synced = true; DB.put('buildCategories', cat); });
   renderBuildCategoriesManager();
 }
 // Only reachable from the manager when usage count is genuinely zero (see
@@ -934,7 +1187,7 @@ async function deleteBuildCategoryPermanently(id) {
   const cat = await DB.get('buildCategories', id);
   cat.deleted = true; cat.synced = false;
   await DB.put('buildCategories', cat);
-  Sync.pushEntry('BuildCategories', cat).then(() => { cat.synced = true; DB.put('buildCategories', cat); });
+  Sync.pushEntry('BuildCategories', cat).then((ok) => { if (!ok) return; cat.synced = true; DB.put('buildCategories', cat); });
   await DB.delete('buildCategories', id);
   renderBuildCategoriesManager();
 }
