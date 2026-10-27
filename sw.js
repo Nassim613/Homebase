@@ -1,5 +1,5 @@
-const CACHE = 'homebase-v20';
-const ASSETS = ['./', './index.html', './styles.css', './storage.js', './auth.js', './sync.js', './garage.js', './builds.js', './noah.js', './import.js', './app.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'homebase-v22';
+const ASSETS = ['./', './index.html', './styles.css', './storage.js', './auth.js', './sync.js', './garage.js', './builds.js', './noah.js', './import.js', './app.js', './search.js', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));

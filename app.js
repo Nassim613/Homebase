@@ -64,9 +64,17 @@ function renderHeader() {
   const now = new Date();
   document.getElementById('dateLine').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   const titles = { finance: 'Finances', noah: 'Noah', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', builds: 'Builds', more: 'Settings' };
-  document.getElementById('pageTitle').textContent = titles[currentTab] || '';
+  // Documents and Passwords live inside the Settings tab but are their own places
+  const moreTitles = { docFolders: 'Documents', docFolderView: 'Documents', docFolderForm: 'Documents', passwords: 'Passwords', passwordForm: 'Passwords' };
+  const title = currentTab === 'more' && typeof moreView !== 'undefined' && moreTitles[moreView] ? moreTitles[moreView] : titles[currentTab];
+  document.getElementById('pageTitle').textContent = title || '';
   const whoEl = document.getElementById('signedInAs');
   if (whoEl) whoEl.textContent = Auth.email ? Auth.email : '';
+  // Desktop sidebar footer: who's signed in, as initials plus the address
+  const userEl = document.getElementById('sidebarUser');
+  if (userEl) userEl.textContent = Auth.email || 'Not signed in';
+  const avatar = document.getElementById('sidebarAvatar');
+  if (avatar) avatar.textContent = Auth.email ? Auth.email[0].toUpperCase() : '?';
 }
 
 function renderSyncPill() {
@@ -130,7 +138,8 @@ function syncNavActive() {
     if (b.id === 'moreSheetBtn') { b.classList.toggle('active', MORE_SHEET_TABS.includes(currentTab)); return; }
     const tabMatches = b.dataset.tab === currentTab;
     const viewMatches = !b.dataset.view || b.dataset.view === currentView;
-    const moreMatches = !b.dataset.moreview || b.dataset.moreview === moreView;
+    const MORE_PARENT = { docFolderView: 'docFolders', docFolderForm: 'docFolders', passwordForm: 'passwords' };
+    const moreMatches = !b.dataset.moreview || b.dataset.moreview === (MORE_PARENT[moreView] || moreView);
     b.classList.toggle('active', tabMatches && viewMatches && moreMatches);
   });
 }
@@ -199,7 +208,250 @@ async function route() {
     }
   }
   isHandlingPopState = false;
+  return routeDesktopAware();
+}
 
+// ---------- Desktop layout: details beside the list, forms in a dialog ----------
+// On a phone every screen still fills <main>, exactly as before. On desktop two kinds of
+// screen are drawn somewhere else, with the screen you came from kept behind them:
+//   - a detail (a Jazz or Noah issue, a Noah visit) goes in the right-hand panel, with
+//     its list still in <main>. Wide screens only — below that it stays a full page.
+//   - a form (add/edit anything) goes in a centred dialog over the page.
+// Each renderer still writes to $main as it always has; the finished nodes are then
+// moved into the panel or dialog, and the page behind is drawn into $main afterwards.
+// Moving nodes (rather than copying HTML) keeps any listeners a renderer attached.
+const DESKTOP_MQ = window.matchMedia('(min-width: 768px)');
+const WIDE_MQ = window.matchMedia('(min-width: 1200px)');
+function isDesktopLayout() { return DESKTOP_MQ.matches; }
+function isWideLayout() { return WIDE_MQ.matches; }
+
+// Detail screens that open in the side panel, and the list drawn behind each one.
+const PANEL_VIEWS = {
+  jazz: { issueDetail: 'main' },
+  noah: { noahIssueDetail: 'main', noahVisitDetail: 'main' }
+};
+// Form screens that open in the dialog, and the page drawn behind each one when you
+// didn't arrive from a page in the same section (e.g. from search or a reload).
+const DIALOG_VIEWS = {
+  finance: { add: 'main', categoryForm: 'categories', storeForm: 'categories', projectForm: 'categories' },
+  jazz: { addIssue: 'main', addJazzUpdate: 'issueDetail' },
+  noah: { addNoahIssue: 'main', addNoahGrowth: 'main', addNoahMilestone: 'main', addNoahUpdate: 'noahIssueDetail', addNoahVisit: 'main' },
+  weight: { addWeight: 'main' },
+  garage: { addVehicle: 'main', addCost: 'vehicleDetail', sellVehicle: 'vehicleDetail' },
+  builds: { addBuild: 'main', addSubBuild: 'buildDetail', addBuildExpense: 'subBuildDetail', contractorForm: 'subBuildDetail' }
+};
+// Settings has its own sub-screens (moreView) rather than views.
+const MORE_DIALOG_VIEWS = { passwordForm: 'passwords', docFolderForm: 'docFolders', buildCategoryForm: 'buildCategories' };
+
+function screenKind(tab, view, mv) {
+  if (!isDesktopLayout()) return 'page';
+  if (tab === 'more') return MORE_DIALOG_VIEWS[mv] ? 'dialog' : 'page';
+  if (DIALOG_VIEWS[tab] && DIALOG_VIEWS[tab][view]) return 'dialog';
+  if (isWideLayout() && PANEL_VIEWS[tab] && PANEL_VIEWS[tab][view]) return 'panel';
+  return 'page';
+}
+
+// The last full page shown, so a form opens over the page you opened it from.
+let lastPage = { tab: 'finance', view: 'main', more: 'main' };
+let routeSeq = 0;
+let routeBusy = false; // read by sync.js — a background refresh waits while a dialog is being assembled
+let lastRouteKey = '';
+
+function takeMainNodes() {
+  const frag = document.createDocumentFragment();
+  while ($main.firstChild) frag.appendChild($main.firstChild);
+  return frag;
+}
+
+// Draws a screen with currentView/moreView temporarily set to it, then puts them back.
+async function renderAs(view, mv, fn) {
+  const savedView = currentView, savedMore = moreView;
+  currentView = view; moreView = mv;
+  try { await fn(); } finally { currentView = savedView; moreView = savedMore; }
+}
+
+// A page, or a detail with its list behind it.
+async function renderPageOrPanel(seq) {
+  const kind = screenKind(currentTab, currentView, moreView);
+  if (kind !== 'panel') {
+    await routeView();
+    return null;
+  }
+  await routeView();                      // the detail, into $main
+  if (seq !== routeSeq) return null;
+  const detail = takeMainNodes();
+  await renderAs(PANEL_VIEWS[currentTab][currentView], moreView, routeView); // its list
+  return detail;
+}
+
+async function routeDesktopAware() {
+  const seq = ++routeSeq;
+  const kind = screenKind(currentTab, currentView, moreView);
+  const key = currentTab + '|' + currentView + '|' + moreView;
+  const moved = key !== lastRouteKey;
+  lastRouteKey = key;
+  if (kind !== 'dialog') hideFormDialog();
+  // An entry opened as a sheet-detail stays open across a background refresh of the
+  // same screen, but closes when you go somewhere else.
+  if (moved || kind === 'panel') hideDetailPanel();
+
+  if (kind === 'dialog') {
+    routeBusy = true;
+    try {
+      await routeView();                    // the form, into $main
+      if (seq !== routeSeq) return;
+      const form = takeMainNodes();
+      const formView = currentView, formMore = moreView;
+      let bgView, bgMore = moreView;
+      if (currentTab === 'more') { bgView = 'main'; bgMore = lastPage.tab === 'more' && !MORE_DIALOG_VIEWS[lastPage.more] ? lastPage.more : MORE_DIALOG_VIEWS[formMore]; }
+      else bgView = lastPage.tab === currentTab ? lastPage.view : DIALOG_VIEWS[currentTab][formView];
+      let detail = null;
+      await renderAs(bgView, bgMore, async () => { detail = await renderPageOrPanel(seq); });
+      if (seq !== routeSeq) return;
+      if (detail) showDetailPanel(detail, 'page');
+      showFormDialog(form);
+      syncHeaderAdd(bgView);
+      markPageWidth(bgView);
+    } finally { routeBusy = false; }
+    return;
+  }
+
+  routeBusy = kind === 'panel';
+  try {
+    const detail = await renderPageOrPanel(seq);
+    if (seq !== routeSeq) return;
+    if (detail) showDetailPanel(detail, 'page');
+  } finally { routeBusy = false; }
+  lastPage = { tab: currentTab, view: currentView, more: moreView };
+  syncHeaderAdd(currentView);
+  markPageWidth(currentView);
+}
+
+// Desktop: Finance and the reports use the full width for their figures and charts;
+// every other screen is a list or a form, which reads better in a narrower column.
+const WIDE_SCREENS = { finance: ['main', 'reports', 'utilitiesReport', 'vehicleReport', 'transfersReport', 'projectsReport', 'foodBudget'], jazz: ['report'], noah: ['noahReport'], garage: ['garageReport'] };
+function markPageWidth(view) {
+  const wide = (WIDE_SCREENS[currentTab] || []).includes(view);
+  document.body.classList.toggle('narrow-page', !wide);
+  renderHeader();
+  syncNavActive();
+}
+
+function showFormDialog(nodes) {
+  const body = document.getElementById('formDialogBody');
+  body.innerHTML = '';
+  body.appendChild(nodes);
+  document.getElementById('formDialog').style.display = 'flex';
+  document.body.classList.add('dialog-open');
+  const dialog = document.querySelector('#formDialog .form-dialog');
+  dialog.scrollTop = 0;
+  const first = body.querySelector('input:not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]), textarea');
+  if (first && !first.value) setTimeout(() => first.focus({ preventScroll: true }), 30);
+}
+function hideFormDialog() {
+  const d = document.getElementById('formDialog');
+  if (!d || d.style.display === 'none') return;
+  d.style.display = 'none';
+  document.getElementById('formDialogBody').innerHTML = '';
+  document.body.classList.remove('dialog-open');
+}
+// The dialog's X, the backdrop and Esc: leave the form the same way Back would.
+function closeFormDialog() {
+  if (currentTab === 'more') { moreView = lastPage.tab === 'more' ? lastPage.more : 'main'; return route(); }
+  if (history.state && history.state.tab === currentTab && history.state.view === currentView && history.length > 1) return history.back();
+  currentView = lastPage.tab === currentTab ? lastPage.view : 'main';
+  route();
+}
+
+let detailPanelMode = null; // 'sheet' (moved from the modal sheet) | 'page' (a detail screen)
+function showDetailPanel(nodes, mode) {
+  const body = document.getElementById('detailPanelBody');
+  body.innerHTML = '';
+  body.appendChild(nodes);
+  body.querySelectorAll('.sheet-handle').forEach((h) => h.remove());
+  detailPanelMode = mode;
+  const panel = document.getElementById('detailPanel');
+  panel.style.display = 'block';
+  panel.scrollTop = 0;
+  document.body.classList.add('panel-open');
+}
+function hideDetailPanel() {
+  const panel = document.getElementById('detailPanel');
+  if (!panel || panel.style.display === 'none') return;
+  panel.style.display = 'none';
+  document.getElementById('detailPanelBody').innerHTML = '';
+  document.body.classList.remove('panel-open');
+  document.querySelectorAll('.entry-row.is-open').forEach((r) => r.classList.remove('is-open'));
+  detailPanelMode = null;
+}
+function closeDetailPanel() {
+  if (detailPanelMode === 'page') {
+    currentView = PANEL_VIEWS[currentTab] && PANEL_VIEWS[currentTab][currentView] ? PANEL_VIEWS[currentTab][currentView] : 'main';
+    return route();
+  }
+  hideDetailPanel();
+}
+
+// Detail sheets (a Finance entry, a garage cost, a build expense) call this instead of
+// openModal(). On a wide screen what they drew into the sheet moves into the side panel;
+// opened from inside another sheet (a report's entry list), it stays a sheet so Back works.
+function openDetail() {
+  if (!isWideLayout() || modalBackStack) return openModal();
+  const sheet = document.getElementById('modalSheet');
+  const frag = document.createDocumentFragment();
+  while (sheet.firstChild) frag.appendChild(sheet.firstChild);
+  document.getElementById('modalOverlay').style.display = 'none';
+  showDetailPanel(frag, 'sheet');
+}
+
+// Desktop header button — the floating + button's job, labelled for the section.
+const HEADER_ADD_LABELS = { finance: 'Add entry', jazz: 'Add issue', noah: 'Add', weight: 'Log weight', garage: 'Add vehicle' };
+function syncHeaderAdd(view) {
+  const btn = document.getElementById('headerAddBtn');
+  if (!btn) return;
+  const show = view === 'main' && !!HEADER_ADD_LABELS[currentTab];
+  btn.style.display = show ? '' : 'none';
+  if (show) document.getElementById('headerAddLabel').textContent = HEADER_ADD_LABELS[currentTab];
+}
+function headerAddClick() {
+  // From a detail in the panel, the list is the page underneath — act as if on it.
+  if (PANEL_VIEWS[currentTab] && PANEL_VIEWS[currentTab][currentView]) currentView = PANEL_VIEWS[currentTab][currentView];
+  $fab.click();
+}
+
+// The sync pill and refresh button live in the header on a phone and in the sidebar
+// footer on desktop. Same elements moved, so nothing that updates them changes.
+function placeSyncStatus() {
+  const group = document.getElementById('headerStatus');
+  const slot = document.getElementById('sidebarStatusSlot');
+  const header = document.getElementById('pageHeader');
+  if (!group || !slot || !header) return;
+  if (isDesktopLayout()) { if (group.parentNode !== slot) slot.appendChild(group); }
+  else if (group.parentNode !== header) header.insertBefore(group, header.querySelector('.header-actions'));
+}
+placeSyncStatus();
+// Crossing the desktop breakpoint redraws the screen in the other layout — except mid-form,
+// where a redraw would wipe what's been typed.
+function onLayoutChange() {
+  placeSyncStatus();
+  if (document.getElementById('formDialog').style.display !== 'none') return;
+  if (Sync.FORM_VIEWS.includes(currentView)) return;
+  hideDetailPanel();
+  closeModal();
+  route();
+}
+DESKTOP_MQ.addEventListener('change', onLayoutChange);
+WIDE_MQ.addEventListener('change', onLayoutChange);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('searchOverlay').style.display !== 'none') return; // search handles its own Esc
+  if (document.getElementById('modalOverlay').style.display !== 'none') { closeModal(); return; }
+  if (document.getElementById('formDialog').style.display !== 'none') { closeFormDialog(); return; }
+  if (document.getElementById('detailPanel').style.display !== 'none') closeDetailPanel();
+});
+
+async function routeView() {
   if (currentTab === 'finance') {
     $fab.style.display = currentView === 'main' ? 'flex' : 'none';
     if (currentView === 'main') return renderFinanceMain();
@@ -260,7 +512,7 @@ async function route() {
     if (currentView === 'contractorForm') return renderContractorForm();
   } else if (currentTab === 'more') {
     $fab.style.display = 'none';
-    return renderMore();
+    return renderMoreView();
   } else {
     $fab.style.display = 'none';
     $main.innerHTML = `<div class="empty-state">${currentTab[0].toUpperCase() + currentTab.slice(1)} is coming in the next build phase.</div>`;
@@ -404,7 +656,7 @@ function daySummaryLabel(dayItems, nameOf) {
 }
 
 function collapseAllControls(containerId) {
-  return `<div style="display:flex;gap:8px;margin-bottom:10px">
+  return `<div class="collapse-controls" style="display:flex;gap:8px;margin-bottom:10px">
     <button class="btn" style="flex:1;padding:8px;font-size:12px" onclick="collapseAllIn('${containerId}', false)"><i class="ti ti-chevrons-down"></i> Show all</button>
     <button class="btn" style="flex:1;padding:8px;font-size:12px" onclick="collapseAllIn('${containerId}', true)"><i class="ti ti-chevrons-up"></i> Collapse all</button>
   </div>`;
@@ -430,6 +682,7 @@ async function renderFinanceMain() {
   const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
 
   $main.innerHTML = `
+    <div class="finance-top">
     <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
 
     <div class="chip-row">
@@ -438,6 +691,8 @@ async function renderFinanceMain() {
       <button class="chip ${financeRange==='twoMonthsAgo'?'active':''}" onclick="setFinanceRange('twoMonthsAgo')">${getFinanceRangeLabel('twoMonthsAgo')}</button>
       <button class="chip ${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange)?'active':''}" onclick="openFinanceRangeMoreModal()">${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange) ? getFinanceRangeLabel(financeRange) : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
     </div>
+    </div>
+    <div class="finance-kpis">
     <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${getFinanceRangeLabel(financeRange)}</p>
@@ -445,23 +700,28 @@ async function renderFinanceMain() {
       </div>
       <p class="big" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</p>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+    <div class="finance-stats">
       <div class="stat" style="cursor:pointer;${financeTypeFilter==='income'?'outline:2px solid #0F6E56':''}" onclick="toggleFinanceTypeFilter('income')"><p class="label">Income</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(income)}</p></div>
       <div class="stat" style="cursor:pointer;${financeTypeFilter==='expense'?'outline:2px solid var(--red)':''}" onclick="toggleFinanceTypeFilter('expense')"><p class="label">Expenses</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(expense)}</p></div>
       <div class="stat" style="cursor:pointer;${financeTypeFilter==='transfer'?'outline:2px solid var(--gold)':''}" onclick="toggleFinanceTypeFilter('transfer')"><p class="label">Transfers</p><p class="value" style="font-size:13px">${fmtMoney(transfer)}</p></div>
     </div>
-    ${financeTypeFilter ? `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
+    </div>
+    ${financeTypeFilter ? `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
 
-    <button class="btn" style="margin-bottom:14px" onclick="goFoodBudget()"><i class="ti ti-shopping-cart"></i> Food budget by week</button>
+    <div class="finance-listbar">
+    <button class="btn finance-food-btn" style="margin-bottom:14px" onclick="goFoodBudget()"><i class="ti ti-shopping-cart"></i> Food budget by week</button>
 
     <div class="chip-row">
       <span style="font-size:11px;color:var(--ink-soft);align-self:center;margin-right:2px">Sort:</span>
       <button class="chip ${financeSortBy==='date'?'active':''}" onclick="setFinanceSort('date')">Date</button>
       <button class="chip ${financeSortBy==='amount'?'active':''}" onclick="setFinanceSort('amount')">Amount (highest first)</button>
     </div>
+    </div>
 
+    <div class="list-card">
     ${financeSortBy === 'date' ? collapseAllControls('entryList') : ''}
     <div id="entryList">${renderFinanceList(listSource, catById, payeeById)}</div>
+    </div>
   `;
 
   document.getElementById('financeSearch').addEventListener('input', (e) => filterEntriesLive(e.target.value, listSource, catById, payeeById));
@@ -547,7 +807,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
   }
   const typeMeta = entryTypeMeta(e.type);
   return `
-    <div class="entry-row" onclick="openEntryDetail('${e.id}')">
+    <div class="entry-row" data-entry-id="${e.id}" onclick="openEntryDetail('${e.id}')">
       <div class="entry-icon">
         ${payeeLogoUrl(payee) ? `<img src="${payeeLogoUrl(payee)}" style="width:100%;height:100%;object-fit:contain;background:var(--surface-raised)">` : `<i class="ti ${cat.icon || 'ti-tag'}" style="color:var(--ink-soft)"></i>`}
         <div class="entry-badge" style="background:${categoryColor(e.categoryId)}22"><i class="ti ${cat.icon || 'ti-tag'}" style="color:${categoryColor(e.categoryId)}"></i></div>
@@ -1691,11 +1951,21 @@ async function openReportsCategoryConfig() {
 
 // ---------- Add / Edit Entry ----------
 let currentEntryId = null;
-function openEntryDetail(id) { currentEntryId = id; renderEntryDetail(); }
+function openEntryDetail(id) {
+  currentEntryId = id;
+  renderEntryDetail().then(() => {
+    // Mark the row whose details are showing in the side panel
+    document.querySelectorAll('.entry-row.is-open').forEach((r) => r.classList.remove('is-open'));
+    if (detailPanelMode === 'sheet') {
+      const row = document.querySelector(`.entry-row[data-entry-id="${id}"]`);
+      if (row) row.classList.add('is-open');
+    }
+  });
+}
 
 let modalBackStack = null;
 function openModal() { document.getElementById('modalOverlay').style.display = 'flex'; }
-function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; document.getElementById('modalSheet').innerHTML = ''; modalBackStack = null; }
+function closeModal() { document.getElementById('modalOverlay').style.display = 'none'; document.getElementById('modalSheet').innerHTML = ''; modalBackStack = null; if (detailPanelMode === 'sheet') hideDetailPanel(); }
 
 async function renderEntryDetail() {
   const entry = await DB.get('entries', currentEntryId);
@@ -1748,7 +2018,7 @@ async function renderEntryDetail() {
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red);margin-bottom:10px" onclick="deleteEntry()"><i class="ti ti-trash"></i> Delete</button>
     <button class="btn" onclick="if(modalBackStack){modalBackStack();}else{closeModal();}">${modalBackStack ? 'Back' : 'Close'}</button>
   `;
-  openModal();
+  openDetail();
 }
 
 // Shared across Finance receipts, Jazz photos, Vehicle photos, Garage receipts.
@@ -3740,7 +4010,11 @@ let editingSheetUrl = false;
 
 function goMoreMain() { moreView = 'main'; renderMore(); }
 
-async function renderMore() {
+// Settings screens are switched by setting moreView and calling renderMore(). That now
+// goes through route(), so the desktop layout can put Settings forms in the dialog.
+function renderMore() { return route(); }
+
+async function renderMoreView() {
   if (moreView === 'carsProjects') return renderCarsProjectsManager();
   if (moreView === 'expenseRepairTypes') return renderExpenseRepairManager();
   if (moreView === 'syncData') return renderSyncDataPage();
@@ -3918,7 +4192,7 @@ async function renderDocFoldersManager() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="moreView='main';renderMore()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Documents</span></div>
     <button class="btn btn-primary" style="margin-bottom:18px" onclick="goAddDocFolder()"><i class="ti ti-plus"></i> Add folder</button>
     ${folders.length ? `
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px">
+      <div class="folder-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px 10px">
         ${folders.map((f) => { const color = docFolderColor(f.id); const count = (f.fileLinks || []).length; return `
           <div style="display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer" onclick="goViewDocFolder('${f.id}')">
             ${f.coverImage ? `
@@ -3961,7 +4235,7 @@ async function renderDocFolderView() {
     </div>
     <p style="font-size:12px;color:var(--ink-soft);margin:0 0 18px">${links.length} file${links.length === 1 ? '' : 's'}</p>
     ${links.length ? `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+      <div class="doc-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
         ${links.map((l) => `
           <a href="${l.viewUrl || l.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;border-radius:14px;overflow:hidden;background:var(--surface-raised);box-shadow:var(--shadow);display:block">
             <div style="aspect-ratio:1;background:#fff;position:relative;display:flex;align-items:center;justify-content:center">

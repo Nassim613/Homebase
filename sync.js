@@ -480,7 +480,7 @@ const Sync = {
     window.addEventListener('offline', () => this.setStatus('pending'));
     setInterval(() => {
       this.fullSync().then((changed) => {
-        if (changed && typeof currentView !== 'undefined' && !this.FORM_VIEWS.includes(currentView) && typeof route === 'function') {
+        if (changed && typeof currentView !== 'undefined' && !this.FORM_VIEWS.includes(currentView) && !(typeof routeBusy !== 'undefined' && routeBusy) && !(document.getElementById('formDialog') && document.getElementById('formDialog').style.display !== 'none') && typeof route === 'function') {
           route(); // something genuinely new arrived and it's safe to redraw — refresh what's on screen
         }
       });

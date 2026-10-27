@@ -6,6 +6,9 @@
   <title>Homebase</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#2B2640">
+  <!-- Browser tab icon: the SVG stays sharp at any size; the PNG is for browsers without SVG favicons -->
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,17 +29,41 @@
           <h1 id="pageTitle">Finances</h1>
         </div>
       </div>
-      <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
-      <div style="position:relative;display:inline-block">
-        <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
-        <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
+      <!-- On a phone this group sits at the right of the header. On desktop app.js moves
+           it into the sidebar footer (same elements, so the ids stay unique). -->
+      <div class="header-status" id="headerStatus">
+        <span class="status-pill offline" id="syncPill"><i class="ti ti-cloud"></i> <span id="syncText">Not connected</span></span>
+        <div style="position:relative;display:inline-block">
+          <button id="manualRefreshBtn" onclick="manualRefresh()" title="Refresh now" aria-label="Refresh now" style="border:none;background:var(--surface-raised);border-radius:50%;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:pointer;color:var(--ink-soft)"><i class="ti ti-refresh" id="manualRefreshIcon"></i></button>
+          <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
+        </div>
+      </div>
+      <!-- Desktop only: the page's main action, in place of the floating + button -->
+      <div class="header-actions">
+        <button class="btn btn-primary header-add" id="headerAddBtn" style="display:none" onclick="headerAddClick()"><i class="ti ti-plus"></i> <span id="headerAddLabel">Add</span></button>
       </div>
     </header>
+
+    <!-- Desktop only: forms open in this centred dialog. It sits before <main> so a
+         form's element ids win any lookup over the page drawn behind it. -->
+    <div id="formDialog" class="form-dialog-backdrop" style="display:none" onclick="if(event.target===this) closeFormDialog()">
+      <div class="form-dialog" role="dialog" aria-modal="true" aria-label="Form">
+        <button class="form-dialog-close" onclick="closeFormDialog()" aria-label="Close"><i class="ti ti-x"></i></button>
+        <div id="formDialogBody"></div>
+      </div>
+    </div>
 
     <main id="mainContent">
       <!-- Views are rendered here by app.js -->
       <div class="empty-state">Loading…</div>
     </main>
+
+    <!-- Desktop only (wide screens): an entry, issue, visit or cost opens here, beside
+         the list, instead of in a sheet over it -->
+    <aside id="detailPanel" class="detail-panel" style="display:none" aria-label="Details">
+      <button class="detail-panel-close" onclick="closeDetailPanel()" aria-label="Close details"><i class="ti ti-x"></i></button>
+      <div id="detailPanelBody"></div>
+    </aside>
 
     <button class="fab" id="fab" style="display:none"><i class="ti ti-plus"></i></button>
 
@@ -45,7 +72,8 @@
          every .sidebar-item show instead, and More is hidden, since nothing needs hiding
          when there's room for all of it. -->
     <nav class="tabs">
-      <p class="sidebar-title">Homebase</p>
+      <p class="sidebar-title"><span class="sidebar-mark"><i class="ti ti-home"></i></span>Homebase</p>
+      <button class="sidebar-search" onclick="openGlobalSearch()"><i class="ti ti-search"></i><span class="label">Search everything</span><kbd>Ctrl K</kbd></button>
       <p class="nav-group">Money</p>
       <button class="bar-item sidebar-item active" data-tab="finance"><i class="ti ti-report-money"></i><span class="label">Finance</span></button>
       <p class="nav-group">Family</p>
@@ -64,7 +92,28 @@
       <button class="sidebar-item" data-tab="noah" data-view="noahReport"><i class="ti ti-heart-rate-monitor"></i><span class="label">Noah</span></button>
       <button class="bar-item" id="moreSheetBtn" onclick="openMoreSheet()"><i class="ti ti-dots"></i><span class="label">More</span></button>
       <button class="sidebar-item nav-settings" data-tab="more" data-moreview="main"><i class="ti ti-settings"></i><span class="label">Settings</span></button>
+      <div class="sidebar-footer">
+        <span class="sidebar-avatar" id="sidebarAvatar"></span>
+        <div class="sidebar-who">
+          <p id="sidebarUser"></p>
+          <div id="sidebarStatusSlot"></div>
+        </div>
+      </div>
     </nav>
+
+    <!-- Desktop only: Search everything (Ctrl K) -->
+    <div id="searchOverlay" class="search-backdrop" style="display:none" onclick="if(event.target===this) closeGlobalSearch()">
+      <div class="search-palette" role="dialog" aria-modal="true" aria-label="Search everything">
+        <div class="search-input-row">
+          <i class="ti ti-search"></i>
+          <input id="globalSearchInput" type="search" autocomplete="off" placeholder="Search entries, builds, documents, Jazz, Noah…" aria-label="Search everything">
+          <kbd>Esc</kbd>
+        </div>
+        <div class="search-scopes" id="globalSearchScopes"></div>
+        <div class="search-results" id="globalSearchResults"></div>
+        <div class="search-footer"><span>↑ ↓ to move</span><span>Enter to open</span><span>Esc to close</span><span style="margin-left:auto">Passwords match on the site name only</span></div>
+      </div>
+    </div>
 
     <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
       <div class="modal-sheet" id="modalSheet"></div>
@@ -82,5 +131,6 @@
   <script src="import.js"></script>
   <script src="reports.js"></script>
   <script src="app.js"></script>
+  <script src="search.js"></script>
 </body>
 </html>

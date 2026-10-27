@@ -536,7 +536,7 @@ async function openBuildExpenseDetail(id) {
     <button class="btn" style="margin-bottom:10px" onclick="openBuildMoveSheet(['${e.id}'])"><i class="ti ti-arrows-right-left"></i> Move to…</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteBuildExpenseFromDetail()"><i class="ti ti-trash"></i> Delete</button>
   `;
-  openModal();
+  openDetail();
 }
 function editBuildExpenseFromDetail() {
   buildExpenseEditId = buildExpenseDetailId;

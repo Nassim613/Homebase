@@ -344,7 +344,7 @@ async function openCostDetail(id) {
     <button class="btn" style="margin-bottom:10px" onclick="editCostFromDetail()"><i class="ti ti-edit"></i> Edit</button>
     <button class="btn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="deleteCostFromDetail()"><i class="ti ti-trash"></i> Delete</button>
   `;
-  openModal();
+  openDetail();
 }
 function editCostFromDetail() {
   costEditId = costDetailId;
