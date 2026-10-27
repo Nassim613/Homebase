@@ -1984,6 +1984,59 @@ async function renderEntryDetail() {
   const detailSign = isRefund ? '+' : (entry.type === 'expense' ? '-' : (entry.type === 'income' ? '+' : ''));
   const detailAmount = Math.abs(entry.amount);
 
+  // Desktop side panel: amount first and big, then category, the store card (logo,
+  // name, date), description and the receipt filling the rest. The phone keeps the
+  // sheet below.
+  if (isWideLayout() && !modalBackStack) {
+    const kind = isRefund ? { label: 'Refund', cls: 'pos', icon: 'ti-arrow-back-up' }
+      : entry.type === 'income' ? { label: 'Income', cls: 'pos', icon: 'ti-arrow-up-right' }
+      : entry.type === 'transfer' ? { label: entry.transferDirection === 'in' ? 'Transfer in' : 'Transfer out', cls: 'transfer', icon: 'ti-arrows-left-right' }
+      : { label: 'Expense', cls: 'neg', icon: 'ti-arrow-down-right' };
+    const sign = entry.type === 'transfer' ? (entry.transferDirection === 'in' ? '+' : '-') : detailSign;
+    const logo = payeeLogoUrl(payee);
+    const color = categoryColor(entry.categoryId);
+    const extraRows = [
+      car ? ['Car', car.name] : null,
+      entry.carName && !car ? ['Cars', entry.carName] : null,
+      project ? ['Project', project.name] : null
+    ].filter(Boolean);
+    const receipt = entry.receiptLink && entry.receiptLink.url ? entry.receiptLink : null;
+    const receiptOpen = receipt ? (receipt.viewUrl || receipt.url) : '';
+    document.getElementById('modalSheet').innerHTML = `
+      <div class="pd">
+        <span class="pd-kind ${kind.cls}"><i class="ti ${kind.icon}"></i> ${kind.label}</span>
+        <p class="pd-amount ${kind.cls}">${sign}${fmtMoney(detailAmount)}</p>
+        <div class="pd-chips">
+          ${cat.name ? `<span class="pd-chip" style="background:${color}22;color:${color}"><i class="ti ${cat.icon || 'ti-tag'}"></i> ${esc(cat.name)}</span>` : ''}
+          ${entry.recurringId ? `<span class="pd-chip pd-chip-plain"><i class="ti ti-repeat"></i> Recurring</span>` : ''}
+        </div>
+        <div class="pd-store">
+          <span class="pd-logo">${logo ? `<img src="${logo}" alt="">` : `<i class="ti ${cat.icon || 'ti-building-store'}"></i>`}</span>
+          <div style="min-width:0">
+            <p class="pd-store-name">${esc(payee.name || cat.name || 'Entry')}</p>
+            <p class="pd-store-date">${new Date(entry.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
+          </div>
+        </div>
+        ${entry.description ? `<p class="pd-desc"><span>Description:</span> ${esc(entry.description)}</p>` : ''}
+        ${extraRows.map(([k, v]) => `<p class="pd-desc"><span>${k}:</span> ${esc(v)}</p>`).join('')}
+        ${receipt ? `
+          <div class="pd-receipt-head"><span>Receipt</span><a href="${receiptOpen}" target="_blank" rel="noopener">${receipt.isImage ? 'Open full size' : 'Open'} <i class="ti ti-external-link"></i></a></div>
+          ${receipt.isImage
+            ? `<a class="pd-receipt" href="${receiptOpen}" target="_blank" rel="noopener"><img src="${receipt.url}" alt="Receipt"></a>`
+            : `<a class="pd-receipt-file" href="${receiptOpen}" target="_blank" rel="noopener"><i class="ti ti-file-text"></i> View receipt</a>`}
+        ` : ''}
+        <div class="pd-actions">
+          <button class="btn btn-primary" onclick="editEntry()"><i class="ti ti-edit"></i> Edit</button>
+          <button class="btn" onclick="duplicateEntry()"><i class="ti ti-copy"></i> Duplicate</button>
+          <button class="btn pd-delete" onclick="deleteEntry()" aria-label="Delete entry" title="Delete"><i class="ti ti-trash"></i></button>
+        </div>
+        <p class="pd-sync ${entry.synced ? 'ok' : 'pending'}"><i class="ti ${entry.synced ? 'ti-check' : 'ti-clock'}"></i> ${entry.synced ? 'Synced' : 'Waiting to sync'}</p>
+      </div>
+    `;
+    openDetail();
+    return;
+  }
+
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     ${payeeLogoUrl(payee) ? `

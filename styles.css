@@ -334,6 +334,38 @@ body.dialog-open { overflow: hidden; }
 @keyframes slideInPanel { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes popIn { from { transform: translateY(8px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
 
+/* --- Finance entry in the side panel --- */
+.pd { display: flex; flex-direction: column; }
+.pd-kind { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+.pd-kind.neg { background: var(--red-soft); color: #A93F38; }
+.pd-kind.pos { background: var(--sage-soft); color: #0F6E56; }
+.pd-kind.transfer { background: var(--gold-soft); color: #7A5810; }
+.pd-amount { font-family: 'Fraunces', Georgia, serif; font-size: 46px; font-weight: 600; line-height: 1.05; letter-spacing: -0.01em; margin: 8px 0 12px; }
+.pd-amount.neg { color: var(--red); }
+.pd-amount.pos { color: #0F6E56; }
+.pd-amount.transfer { color: var(--ink); }
+.pd-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.pd-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; }
+.pd-chip-plain { background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line); }
+.pd-store { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.pd-logo { width: 52px; height: 52px; flex-shrink: 0; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-raised); overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-soft); }
+.pd-logo img { width: 100%; height: 100%; object-fit: contain; }
+.pd-store-name { font-size: 16px; font-weight: 600; }
+.pd-store-date { font-size: 13px; color: var(--ink-soft); margin-top: 3px; }
+.pd-desc { font-size: 14px; line-height: 1.5; margin-top: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-desc span { color: var(--ink-soft); }
+.pd-receipt-head { display: flex; justify-content: space-between; align-items: baseline; margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+.pd-receipt-head a { color: #8a6412; text-decoration: none; }
+/* Capped so Edit / Duplicate stay on screen; Open full size shows the whole receipt */
+.pd-receipt img { width: 100%; max-height: max(240px, calc(100vh - 470px)); object-fit: contain; background: var(--surface); display: block; border-radius: 12px; border: 1px solid var(--line); }
+.pd-receipt-file { display: flex; align-items: center; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); text-decoration: none; font-size: 14px; }
+.pd-actions { display: flex; gap: 8px; margin-top: 18px; }
+.pd-actions .btn { flex: 1; padding: 11px; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.pd-actions .pd-delete { flex: 0 0 48px; background: var(--red-soft); color: var(--red); border-color: #EBC3BF; }
+.pd-sync { font-size: 12px; margin-top: 12px; display: flex; align-items: center; gap: 5px; }
+.pd-sync.ok { color: #0F6E56; }
+.pd-sync.pending { color: var(--rose); }
+
 /* --- Search everything (Ctrl K) --- */
 .search-backdrop {
   position: fixed; inset: 0; z-index: 120;
