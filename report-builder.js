@@ -44,7 +44,11 @@ window.HomebaseReportBuilder = (function () {
   ];
   var FOOD_LABEL = 'Groceries + Meal Kit';
 
-  // Bills: rolled into one "Bills" row on page 1, broken out on page 2.
+  // Bills: the BILLS category, broken out by store (Enbridge Gas, Hydro Ottawa,
+  // Telus Cellphones, Bell Internet, Water - City of Ottawa). One "Bills" row on
+  // page 1, the per-store breakdown on page 2. Stores listed here come first, in
+  // this order; any other store under Bills follows, largest first.
+  var BILLS_CATEGORY = 'bills';
   var BILLS = [
     { match: ['enbridge'], every: 1 },
     { match: ['hydro'], every: 1 },
@@ -84,13 +88,20 @@ window.HomebaseReportBuilder = (function () {
     });
   }
   // Category names saved in capitals ("HYDRO OTTAWA") read better as "Hydro Ottawa".
+  // Same for store names ("COSTCO" -> "Costco"). Short codes stay in capitals.
   var SMALL = { of: 1, and: 1, the: 1, a: 1, an: 1, to: 1, 'for': 1, on: 1, 'in': 1 };
+  var KEEP_CAPS = { resp: 1, tfsa: 1, rbc: 1, td: 1, cra: 1, ccb: 1, caa: 1, iga: 1, ups: 1, bmw: 1, hso: 1, mbna: 1, nslsc: 1, etr: 1, cft: 1, gpt: 1, cheo: 1, usa: 1, ai: 1 };
   function display(name) {
     name = String(name || '');
     if (!/[A-Z]/.test(name) || name !== name.toUpperCase()) return name;
-    return name.toLowerCase().split(' ').map(function (w, i) {
+    var words = name.toLowerCase().split(' ');
+    return words.map(function (w, i) {
+      var bare = w.replace(/[^a-z&]/g, '');
+      if (bare === 'mc' && /^\d/.test(words[i + 1] || '')) return 'MC';        // card names: "MBNA - MC 0216"
+      if (KEEP_CAPS[bare] || (bare.indexOf('&') !== -1 && bare.length <= 3)) return w.toUpperCase();
       if (i > 0 && SMALL[w]) return w;
-      return w.charAt(0).toUpperCase() + w.slice(1);
+      return w.replace(/^([^a-z]*)([a-z])/, function (m, pre, ch) { return pre + ch.toUpperCase(); })
+        .replace(/-([a-z])/g, function (m, ch) { return '-' + ch.toUpperCase(); });
     }).join(' ');
   }
   function norm(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
@@ -390,7 +401,7 @@ window.HomebaseReportBuilder = (function () {
     raw.cars.forEach(function (c) { M.carById[c.id] = c; });
 
     M.catName = function (e) { var c = M.catById[e.categoryId]; return display((c && c.name) || e.categoryName || 'Other'); };
-    M.storeName = function (e) { var s = M.storeById[e.storeId]; return (s && s.name) || e.storeName || ''; };
+    M.storeName = function (e) { var s = M.storeById[e.storeId]; return display((s && s.name) || e.storeName || ''); };
     M.excluded = function (e) { var c = M.catById[e.categoryId]; return !!(c && c.excludeFromTotals); };
 
     // Cars shown in reports: real cars by name, then "All cars". Tesla left out.
@@ -401,12 +412,20 @@ window.HomebaseReportBuilder = (function () {
     M.carColor = {};
     M.cars.forEach(function (n, i) { M.carColor[n] = norm(n) === ALL_CARS ? '#B4B2A9' : CAR_COLORS[i % CAR_COLORS.length]; });
 
-    // Bill categories that actually exist, in the configured order.
+    // Bills = stores used under the Bills category: configured ones first, then the rest.
+    var isBillCat = function (e) { return norm(M.catName(e)) === BILLS_CATEGORY; };
+    M.billName = function (e) { return M.storeName(e) || 'Other bills'; };
+    var billTotals = {};
+    raw.entries.forEach(function (e) { if (e.type === 'expense' && isBillCat(e)) { var b = M.billName(e); billTotals[b] = (billTotals[b] || 0) + num(e.amount); } });
+    var billNames = Object.keys(billTotals);
     M.bills = [];
     BILLS.forEach(function (b) {
-      var c = raw.categories.filter(function (c) { return has(c.name, b.match); })[0];
-      if (c) M.bills.push({ name: display(c.name), every: b.every });
+      var n = billNames.filter(function (x) { return has(x, b.match) && !M.bills.some(function (y) { return y.name === x; }); })[0];
+      if (n) M.bills.push({ name: n, every: b.every });
     });
+    billNames.filter(function (x) { return !M.bills.some(function (y) { return y.name === x; }); })
+      .sort(function (a, b) { return billTotals[b] - billTotals[a]; })
+      .forEach(function (x) { M.bills.push({ name: x, every: 1 }); });
     M.billColor = {};
     M.bills.forEach(function (b, i) { M.billColor[b.name] = BILL_COLORS[i % BILL_COLORS.length]; });
 
@@ -415,7 +434,7 @@ window.HomebaseReportBuilder = (function () {
       var name = M.catName(e), n = norm(name);
       var out = { cat: name, bucket: name, bill: null, carPart: null };
       if (has(name, ['groceries', 'meal kit'])) out.bucket = FOOD_LABEL;
-      M.bills.forEach(function (b) { if (b.name === name) { out.bill = name; out.bucket = BILLS_LABEL; } });
+      if (n === BILLS_CATEGORY) { out.bill = M.billName(e); out.bucket = BILLS_LABEL; }
       CAR_PARTS.forEach(function (p) { if (p.test(n)) { out.carPart = p.part; out.bucket = p.label; } });
       return out;
     };
@@ -506,7 +525,7 @@ window.HomebaseReportBuilder = (function () {
 
     // Stores: logo URL (only real links or uploaded images draw).
     M.logoOf = function (storeName) {
-      var p = raw.payees.filter(function (x) { return x.name === storeName; })[0];
+      var p = raw.payees.filter(function (x) { return display(x.name) === storeName; })[0];
       if (!p) return null;
       var cands = [p.logoLink, p.logo];
       for (var i = 0; i < cands.length; i++) {
