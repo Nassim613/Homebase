@@ -1267,7 +1267,7 @@ async function renderReportsStub() {
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Reports</span></div>
 
     <button class="btn" style="margin-bottom:14px;text-align:left" onclick="HomebaseReports.open()">
-      <i class="ti ti-mail"></i> Email a report
+      <i class="ti ti-file-type-pdf"></i> Reports · PDF, email or download
     </button>
 
     <div class="chip-row">

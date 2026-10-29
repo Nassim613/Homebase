@@ -1,202 +1,144 @@
-// Homebase — report sending
+// Homebase — Reports sheet
 // ---------------------------------------------------------------
-// Loaded from index.html before app.js:
+// Pick a report (weekly, monthly, yearly, category, store), then preview it,
+// download it as a PDF, or email the PDF. Every PDF made here (emailed or just
+// downloaded) is saved to "Homebase Reports" in Drive and listed in Report
+// history, where it can be opened, downloaded or sent again.
 //
-//   <script src="reports.js"></script>
+// The reports themselves are built on this device by report-builder.js, from
+// the same data the app shows. Apps Script only stores, emails and logs them.
 //
-// It injects its own styles and does nothing else on its own. The way in is
-// the "Email a report" button in the Reports view, which calls
-// HomebaseReports.open(). Any element with id="hb-send-report" also gets
-// wired up automatically if one exists.
-//
-// The endpoint comes from settings/meta.sheetUrl and the token off Auth. If
-// either is ever renamed, override explicitly:
-//
-//   HomebaseReports.init({ endpoint: API_URL, getToken: () => idToken });
+// Loaded from index.html after report-builder.js and before app.js. The way in
+// is the "Reports" button in Finance → Reports, which calls HomebaseReports.open().
 
 window.HomebaseReports = (function () {
   'use strict';
 
-  var STYLES = '/* Homebase — report sending sheet\n   Append to styles.css. Everything is namespaced .hbr- so it can\'t collide\n   with existing rules. */\n\n.hbr-overlay {\n  position: fixed;\n  inset: 0;\n  z-index: 900;\n  background: rgba(43, 38, 64, 0.45);\n  display: flex;\n  align-items: flex-end;\n  justify-content: center;\n  overflow-y: auto;\n}\n\n.hbr-sheet {\n  width: 100%;\n  max-width: 480px;\n  background: #F7F3E9;\n  border-radius: 22px 22px 0 0;\n  padding: 20px 18px calc(28px + env(safe-area-inset-bottom));\n  font-family: Georgia, serif;\n  color: #2B2640;\n  max-height: 92vh;\n  overflow-y: auto;\n}\n\n@media (min-width: 520px) {\n  .hbr-overlay { align-items: center; }\n  .hbr-sheet { border-radius: 22px; }\n}\n\n.hbr-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }\n.hbr-title { font-size: 20px; font-weight: 600; }\n.hbr-x {\n  background: none; border: none; font-size: 24px; line-height: 1;\n  color: #8a8296; cursor: pointer; padding: 0 4px;\n}\n\n.hbr-tabs {\n  display: flex; background: #EFE7D5; border-radius: 10px; padding: 3px; margin-bottom: 18px;\n}\n.hbr-tab {\n  flex: 1; padding: 9px 0; border: none; background: none; border-radius: 8px;\n  font-family: inherit; font-size: 14px; color: #8a8296; cursor: pointer;\n}\n.hbr-tab.is-on {\n  background: #F7F3E9; color: #2B2640; font-weight: 600;\n  border: 1px solid #E4DCC8;\n}\n\n.hbr-label {\n  font-size: 11px; color: #8a8296; letter-spacing: 0.06em;\n  text-transform: uppercase; margin: 0 0 8px;\n}\n.hbr-note { font-size: 12px; color: #8a8296; margin: 0 0 18px; }\n.hbr-rowhead { display: flex; align-items: baseline; justify-content: space-between; margin-top: 20px; }\n\n.hbr-period {\n  display: flex; align-items: center; justify-content: space-between; width: 100%;\n  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;\n  padding: 11px 12px; margin-bottom: 8px; font-family: inherit; font-size: 14px;\n  color: #2B2640; text-align: left; cursor: pointer;\n}\n.hbr-period.is-on { background: #EFE7D5; border-color: #BA7517; font-weight: 600; }\n.hbr-period em { font-style: normal; font-size: 11px; color: #8a8296; }\n.hbr-check { color: #BA7517; }\n\n.hbr-more { margin-bottom: 8px; }\n.hbr-more summary {\n  font-size: 12px; color: #8a6412; cursor: pointer; padding: 6px 0; list-style: none;\n}\n\n.hbr-range { display: flex; gap: 10px; margin-bottom: 14px; }\n.hbr-field { flex: 1; display: block; }\n.hbr-field span { display: block; font-size: 11px; color: #8a8296; margin-bottom: 5px; }\n.hbr-field input,\n.hbr-input {\n  width: 100%; box-sizing: border-box; border: 1px solid #E4DCC8; border-radius: 10px;\n  padding: 10px 11px; font-family: inherit; font-size: 14px; color: #2B2640; background: #FFFDF7;\n}\n\n.hbr-chips { display: flex; gap: 6px; margin-bottom: 8px; }\n.hbr-chip {\n  flex: 1; border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 20px;\n  padding: 7px 0; font-family: inherit; font-size: 12px; color: #2B2640; cursor: pointer;\n}\n\n.hbr-checkrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }\n.hbr-checkrow input { width: 18px; height: 18px; accent-color: #BA7517; flex: none; }\n.hbr-checkrow em { font-style: normal; font-size: 11px; color: #8a8296; }\n\n.hbr-card {\n  border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px;\n  padding: 12px; margin-bottom: 8px;\n}\n.hbr-cardrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }\n.hbr-cardrow em { display: block; font-style: normal; font-size: 11px; color: #8a8296; }\n.hbr-meta { display: block; font-style: normal; font-size: 11px; color: #8a8296; margin-top: 6px; }\n.hbr-cardactions { display: flex; gap: 6px; margin-top: 10px; }\n.hbr-pos { color: #0F6E56; font-weight: 600; }\n.hbr-neg { color: #C9564F; font-weight: 600; }\n\n.hbr-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }\n.hbr-edit input {\n  border: 1px solid #E4DCC8; border-radius: 8px; padding: 9px 10px;\n  font-family: inherit; font-size: 14px; background: #F7F3E9; color: #2B2640;\n}\n\n.hbr-add { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 20px; }\n.hbr-add input {\n  border: 1px dashed #C9C2B2; border-radius: 10px; padding: 10px 11px;\n  font-family: inherit; font-size: 14px; background: transparent; color: #2B2640;\n}\n\n.hbr-btn {\n  flex: 1; border: 1px solid #C9C2B2; background: #F7F3E9; border-radius: 10px;\n  padding: 11px 12px; font-family: inherit; font-size: 14px; color: #2B2640; cursor: pointer;\n}\n.hbr-btn[disabled] { opacity: 0.55; cursor: default; }\n.hbr-btn--primary { background: #2B2640; border-color: #2B2640; color: #F7F3E9; }\n.hbr-btn--danger { background: #F4E3E5; border-color: #E3C4C7; color: #C9564F; }\n\n.hbr-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }\n\n.hbr-link {\n  background: none; border: none; font-family: inherit; font-size: 12px;\n  color: #8a6412; cursor: pointer; padding: 0;\n}\n.hbr-link--center { display: block; width: 100%; text-align: center; margin-top: 14px; }\n\n.hbr-error { font-size: 13px; color: #C9564F; margin: 14px 0 0; }\n.hbr-ok { font-size: 13px; color: #0F6E56; margin: 14px 0 0; }\n.hbr-warn {\n  font-size: 12px; color: #854F0B; background: #FAEEDA;\n  padding: 10px 14px; margin: 0;\n}\n\n.hbr-preview {\n  position: fixed; inset: 0; z-index: 950; background: rgba(43, 38, 64, 0.6);\n  display: flex; flex-direction: column;\n}\n.hbr-previewbar {\n  display: flex; align-items: center; justify-content: space-between;\n  background: #F7F3E9; padding: 12px 16px; font-family: Georgia, serif;\n  font-size: 14px; color: #2B2640; padding-top: calc(12px + env(safe-area-inset-top));\n}\n.hbr-preview iframe { flex: 1; width: 100%; border: none; background: #F7F3E9; }\n\n.hbr-fab {\n  position: fixed;\n  right: 16px;\n  bottom: calc(76px + env(safe-area-inset-bottom));\n  z-index: 880;\n  border: 1px solid #2B2640;\n  background: #2B2640;\n  color: #F7F3E9;\n  font-family: Georgia, serif;\n  font-size: 14px;\n  padding: 11px 16px;\n  border-radius: 22px;\n  box-shadow: 0 4px 14px rgba(43, 38, 64, 0.25);\n  cursor: pointer;\n}\n';
+  var STYLES = [
+    '.hbr-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(43,38,64,.45); display: flex; align-items: flex-end; justify-content: center; overflow-y: auto; }',
+    '.hbr-sheet { width: 100%; max-width: 480px; background: #F7F3E9; border-radius: 22px 22px 0 0; padding: 20px 18px calc(28px + env(safe-area-inset-bottom)); font-family: Georgia, serif; color: #2B2640; max-height: 92vh; overflow-y: auto; }',
+    '@media (min-width: 520px) { .hbr-overlay { align-items: center; } .hbr-sheet { border-radius: 22px; } }',
+    '.hbr-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }',
+    '.hbr-title { font-size: 20px; font-weight: 600; }',
+    '.hbr-x { background: none; border: none; font-size: 26px; line-height: 1; color: #8a8296; cursor: pointer; padding: 0 4px; }',
+    '.hbr-label { font-size: 11px; color: #8a8296; letter-spacing: .06em; text-transform: uppercase; margin: 0 0 8px; }',
+    '.hbr-note { font-size: 12px; color: #8a8296; margin: 0 0 16px; }',
+    '.hbr-rowhead { display: flex; align-items: baseline; justify-content: space-between; margin-top: 18px; }',
+    '.hbr-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }',
+    '.hbr-type { font-family: inherit; font-size: 13px; padding: 7px 13px; border-radius: 18px; border: 1px solid #E4DCC8; background: #FFFDF7; color: #2B2640; cursor: pointer; }',
+    '.hbr-type.is-on { background: #2B2640; border-color: #2B2640; color: #F7F3E9; }',
+    '.hbr-period { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px; padding: 11px 12px; margin-bottom: 6px; font-family: inherit; font-size: 14px; color: #2B2640; text-align: left; cursor: pointer; }',
+    '.hbr-period.is-on { background: #EFE7D5; border-color: #BA7517; font-weight: 600; }',
+    '.hbr-period em { font-style: normal; font-size: 11px; color: #8a8296; font-weight: normal; }',
+    '.hbr-check { color: #BA7517; }',
+    '.hbr-more { margin-bottom: 6px; }',
+    '.hbr-more summary { font-size: 12px; color: #8a6412; cursor: pointer; padding: 6px 0; list-style: none; }',
+    '.hbr-select { width: 100%; box-sizing: border-box; border: 1px solid #E4DCC8; border-radius: 10px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #2B2640; background: #FFFDF7; margin-bottom: 6px; }',
+    '.hbr-seg { display: flex; background: #EFE7D5; border-radius: 10px; padding: 3px; margin-bottom: 6px; }',
+    '.hbr-seg button { flex: 1; padding: 8px 0; border: none; background: none; border-radius: 8px; font-family: inherit; font-size: 13px; color: #8a8296; cursor: pointer; }',
+    '.hbr-seg button.is-on { background: #F7F3E9; color: #2B2640; border: 1px solid #E4DCC8; }',
+    '.hbr-checkrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }',
+    '.hbr-checkrow input { width: 18px; height: 18px; accent-color: #BA7517; flex: none; }',
+    '.hbr-checkrow em { font-style: normal; font-size: 11px; color: #8a8296; }',
+    '.hbr-card { border: 1px solid #E4DCC8; background: #FFFDF7; border-radius: 10px; padding: 12px; margin-bottom: 8px; }',
+    '.hbr-cardrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }',
+    '.hbr-cardrow em { display: block; font-style: normal; font-size: 11px; color: #8a8296; }',
+    '.hbr-meta { display: block; font-style: normal; font-size: 11px; color: #8a8296; margin-top: 6px; }',
+    '.hbr-cardactions { display: flex; gap: 6px; margin-top: 10px; }',
+    '.hbr-badge { font-size: 10px; padding: 2px 7px; border-radius: 8px; background: #EFE7D5; color: #6b5a33; white-space: nowrap; }',
+    '.hbr-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }',
+    '.hbr-edit input, .hbr-add input, .hbr-input { border: 1px solid #E4DCC8; border-radius: 10px; padding: 10px 11px; font-family: inherit; font-size: 14px; background: #FFFDF7; color: #2B2640; width: 100%; box-sizing: border-box; }',
+    '.hbr-add { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 20px; }',
+    '.hbr-add input { border-style: dashed; background: transparent; }',
+    '.hbr-btn { flex: 1; border: 1px solid #C9C2B2; background: #F7F3E9; border-radius: 10px; padding: 11px 12px; font-family: inherit; font-size: 14px; color: #2B2640; cursor: pointer; }',
+    '.hbr-btn[disabled] { opacity: .55; cursor: default; }',
+    '.hbr-btn--primary { background: #2B2640; border-color: #2B2640; color: #F7F3E9; }',
+    '.hbr-btn--good { background: #0F6E56; border-color: #0F6E56; color: #fff; }',
+    '.hbr-btn--danger { background: #F4E3E5; border-color: #E3C4C7; color: #C9564F; }',
+    '.hbr-row { display: flex; gap: 8px; }',
+    '.hbr-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }',
+    '.hbr-link { background: none; border: none; font-family: inherit; font-size: 12px; color: #8a6412; cursor: pointer; padding: 0; }',
+    '.hbr-link--center { display: block; width: 100%; text-align: center; margin-top: 14px; }',
+    '.hbr-error { font-size: 13px; color: #C9564F; margin: 14px 0 0; }',
+    '.hbr-ok { font-size: 13px; color: #0F6E56; margin: 14px 0 0; }',
+    '.hbr-busy { font-size: 13px; color: #8a6412; margin: 14px 0 0; }',
+    '.hbr-preview { position: fixed; inset: 0; z-index: 950; background: #5d5870; display: flex; flex-direction: column; }',
+    '.hbr-previewbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #F7F3E9; padding: 10px 14px; padding-top: calc(10px + env(safe-area-inset-top)); font-family: Georgia, serif; font-size: 14px; color: #2B2640; }',
+    '.hbr-previewbar .hbr-btn { flex: none; padding: 8px 12px; font-size: 13px; }',
+    '.hbr-pages { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding: 14px 0 30px; }',
+    '.hbr-pagewrap { margin: 0 auto 14px; box-shadow: 0 2px 10px rgba(0,0,0,.25); background: #fff; overflow: hidden; }',
+    '.hbr-pagewrap > .page { transform-origin: 0 0; }',
+    '.hbr-stage { position: absolute; left: -20000px; top: 0; width: 816px; pointer-events: none; }'
+  ].join('\n');
 
-  var cfg = { endpoint: null, getToken: null, floatingButton: false };
-  var found = { endpoint: null, tokenSource: null };
+  var TYPES = [
+    { id: 'weekly', label: 'Weekly' }, { id: 'monthly', label: 'Monthly' }, { id: 'yearly', label: 'Yearly' },
+    { id: 'category', label: 'Category' }, { id: 'store', label: 'Store' }
+  ];
+  var MAX_INLINE = 4;      // periods shown before "More"
+
   var root = null;
-
+  var opts = null;         // pickers from the builder
   var state = {
     screen: 'send',        // send | manage | history
-    tab: 'week',           // week | month | custom
-    weekIndex: 0,
-    monthIndex: 0,
-    customStart: null,
-    customEnd: null,
-    includeEntries: true,
-    recipients: [],
-    checked: {},
-    oneOff: '',
-    log: [],
-    busy: false,
-    error: '',
-    notice: ''
+    type: 'monthly',
+    pick: { weekly: 0, monthly: 0, yearly: 0 },
+    category: '', store: '', scope: 'all',
+    recipients: [], checked: {}, oneOff: '',
+    log: [], sentIndex: {},
+    busy: '', error: '', notice: '',
+    ready: null            // { blob, name } waiting for a tap to save (phones)
   };
 
-  // ---------- dates ----------
+  // ---------- small helpers ----------
 
-  function iso(d) {
-    var y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
-    return y + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
-  }
-  function parseISO(s) { return new Date(s + 'T00:00:00'); }
-  function addDays(s, n) { var d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); }
-  function daysBetween(a, b) { return Math.round((parseISO(b) - parseISO(a)) / 86400000); }
-
-  // Monday-start weeks, matching the week numbering used elsewhere in the app.
-  function mondayOf(date) {
-    var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    var shift = (d.getDay() + 6) % 7;
-    d.setDate(d.getDate() - shift);
-    return d;
-  }
-  function isoWeekNumber(dateStr) {
-    var d = parseISO(dateStr);
-    var target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    target.setDate(target.getDate() + 3 - ((target.getDay() + 6) % 7));
-    var firstThursday = new Date(target.getFullYear(), 0, 4);
-    firstThursday.setDate(firstThursday.getDate() + 3 - ((firstThursday.getDay() + 6) % 7));
-    return 1 + Math.round((target - firstThursday) / (7 * 86400000));
-  }
-  function fmtShort(s) {
-    return parseISO(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  function fmtLong(s) {
-    return parseISO(s).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  }
-  function fmtMonth(s) {
-    return parseISO(s).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  }
-  function money(n) {
-    var sign = n < 0 ? '-' : '';
-    return sign + '$' + Math.abs(Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  }
-  function signedMoney(n) { return (n >= 0 ? '+' : '') + money(n); }
-
-  // The last 12 completed Mon–Sun weeks, newest first. The current week only
-  // appears once it has actually finished.
-  function weekOptions() {
-    var out = [];
-    var thisMonday = mondayOf(new Date());
-    for (var i = 1; i <= 12; i++) {
-      var start = iso(new Date(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate() - 7 * i));
-      var end = addDays(start, 6);
-      out.push({ start: start, end: end, label: fmtShort(start) + ' – ' + fmtShort(end), sub: 'week ' + isoWeekNumber(start) });
-    }
-    return out;
-  }
-
-  // The last 12 completed months, newest first.
-  function monthOptions() {
-    var out = [];
-    var now = new Date();
-    for (var i = 1; i <= 12; i++) {
-      var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      var start = iso(d);
-      var end = iso(new Date(d.getFullYear(), d.getMonth() + 1, 0));
-      out.push({ start: start, end: end, label: fmtMonth(start), sub: '' });
-    }
-    return out;
-  }
-
-  function currentPeriod() {
-    if (state.tab === 'week') {
-      var w = weekOptions()[state.weekIndex];
-      return { type: 'week', start: w.start, end: w.end, label: w.label };
-    }
-    if (state.tab === 'month') {
-      var m = monthOptions()[state.monthIndex];
-      return { type: 'month', start: m.start, end: m.end, label: m.label };
-    }
-    return {
-      type: 'custom',
-      start: state.customStart,
-      end: state.customEnd,
-      label: fmtShort(state.customStart) + ' – ' + fmtShort(state.customEnd)
-    };
-  }
-
-  // ---------- config ----------
-
-  // Config resolution. Both of these come straight out of the app: the Web App
-  // URL is what saveSheetUrl() stores under settings/meta.sheetUrl, and the ID
-  // token hangs off the Auth object auth.js sets up. init() can override either,
-  // but normally neither is needed.
-  function resolveEndpoint() {
-    if (cfg.endpoint) return Promise.resolve(cfg.endpoint);
-    if (typeof DB === 'undefined') return Promise.reject(new Error('storage.js has not loaded yet'));
-    return DB.get('settings', 'meta').then(function (meta) {
-      if (!meta || !meta.sheetUrl) throw new Error('No Google Sheet connected yet — set one under Settings, Sync & data.');
-      return meta.sheetUrl;
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-
-  // Re-read on every request rather than cached: Google ID tokens expire after
-  // an hour, so one that worked earlier in the session may already be dead.
-  var JWT = /^ey[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\./;
-
-  function looksLikeToken(v) { return typeof v === 'string' && JWT.test(v); }
-
-  function resolveToken() {
-    if (cfg.getToken) {
-      try { var t = cfg.getToken(); if (t) return t; } catch (e) { /* fall through */ }
-    }
-
-    // auth.js keeps the Google ID token on the Auth object. Property name has
-    // moved around, so check the likely ones, then anything on Auth that
-    // simply looks like a JWT.
-    if (window.Auth) {
-      var named = [Auth.token, Auth.idToken, Auth.id_token, Auth.credential, Auth.jwt];
-      for (var i = 0; i < named.length; i++) if (looksLikeToken(named[i])) return named[i];
-      var keys = Object.keys(Auth);
-      for (var k = 0; k < keys.length; k++) {
-        var v = Auth[keys[k]];
-        if (looksLikeToken(v)) return v;
-        if (typeof v === 'function' && /token|cred/i.test(keys[k])) {
-          try { var r = v(); if (looksLikeToken(r)) return r; } catch (e) { /* ignore */ }
-        }
-      }
-    }
-
-    // Last resort: wherever sign-in stashed it.
-    var stores = [window.localStorage, window.sessionStorage];
-    for (var s = 0; s < stores.length; s++) {
-      try {
-        for (var n = 0; n < stores[s].length; n++) {
-          var val = stores[s].getItem(stores[s].key(n));
-          if (looksLikeToken(val)) return val;
-        }
-      } catch (e) { /* storage blocked */ }
-    }
-    return null;
+  function money(n) {
+    var v = Number(n) || 0;
+    return (v < 0 ? '−' : '') + '$' + Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+  function isPhone() { return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || ''); }
+  function nameFor(email) {
+    var r = state.recipients.filter(function (x) { return x.email === email; })[0];
+    return r ? r.name : (email ? String(email).split('@')[0] : '');
+  }
+  function whoAmI() {
+    var email = (typeof Auth !== 'undefined' && Auth.email) || '';
+    var r = state.recipients.filter(function (x) { return x.email === email; })[0];
+    return r ? r.name : (email ? email.split('@')[0] : '');
   }
 
   // ---------- server ----------
 
-  function post(payload) {
-    return resolveEndpoint().then(function (endpoint) {
-      var token = resolveToken();
-      if (!token) throw new Error('Could not find the Google sign-in token. Reports needs it explicitly — see HomebaseReports.init().');
-      return send(endpoint, token, payload);
+  function endpoint() {
+    if (typeof DB === 'undefined') return Promise.reject(new Error('Homebase hasn’t finished loading yet.'));
+    return DB.get('settings', 'meta').then(function (meta) {
+      if (!meta || !meta.sheetUrl) throw new Error('No Google Sheet connected yet. Set one under Settings, Sync & data.');
+      return meta.sheetUrl;
     });
   }
-
-  function send(endpoint, token, payload) {
-    return fetch(endpoint, {
-      method: 'POST',
-      body: JSON.stringify(Object.assign({ token: token }, payload))
+  // auth.js declares Auth with const, so it lives in the shared global scope,
+  // not on window. ensureToken() also renews an expired token silently.
+  function token() {
+    if (typeof Auth === 'undefined') return Promise.reject(new Error('Sign-in hasn’t loaded yet.'));
+    return Promise.resolve(Auth.ensureToken()).then(function (t) {
+      if (!t) throw new Error('You’re signed out. Sign in again, then retry.');
+      return t;
+    });
+  }
+  function post(payload) {
+    return Promise.all([endpoint(), token()]).then(function (r) {
+      return fetch(r[0], { method: 'POST', body: JSON.stringify(Object.assign({ token: r[1] }, payload)) });
     }).then(function (res) {
-      if (!res.ok) throw new Error('Server returned ' + res.status);
+      if (!res.ok) throw new Error('Your Sheet returned an error (' + res.status + '). Try again.');
       return res.json();
     }).then(function (data) {
-      if (!data || data.ok !== true) throw new Error((data && data.error) || 'Request failed');
+      // Apps Script answers 200 even when something failed, so check the body.
+      if (!data || data.ok !== true) throw new Error((data && data.error) || 'That didn’t go through. Try again.');
       return data;
     });
   }
@@ -204,24 +146,22 @@ window.HomebaseReports = (function () {
   function loadRecipients() {
     return post({ action: 'reportRecipients' }).then(function (data) {
       state.recipients = data.recipients || [];
-      state.recipients.forEach(function (r) {
-        if (state.checked[r.email] === undefined) state.checked[r.email] = true;
+      state.recipients.forEach(function (r) { if (state.checked[r.email] === undefined) state.checked[r.email] = true; });
+    });
+  }
+  function saveRecipients() {
+    return post({ action: 'reportRecipients', recipients: state.recipients }).then(function (data) { state.recipients = data.recipients || []; });
+  }
+  function loadLog() {
+    return post({ action: 'reportLog', limit: 60 }).then(function (data) {
+      state.log = data.log || [];
+      state.sentIndex = {};
+      state.log.forEach(function (r) {
+        var key = r.type + '|' + r.start;
+        if (r.kind !== 'downloaded' && !state.sentIndex[key]) state.sentIndex[key] = r.sentAt;
       });
     });
   }
-
-  function saveRecipients() {
-    return post({ action: 'reportRecipients', recipients: state.recipients }).then(function (data) {
-      state.recipients = data.recipients || [];
-    });
-  }
-
-  function loadLog() {
-    return post({ action: 'reportLog', limit: 50 }).then(function (data) {
-      state.log = data.log || [];
-    });
-  }
-
   function selectedRecipients() {
     var out = state.recipients.filter(function (r) { return state.checked[r.email]; });
     var once = String(state.oneOff || '').trim();
@@ -229,231 +169,385 @@ window.HomebaseReports = (function () {
     return out;
   }
 
-  // ---------- rendering ----------
+  // ---------- what's selected ----------
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
+  function periodList() {
+    if (!opts) return [];
+    return state.type === 'weekly' ? opts.weeks : state.type === 'monthly' ? opts.months : state.type === 'yearly' ? opts.years : [];
   }
+  function request() {
+    var t = state.type, req = { type: t, user: whoAmI() };
+    if (t === 'category') { req.value = state.category; req.scope = state.scope; }
+    else if (t === 'store') { req.value = state.store; req.scope = state.scope; }
+    else { var p = periodList()[state.pick[t]]; req.value = p ? p.value : null; }
+    if (!req.value) throw new Error(t === 'category' ? 'Pick a category first.' : t === 'store' ? 'Pick a store first.' : 'There’s nothing to report on yet.');
+    return req;
+  }
+  function sentLabel(type, value) {
+    var start = type === 'weekly' ? value : type === 'monthly' ? value + '-01' : value + '-01-01';
+    var at = state.sentIndex[type + '|' + start];
+    if (!at) return '';
+    var d = new Date(at);
+    return 'sent ' + d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  // ---------- rendering ----------
 
   function render() {
     if (!root) return;
-    var body;
-    if (state.screen === 'manage') body = renderManage();
-    else if (state.screen === 'history') body = renderHistory();
-    else body = renderSend();
-    root.querySelector('.hbr-sheet').innerHTML = body;
+    var body = state.screen === 'manage' ? renderManage() : state.screen === 'history' ? renderHistory() : renderSend();
+    var sheet = root.querySelector('.hbr-sheet');
+    var top = sheet.scrollTop;
+    sheet.innerHTML = body;
+    sheet.scrollTop = top;
   }
 
   function renderSend() {
-    var p = currentPeriod();
     var chosen = selectedRecipients();
+    var dis = state.busy ? ' disabled' : '';
+    var h = '<div class="hbr-head"><span class="hbr-title">Reports</span><button class="hbr-x" data-act="close" aria-label="Close">&times;</button></div>';
+    h += '<p class="hbr-label">Report</p><div class="hbr-types">' + TYPES.map(function (t) {
+      return '<button class="hbr-type' + (state.type === t.id ? ' is-on' : '') + '" data-act="type" data-type="' + t.id + '">' + t.label + '</button>';
+    }).join('') + '</div>';
 
-    var html = '<div class="hbr-head"><span class="hbr-title">Send report</span>' +
-      '<button class="hbr-x" data-act="close" aria-label="Close">&times;</button></div>';
-
-    html += '<div class="hbr-tabs">' +
-      ['week', 'month', 'custom'].map(function (t) {
-        return '<button class="hbr-tab' + (state.tab === t ? ' is-on' : '') + '" data-act="tab" data-tab="' + t + '">' +
-          t.charAt(0).toUpperCase() + t.slice(1) + '</button>';
-      }).join('') + '</div>';
-
-    if (state.tab === 'custom') {
-      html += '<div class="hbr-range">' +
-        '<label class="hbr-field"><span>From</span><input type="date" data-act="start" value="' + esc(state.customStart) + '"></label>' +
-        '<label class="hbr-field"><span>To</span><input type="date" data-act="end" value="' + esc(state.customEnd) + '"></label></div>';
-      html += '<div class="hbr-chips">' +
-        '<button class="hbr-chip" data-act="preset" data-preset="3m">Last 3 mo</button>' +
-        '<button class="hbr-chip" data-act="preset" data-preset="6m">Last 6 mo</button>' +
-        '<button class="hbr-chip" data-act="preset" data-preset="ytd">Year to date</button></div>';
-      var days = daysBetween(state.customStart, state.customEnd) + 1;
-      var priorEnd = addDays(state.customStart, -1);
-      var priorStart = addDays(priorEnd, -(days - 1));
-      html += '<p class="hbr-note">' + days + ' days · compares against ' + fmtShort(priorStart) + ' – ' + fmtShort(priorEnd) + '</p>';
+    if (!opts) {
+      h += '<p class="hbr-note">Loading your data…</p>';
+    } else if (state.type === 'category' || state.type === 'store') {
+      var isCat = state.type === 'category';
+      var list = isCat ? opts.categories : opts.stores;
+      var cur = isCat ? state.category : state.store;
+      h += '<p class="hbr-label">' + (isCat ? 'Category' : 'Store') + '</p>';
+      h += '<select class="hbr-select" data-act="' + (isCat ? 'category' : 'store') + '"><option value="">Choose a ' + (isCat ? 'category' : 'store') + '…</option>' +
+        list.map(function (o) { return '<option value="' + esc(o.value) + '"' + (o.value === cur ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select>';
+      var sel = list.filter(function (o) { return o.value === cur; })[0];
+      var startLabel = new Date(opts.catStart + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      h += '<p class="hbr-note">' + (sel ? 'Since ' + startLabel + ' · ' + sel.count + ' entries' : 'Covers ' + startLabel + ' to today.') + '</p>';
+      h += '<p class="hbr-label">Entries to include</p><div class="hbr-seg">' +
+        '<button data-act="scope" data-scope="all"' + (state.scope === 'all' ? ' class="is-on"' : '') + '>All since ' + esc(startLabel) + '</button>' +
+        '<button data-act="scope" data-scope="12"' + (state.scope === '12' ? ' class="is-on"' : '') + '>Last 12 months</button></div>';
+      if (sel) {
+        var est = 2 + Math.ceil((state.scope === 'all' ? sel.count : Math.round(sel.count * 12 / Math.max(monthsSince(opts.catStart), 1))) / 44);
+        h += '<p class="hbr-note">About ' + est + ' pages</p>';
+      }
     } else {
-      var options = state.tab === 'week' ? weekOptions() : monthOptions();
-      var activeIndex = state.tab === 'week' ? state.weekIndex : state.monthIndex;
-      html += '<p class="hbr-label">Period</p>';
-      options.slice(0, 4).forEach(function (o, i) {
-        html += '<button class="hbr-period' + (i === activeIndex ? ' is-on' : '') + '" data-act="period" data-index="' + i + '">' +
-          '<span>' + esc(o.label) + (o.sub ? ' <em>· ' + esc(o.sub) + '</em>' : '') + '</span>' +
-          (i === activeIndex ? '<span class="hbr-check">&#10003;</span>' : '') + '</button>';
-      });
-      if (options.length > 4) {
-        html += '<details class="hbr-more"><summary>Show more</summary>';
-        options.slice(4).forEach(function (o, i) {
-          var idx = i + 4;
-          html += '<button class="hbr-period' + (idx === activeIndex ? ' is-on' : '') + '" data-act="period" data-index="' + idx + '">' +
-            '<span>' + esc(o.label) + (o.sub ? ' <em>· ' + esc(o.sub) + '</em>' : '') + '</span></button>';
-        });
-        html += '</details>';
+      var periods = periodList(), idx = state.pick[state.type] || 0;
+      h += '<p class="hbr-label">' + (state.type === 'weekly' ? 'Week' : state.type === 'monthly' ? 'Month' : 'Year') + '</p>';
+      if (!periods.length) h += '<p class="hbr-note">Nothing to report on yet.</p>';
+      var row = function (o, i) {
+        var tag = sentLabel(state.type, o.value);
+        return '<button class="hbr-period' + (i === idx ? ' is-on' : '') + '" data-act="period" data-index="' + i + '"><span>' + esc(o.label) +
+          (o.sub ? ' <em>· ' + esc(o.sub) + '</em>' : '') + '</span>' + '<span>' + (tag ? '<em>' + esc(tag) + '</em>' : '') + (i === idx ? ' <span class="hbr-check">&#10003;</span>' : '') + '</span></button>';
+      };
+      periods.slice(0, MAX_INLINE).forEach(function (o, i) { h += row(o, i); });
+      if (periods.length > MAX_INLINE) {
+        h += '<details class="hbr-more"' + (idx >= MAX_INLINE ? ' open' : '') + '><summary>More ' + (state.type === 'weekly' ? 'weeks' : state.type === 'monthly' ? 'months' : 'years') + '</summary>';
+        periods.slice(MAX_INLINE).forEach(function (o, i) { h += row(o, i + MAX_INLINE); });
+        h += '</details>';
       }
     }
 
-    html += '<div class="hbr-rowhead"><p class="hbr-label">Send to</p>' +
-      '<button class="hbr-link" data-act="manage">Manage</button></div>';
-
-    if (!state.recipients.length) {
-      html += '<p class="hbr-note">No saved recipients yet.</p>';
-    }
+    h += '<div class="hbr-rowhead"><p class="hbr-label">Send to</p><button class="hbr-link" data-act="manage">Manage</button></div>';
+    if (!state.recipients.length) h += '<p class="hbr-note">No saved recipients yet.</p>';
     state.recipients.forEach(function (r) {
-      html += '<label class="hbr-checkrow"><input type="checkbox" data-act="recipient" data-email="' + esc(r.email) + '"' +
-        (state.checked[r.email] ? ' checked' : '') + '>' +
+      h += '<label class="hbr-checkrow"><input type="checkbox" data-act="recipient" data-email="' + esc(r.email) + '"' + (state.checked[r.email] ? ' checked' : '') + '>' +
         '<span>' + esc(r.name) + ' <em>' + esc(r.email) + '</em></span></label>';
     });
 
-    html += '<label class="hbr-checkrow"><input type="checkbox" data-act="entries"' + (state.includeEntries ? ' checked' : '') + '>' +
-      '<span>Include full entry list</span></label>';
+    if (state.busy) h += '<p class="hbr-busy">' + esc(state.busy) + '</p>';
+    if (state.error) h += '<p class="hbr-error">' + esc(state.error) + '</p>';
+    if (state.notice) h += '<p class="hbr-ok">' + esc(state.notice) + '</p>';
 
-    if (state.error) html += '<p class="hbr-error">' + esc(state.error) + '</p>';
-    if (state.notice) html += '<p class="hbr-ok">' + esc(state.notice) + '</p>';
+    h += '<div class="hbr-actions">';
+    if (state.ready) h += '<button class="hbr-btn hbr-btn--good" data-act="save-ready">Save ' + esc(state.ready.name) + '</button>';
+    h += '<div class="hbr-row"><button class="hbr-btn" data-act="preview"' + dis + '>Preview PDF</button><button class="hbr-btn" data-act="download"' + dis + '>Download</button></div>' +
+      '<button class="hbr-btn hbr-btn--primary" data-act="send"' + dis + '>' + (chosen.length ? 'Email PDF to ' + chosen.length + (chosen.length === 1 ? ' person' : ' people') : 'Email PDF') + '</button></div>';
+    h += '<button class="hbr-link hbr-link--center" data-act="history">Report history</button>';
+    return h;
+  }
 
-    html += '<div class="hbr-actions">' +
-      '<button class="hbr-btn" data-act="preview"' + (state.busy ? ' disabled' : '') + '>Preview</button>' +
-      '<button class="hbr-btn hbr-btn--primary" data-act="send"' + (state.busy ? ' disabled' : '') + '>' +
-      (state.busy ? 'Working…' : 'Send to ' + chosen.length + (chosen.length === 1 ? ' person' : ' people')) + '</button></div>';
-
-    html += '<button class="hbr-link hbr-link--center" data-act="history">Report history</button>';
-    return html;
+  function monthsSince(startISO) {
+    var s = new Date(startISO + 'T00:00:00'), n = new Date();
+    return (n.getFullYear() - s.getFullYear()) * 12 + n.getMonth() - s.getMonth() + 1;
   }
 
   function renderManage() {
-    var html = '<div class="hbr-head"><span class="hbr-title">Recipients</span>' +
-      '<button class="hbr-x" data-act="back" aria-label="Back">&times;</button></div>' +
+    var h = '<div class="hbr-head"><span class="hbr-title">Recipients</span><button class="hbr-x" data-act="back" aria-label="Back">&times;</button></div>' +
       '<p class="hbr-note">Shared list · everyone signed in sees the same one</p>';
-
     state.recipients.forEach(function (r, i) {
-      html += '<div class="hbr-card">' +
-        '<div class="hbr-cardrow"><div><strong>' + esc(r.name) + '</strong><em>' + esc(r.email) + '</em></div>' +
-        '<button class="hbr-link" data-act="toggle-edit" data-index="' + i + '">' + (r._editing ? 'done' : 'edit') + '</button></div>';
+      h += '<div class="hbr-card"><div class="hbr-cardrow"><div><strong>' + esc(r.name) + '</strong><em>' + esc(r.email) + '</em></div>' +
+        '<button class="hbr-link" data-act="toggle-edit" data-index="' + i + '">' + (r._editing ? 'Done' : 'Edit') + '</button></div>';
       if (r._editing) {
-        html += '<div class="hbr-edit">' +
-          '<input type="text" data-act="edit-name" data-index="' + i + '" value="' + esc(r.name) + '" placeholder="Name">' +
+        h += '<div class="hbr-edit"><input type="text" data-act="edit-name" data-index="' + i + '" value="' + esc(r.name) + '" placeholder="Name">' +
           '<input type="email" data-act="edit-email" data-index="' + i + '" value="' + esc(r.email) + '" placeholder="name@example.com">' +
           '<button class="hbr-btn hbr-btn--danger" data-act="remove" data-index="' + i + '">Remove</button></div>';
       }
-      html += '</div>';
+      h += '</div>';
     });
-
-    html += '<div class="hbr-add">' +
-      '<input type="text" data-act="new-name" placeholder="Name" value="">' +
-      '<input type="email" data-act="new-email" placeholder="name@example.com" value="">' +
+    h += '<div class="hbr-add"><input type="text" data-act="new-name" placeholder="Name"><input type="email" data-act="new-email" placeholder="name@example.com">' +
       '<button class="hbr-btn" data-act="add">Add</button></div>';
-
-    html += '<p class="hbr-label">Send once, don\'t save</p>' +
-      '<input class="hbr-input" type="email" data-act="oneoff" placeholder="name@example.com" value="' + esc(state.oneOff) + '">';
-
-    if (state.error) html += '<p class="hbr-error">' + esc(state.error) + '</p>';
-
-    html += '<div class="hbr-actions"><button class="hbr-btn hbr-btn--primary" data-act="save"' +
-      (state.busy ? ' disabled' : '') + '>' + (state.busy ? 'Saving…' : 'Done') + '</button></div>';
-    return html;
+    h += '<p class="hbr-label">Send once, don’t save</p><input class="hbr-input" type="email" data-act="oneoff" placeholder="name@example.com" value="' + esc(state.oneOff) + '">';
+    if (state.error) h += '<p class="hbr-error">' + esc(state.error) + '</p>';
+    h += '<div class="hbr-actions"><button class="hbr-btn hbr-btn--primary" data-act="save"' + (state.busy ? ' disabled' : '') + '>' + (state.busy ? 'Saving…' : 'Done') + '</button></div>';
+    return h;
   }
 
+  var TYPE_LABEL = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly', category: 'Category', store: 'Store', week: 'Weekly', month: 'Monthly', custom: 'Custom' };
+
   function renderHistory() {
-    var html = '<div class="hbr-head"><span class="hbr-title">Report history</span>' +
-      '<button class="hbr-x" data-act="back" aria-label="Back">&times;</button></div>' +
-      '<p class="hbr-note">Last 50 · shared</p>';
-
-    if (!state.log.length) html += '<p class="hbr-note">Nothing sent yet.</p>';
-
+    var h = '<div class="hbr-head"><span class="hbr-title">Report history</span><button class="hbr-x" data-act="back" aria-label="Back">&times;</button></div>' +
+      '<p class="hbr-note">Shared between you both · PDFs live in “Homebase Reports” in Drive</p>';
+    if (state.busy) h += '<p class="hbr-busy">' + esc(state.busy) + '</p>';
+    if (!state.log.length && !state.busy) h += '<p class="hbr-note">No reports yet.</p>';
     state.log.forEach(function (r) {
       var when = r.sentAt ? new Date(r.sentAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       var who = (r.recipients || []).map(function (x) { return x.name || x.email; }).join(', ');
-      var typeLabel = r.type === 'week' ? 'Weekly' : (r.type === 'month' ? 'Monthly' : 'Custom');
-      html += '<div class="hbr-card">' +
-        '<div class="hbr-cardrow"><strong>' + esc(typeLabel) + ' · ' + esc(r.label) + '</strong>' +
-        '<span class="' + (r.net >= 0 ? 'hbr-pos' : 'hbr-neg') + '">' + signedMoney(r.net) + '</span></div>' +
-        '<em class="hbr-meta">Sent ' + esc(when) + ' by ' + esc(r.sentBy || '') + ' · to ' + esc(who) + (r.resend ? ' · resend' : '') + '</em>' +
-        '<div class="hbr-cardactions">' +
+      var what = r.kind === 'downloaded' ? 'Downloaded ' + when + ' by ' + nameFor(r.sentBy) : 'Sent ' + when + ' by ' + nameFor(r.sentBy) + ' · to ' + who + (r.resend ? ' · resend' : '');
+      var money_ = (r.type === 'category' || r.type === 'store') ? '<span class="hbr-badge">' + (r.pages ? r.pages + ' pages' : 'PDF') + '</span>'
+        : '<span style="color:' + ((r.net || 0) >= 0 ? '#0F6E56' : '#C9564F') + ';font-weight:600">' + ((r.net || 0) >= 0 ? '+' : '') + money(r.net) + '</span>';
+      h += '<div class="hbr-card"><div class="hbr-cardrow"><strong>' + esc(TYPE_LABEL[r.type] || 'Report') + ' · ' + esc(r.label) + '</strong>' + money_ + '</div>' +
+        '<em class="hbr-meta">' + esc(what) + '</em><div class="hbr-cardactions">' +
         '<button class="hbr-btn" data-act="view-log" data-id="' + esc(r.id) + '">View</button>' +
+        (r.fileId ? '<button class="hbr-btn" data-act="download-log" data-id="' + esc(r.id) + '">Download</button>' : '') +
         '<button class="hbr-btn" data-act="resend" data-id="' + esc(r.id) + '">Send again</button></div></div>';
     });
-
-    if (state.error) html += '<p class="hbr-error">' + esc(state.error) + '</p>';
-    if (state.notice) html += '<p class="hbr-ok">' + esc(state.notice) + '</p>';
-    return html;
+    if (state.error) h += '<p class="hbr-error">' + esc(state.error) + '</p>';
+    if (state.notice) h += '<p class="hbr-ok">' + esc(state.notice) + '</p>';
+    return h;
   }
 
-  // The preview renders inside an iframe so the email's own styling can't leak
-  // into the app, and so what you approve is byte-for-byte what gets mailed.
-  function showPreview(html, meta) {
-    var overlay = document.createElement('div');
-    overlay.className = 'hbr-preview';
-    var warning = (meta && meta.entryCount > 150 && state.includeEntries)
-      ? '<p class="hbr-warn">' + meta.entryCount + ' entries — Gmail may clip a message this long. Consider unticking the entry list.</p>'
-      : '';
-    overlay.innerHTML = '<div class="hbr-previewbar"><span>Preview</span>' +
-      '<button class="hbr-x" data-act="close-preview" aria-label="Close preview">&times;</button></div>' +
-      warning + '<iframe sandbox="" title="Report preview"></iframe>';
-    document.body.appendChild(overlay);
-    var frame = overlay.querySelector('iframe');
-    frame.srcdoc = '<body style="margin:0;background:#F7F3E9">' + html + '</body>';
-    overlay.addEventListener('click', function (e) {
-      if (e.target.closest('[data-act="close-preview"]') || e.target === overlay) overlay.remove();
+  // ---------- building ----------
+
+  // Builds the selected report into real pages on an off-screen stage.
+  function buildPages() {
+    var req = request();
+    return HomebaseReportBuilder.build(req).then(function (rep) {
+      var stage = document.querySelector('.hbr-stage');
+      if (!stage) { stage = document.createElement('div'); stage.className = 'hbr-stage'; document.body.appendChild(stage); }
+      var pages = HomebaseReportBuilder.render(rep, stage);
+      return waitForImages(stage).then(function () { return { rep: rep, pages: pages }; });
     });
+  }
+  function waitForImages(node) {
+    var imgs = Array.prototype.slice.call(node.querySelectorAll('img'));
+    return Promise.all(imgs.map(function (img) {
+      if (img.complete) return null;
+      return new Promise(function (res) { img.onload = img.onerror = res; setTimeout(res, 4000); });
+    }));
+  }
+  function makePdf(built) {
+    return HomebaseReportBuilder.toPdf(built.pages, function (i, n) {
+      state.busy = 'Making the PDF — page ' + i + ' of ' + n + '…';
+      render();
+    });
+  }
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result).split(',')[1]); };
+      r.onerror = function () { reject(new Error('Couldn’t read the PDF.')); };
+      r.readAsDataURL(blob);
+    });
+  }
+  function base64ToBlob(b64) {
+    var bin = atob(b64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: 'application/pdf' });
+  }
+
+  // Phones: the share sheet (Save to Files, AirDrop, Drive…). Computers: a normal download.
+  function saveBlob(blob, name) {
+    try {
+      var file = new File([blob], name, { type: 'application/pdf' });
+      if (isPhone() && navigator.canShare && navigator.canShare({ files: [file] })) {
+        return navigator.share({ files: [file], title: name }).catch(function (e) { if (e && e.name !== 'AbortError') throw e; });
+      }
+    } catch (e) { /* fall through to a plain download */ }
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 8000);
+    return Promise.resolve();
+  }
+  // On a phone the share sheet needs a fresh tap, so a finished PDF waits on a button.
+  function deliver(blob, name) {
+    if (isPhone()) { state.ready = { blob: blob, name: name }; return Promise.resolve(); }
+    return saveBlob(blob, name);
+  }
+
+  function logMeta(rep, pages) {
+    return Object.assign({}, rep.meta, { label: rep.label, pages: pages, fileName: rep.fileName, subject: rep.subject });
+  }
+
+  function run(fn) {
+    state.busy = 'Working…'; state.error = ''; state.notice = '';
+    render();
+    return Promise.resolve().then(fn).catch(function (err) {
+      state.error = (err && err.message) || String(err);
+    }).then(function () { state.busy = ''; render(); });
+  }
+
+  function doPreview() {
+    return run(function () {
+      state.busy = 'Building the report…'; render();
+      return buildPages().then(function (b) { showPreview(b); });
+    });
+  }
+
+  function doDownload() {
+    return run(function () {
+      state.busy = 'Building the report…'; render();
+      return buildPages().then(function (b) {
+        return makePdf(b).then(function (blob) {
+          return deliver(blob, b.rep.fileName).then(function () {
+            state.busy = 'Saving a copy to Drive…'; render();
+            return blobToBase64(blob).then(function (b64) {
+              return post({ action: 'reportSave', pdf: b64, meta: logMeta(b.rep, b.pages.length), html: HomebaseReportBuilder.emailHtml(b.rep, b.pages.length) });
+            }).then(function () {
+              state.notice = state.ready ? 'Ready. Tap Save to keep it on this phone. A copy is in Drive and Report history.' : 'Downloaded. A copy is in Drive and Report history.';
+            }).catch(function (err) {
+              state.notice = state.ready ? 'Ready. Tap Save to keep it.' : 'Downloaded.';
+              state.error = 'Couldn’t save a copy to Drive: ' + err.message;
+            });
+          });
+        });
+      });
+    });
+  }
+
+  function doSend() {
+    var chosen = selectedRecipients();
+    if (!chosen.length) { state.error = 'Tick at least one person to send to.'; return render(); }
+    return run(function () {
+      state.busy = 'Building the report…'; render();
+      return buildPages().then(function (b) {
+        return makePdf(b).then(function (blob) {
+          state.busy = 'Sending…'; render();
+          return blobToBase64(blob).then(function (b64) {
+            return post({
+              action: 'reportSend', pdf: b64, recipients: chosen, meta: logMeta(b.rep, b.pages.length),
+              subject: b.rep.subject, html: HomebaseReportBuilder.emailHtml(b.rep, b.pages.length)
+            });
+          }).then(function (data) {
+            state.notice = 'Sent to ' + data.sent + (data.sent === 1 ? ' person' : ' people') + '. A copy is in Drive.';
+            state.oneOff = '';
+            return loadLog().catch(function () {});
+          });
+        });
+      });
+    });
+  }
+
+  function doViewLog(id) {
+    var rec = state.log.filter(function (r) { return r.id === id; })[0];
+    if (rec && rec.fileUrl) { window.open(rec.fileUrl, '_blank', 'noopener'); return; }
+    return run(function () {
+      return post({ action: 'reportView', logId: id }).then(function (data) { showHtml(data.html); });
+    });
+  }
+  function doDownloadLog(id) {
+    var rec = state.log.filter(function (r) { return r.id === id; })[0];
+    return run(function () {
+      state.busy = 'Fetching the PDF from Drive…'; render();
+      return post({ action: 'reportFile', logId: id }).then(function (data) {
+        return deliver(base64ToBlob(data.pdf), data.fileName || (rec && rec.fileName) || 'Homebase report.pdf');
+      }).then(function () { if (state.ready) state.notice = 'Ready. Tap Save to keep it.'; });
+    });
+  }
+  function doResend(id) {
+    var chosen = selectedRecipients();
+    return run(function () {
+      state.busy = 'Sending…'; render();
+      return post({ action: 'reportResend', logId: id, recipients: chosen }).then(function (data) {
+        state.notice = 'Sent again to ' + data.sent + (data.sent === 1 ? ' person' : ' people') + '.';
+        return loadLog();
+      });
+    });
+  }
+
+  // ---------- preview ----------
+
+  function showPreview(built) {
+    var ov = document.createElement('div');
+    ov.className = 'hbr-preview';
+    ov.innerHTML = '<div class="hbr-previewbar"><span>' + esc(built.rep.label) + ' · ' + built.pages.length + (built.pages.length === 1 ? ' page' : ' pages') + '</span>' +
+      '<span style="display:flex;gap:6px"><button class="hbr-btn" data-act="pv-download">Download</button><button class="hbr-x" data-act="pv-close" aria-label="Close preview">&times;</button></span></div>' +
+      '<div class="hbr-pages hbrp"></div>';
+    document.body.appendChild(ov);
+    var holder = ov.querySelector('.hbr-pages');
+    var avail = Math.min(holder.clientWidth - 24, 816);
+    var scale = avail / 816;
+    built.pages.forEach(function (p) {
+      var wrap = document.createElement('div');
+      wrap.className = 'hbr-pagewrap';
+      wrap.style.width = Math.round(816 * scale) + 'px';
+      wrap.style.height = Math.round(1056 * scale) + 'px';
+      var clone = p.cloneNode(true);
+      clone.style.transform = 'scale(' + scale + ')';
+      wrap.appendChild(clone);
+      holder.appendChild(wrap);
+    });
+    history.pushState({ hbPreview: true }, '');
+    function close(fromPop) {
+      ov.remove();
+      window.removeEventListener('popstate', onPop);
+      // Stepping history back fires popstate; tell the sheet it isn't for it.
+      if (!fromPop && history.state && history.state.hbPreview) { ignorePop = true; history.back(); }
+    }
+    function onPop() { close(true); }
+    window.addEventListener('popstate', onPop);
+    ov.addEventListener('click', function (e) {
+      var t = e.target.closest('[data-act]');
+      if (!t) return;
+      if (t.getAttribute('data-act') === 'pv-close') close(false);
+      if (t.getAttribute('data-act') === 'pv-download') { close(false); doDownload(); }
+    });
+  }
+
+  // Older reports (before PDFs) are stored as HTML.
+  function showHtml(html) {
+    var ov = document.createElement('div');
+    ov.className = 'hbr-preview';
+    ov.innerHTML = '<div class="hbr-previewbar"><span>Report</span><button class="hbr-x" data-act="pv-close" aria-label="Close">&times;</button></div><iframe sandbox="" title="Report" style="flex:1;border:none;background:#F7F3E9"></iframe>';
+    document.body.appendChild(ov);
+    ov.querySelector('iframe').srcdoc = '<body style="margin:0;background:#F7F3E9">' + html + '</body>';
+    ov.addEventListener('click', function (e) { if (e.target.closest('[data-act="pv-close"]')) ov.remove(); });
   }
 
   // ---------- events ----------
 
   function onClick(e) {
     var el = e.target.closest('[data-act]');
-    if (!el) return;
+    if (!el || el.tagName === 'SELECT' || el.tagName === 'INPUT') return;
     var act = el.getAttribute('data-act');
-
     if (act === 'close') return close();
     if (act === 'back') { state.screen = 'send'; state.error = ''; return render(); }
     if (act === 'manage') { state.screen = 'manage'; state.error = ''; return render(); }
-    if (act === 'history') {
-      state.screen = 'history'; state.error = ''; state.notice = ''; render();
-      return run(loadLog());
-    }
-    if (act === 'tab') { state.tab = el.getAttribute('data-tab'); state.error = ''; return render(); }
-    if (act === 'period') {
-      var idx = Number(el.getAttribute('data-index'));
-      if (state.tab === 'week') state.weekIndex = idx; else state.monthIndex = idx;
-      return render();
-    }
-    if (act === 'preset') {
-      var today = iso(new Date());
-      var preset = el.getAttribute('data-preset');
-      if (preset === '3m') { state.customStart = addDays(today, -91); state.customEnd = today; }
-      if (preset === '6m') { state.customStart = addDays(today, -182); state.customEnd = today; }
-      if (preset === 'ytd') { state.customStart = today.substring(0, 4) + '-01-01'; state.customEnd = today; }
-      // A long range with every entry attached gets unwieldy, so the list
-      // switches itself off past roughly six weeks. Tick it back on if you
-      // actually want it.
-      if (daysBetween(state.customStart, state.customEnd) > 45) state.includeEntries = false;
-      return render();
-    }
-    if (act === 'toggle-edit') {
-      var i = Number(el.getAttribute('data-index'));
-      state.recipients[i]._editing = !state.recipients[i]._editing;
-      return render();
-    }
-    if (act === 'remove') {
-      state.recipients.splice(Number(el.getAttribute('data-index')), 1);
-      return render();
-    }
+    if (act === 'history') { state.screen = 'history'; state.error = ''; state.notice = ''; return run(function () { state.busy = 'Loading…'; render(); return loadLog(); }); }
+    if (act === 'type') { state.type = el.getAttribute('data-type'); state.error = ''; state.notice = ''; state.ready = null; return render(); }
+    if (act === 'period') { state.pick[state.type] = Number(el.getAttribute('data-index')); state.ready = null; return render(); }
+    if (act === 'scope') { state.scope = el.getAttribute('data-scope'); state.ready = null; return render(); }
+    if (act === 'toggle-edit') { var i = Number(el.getAttribute('data-index')); state.recipients[i]._editing = !state.recipients[i]._editing; return render(); }
+    if (act === 'remove') { state.recipients.splice(Number(el.getAttribute('data-index')), 1); return render(); }
     if (act === 'add') {
-      var nameEl = root.querySelector('[data-act="new-name"]');
-      var emailEl = root.querySelector('[data-act="new-email"]');
+      var nameEl = root.querySelector('[data-act="new-name"]'), emailEl = root.querySelector('[data-act="new-email"]');
       var email = String(emailEl.value || '').trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { state.error = 'That doesn\'t look like an email address.'; return render(); }
-      if (state.recipients.length >= 10) { state.error = 'Ten recipients is the cap.'; return render(); }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { state.error = 'That doesn’t look like an email address.'; return render(); }
+      if (state.recipients.length >= 10) { state.error = 'Ten recipients is the most.'; return render(); }
       state.recipients.push({ name: String(nameEl.value || '').trim() || email, email: email });
-      state.checked[email] = true;
-      state.error = '';
+      state.checked[email] = true; state.error = '';
       return render();
     }
     if (act === 'save') {
       state.recipients.forEach(function (r) { delete r._editing; });
-      return run(saveRecipients().then(function () { state.screen = 'send'; }));
+      return run(function () { return saveRecipients().then(function () { state.screen = 'send'; }); });
     }
+    if (act === 'save-ready') { var r = state.ready; state.ready = null; render(); return saveBlob(r.blob, r.name).catch(function (err) { state.error = err.message; render(); }); }
     if (act === 'preview') return doPreview();
+    if (act === 'download') return doDownload();
     if (act === 'send') return doSend();
     if (act === 'view-log') return doViewLog(el.getAttribute('data-id'));
+    if (act === 'download-log') return doDownloadLog(el.getAttribute('data-id'));
     if (act === 'resend') return doResend(el.getAttribute('data-id'));
   }
 
@@ -462,107 +556,14 @@ window.HomebaseReports = (function () {
     if (!el) return;
     var act = el.getAttribute('data-act');
     if (act === 'recipient') { state.checked[el.getAttribute('data-email')] = el.checked; return render(); }
-    if (act === 'entries') { state.includeEntries = el.checked; return render(); }
-    if (act === 'start') { state.customStart = el.value; return render(); }
-    if (act === 'end') { state.customEnd = el.value; return render(); }
+    if (act === 'category') { state.category = el.value; state.ready = null; return render(); }
+    if (act === 'store') { state.store = el.value; state.ready = null; return render(); }
     if (act === 'oneoff') { state.oneOff = el.value; return; }
     if (act === 'edit-name') { state.recipients[Number(el.getAttribute('data-index'))].name = el.value; return; }
     if (act === 'edit-email') { state.recipients[Number(el.getAttribute('data-index'))].email = el.value; return; }
   }
 
-  function run(promise) {
-    state.busy = true; state.error = ''; render();
-    return promise.catch(function (err) {
-      state.error = err.message || String(err);
-    }).then(function () {
-      state.busy = false;
-      render();
-    });
-  }
-
-  function doPreview() {
-    var p = currentPeriod();
-    return run(post({
-      action: 'reportPreview', periodType: p.type, start: p.start, end: p.end, includeEntries: state.includeEntries
-    }).then(function (data) {
-      showPreview(data.html, data);
-    }));
-  }
-
-  function doSend() {
-    var p = currentPeriod();
-    var chosen = selectedRecipients();
-    if (!chosen.length) { state.error = 'Tick at least one recipient.'; return render(); }
-    return run(post({
-      action: 'reportSend', periodType: p.type, start: p.start, end: p.end,
-      includeEntries: state.includeEntries, recipients: chosen
-    }).then(function (data) {
-      state.notice = 'Sent to ' + data.sent + (data.sent === 1 ? ' person' : ' people') + '.';
-      state.oneOff = '';
-    }));
-  }
-
-  function doViewLog(id) {
-    return run(post({ action: 'reportView', logId: id }).then(function (data) {
-      showPreview(data.html, null);
-    }));
-  }
-
-  function doResend(id) {
-    return run(post({ action: 'reportResend', logId: id }).then(function (data) {
-      state.notice = 'Resent to ' + data.sent + (data.sent === 1 ? ' person' : ' people') + '.';
-      return loadLog();
-    }));
-  }
-
   // ---------- open / close ----------
-
-  function open() {
-    if (root) return;
-    var today = iso(new Date());
-    state.customStart = state.customStart || addDays(today, -91);
-    state.customEnd = state.customEnd || today;
-    state.screen = 'send';
-    state.error = '';
-    state.notice = '';
-
-    root = document.createElement('div');
-    root.className = 'hbr-overlay';
-    root.innerHTML = '<div class="hbr-sheet"></div>';
-    document.body.appendChild(root);
-    root.addEventListener('click', onClick);
-    root.addEventListener('change', onChange);
-    root.addEventListener('input', onChange);
-
-    // Matches the app's own back-button handling: a phone back press closes
-    // this sheet rather than exiting the PWA.
-    history.pushState({ hbReports: true }, '');
-    window.addEventListener('popstate', onPop);
-
-    render();
-    run(loadRecipients());
-  }
-
-  function onPop() { if (root) close(true); }
-
-  function close(fromPop) {
-    if (!root) return;
-    root.remove();
-    root = null;
-    window.removeEventListener('popstate', onPop);
-    if (!fromPop && history.state && history.state.hbReports) history.back();
-  }
-
-  function init(options) {
-    options = options || {};
-    if (options.endpoint) cfg.endpoint = options.endpoint;
-    if (options.getToken) cfg.getToken = options.getToken;
-    if (options.floatingButton === false) cfg.floatingButton = false;
-    if (cfg.floatingButton) mountButton();
-    return api;
-  }
-
-  // ---------- self-mounting ----------
 
   function injectStyles() {
     if (document.getElementById('hbr-styles')) return;
@@ -572,39 +573,42 @@ window.HomebaseReports = (function () {
     document.head.appendChild(tag);
   }
 
-  // Prefers an element you placed yourself (id="hb-send-report"); falls back to
-  // a floating button so the feature is reachable without editing app.js.
-  function mountButton() {
+  function open(preset) {
+    if (root) return;
     injectStyles();
-    var existing = document.getElementById('hb-send-report');
-    if (existing) {
-      if (!existing.getAttribute('data-hbr-bound')) {
-        existing.setAttribute('data-hbr-bound', '1');
-        existing.addEventListener('click', function (e) { e.preventDefault(); open(); });
-      }
-      return;
-    }
-    if (!cfg.floatingButton || document.getElementById('hbr-fab')) return;
-    var btn = document.createElement('button');
-    btn.id = 'hbr-fab';
-    btn.className = 'hbr-fab';
-    btn.type = 'button';
-    btn.textContent = 'Send report';
-    btn.addEventListener('click', open);
-    document.body.appendChild(btn);
+    state.screen = 'send'; state.error = ''; state.notice = ''; state.busy = ''; state.ready = null;
+    if (preset && preset.type) state.type = preset.type;
+    if (preset && preset.category) state.category = preset.category;
+    if (preset && preset.store) state.store = preset.store;
+    root = document.createElement('div');
+    root.className = 'hbr-overlay';
+    root.innerHTML = '<div class="hbr-sheet"></div>';
+    document.body.appendChild(root);
+    root.addEventListener('click', function (e) { if (e.target === root) close(); else onClick(e); });
+    root.addEventListener('change', onChange);
+    root.addEventListener('input', function (e) { var a = e.target.getAttribute('data-act'); if (a === 'oneoff' || a === 'edit-name' || a === 'edit-email') onChange(e); });
+    // A phone back press closes the sheet rather than leaving the app.
+    history.pushState({ hbReports: true }, '');
+    window.addEventListener('popstate', onPop);
+    render();
+    HomebaseReportBuilder.options().then(function (o) { opts = o; render(); }).catch(function (err) { state.error = err.message; render(); });
+    loadRecipients().then(render).catch(function (err) { state.error = err.message; render(); });
+    loadLog().then(render).catch(function () { /* history is optional here */ });
+  }
+  var ignorePop = false;
+  function onPop() {
+    if (ignorePop) { ignorePop = false; return; }
+    if (root && !document.querySelector('.hbr-preview')) close(true);
+  }
+  function close(fromPop) {
+    if (!root) return;
+    root.remove();
+    root = null;
+    var stage = document.querySelector('.hbr-stage');
+    if (stage) stage.remove();
+    window.removeEventListener('popstate', onPop);
+    if (!fromPop && history.state && history.state.hbReports) history.back();
   }
 
-  function boot() {
-    injectStyles();
-    mountButton();
-  }
-
-  // Boot whenever the DOM is ready enough, from whichever of these fires first.
-  // Everything inside boot() is idempotent, so running it more than once is safe.
-  if (document.body) boot();
-  document.addEventListener('DOMContentLoaded', boot);
-  window.addEventListener('load', boot);
-
-  var api = { init: init, open: open, close: close, mountButton: mountButton };
-  return api;
+  return { open: open, close: close };
 })();
