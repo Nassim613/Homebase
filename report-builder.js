@@ -46,8 +46,8 @@ window.HomebaseReportBuilder = (function () {
 
   // Bills: the BILLS category, broken out by store (Enbridge Gas, Hydro Ottawa,
   // Telus Cellphones, Bell Internet, Water - City of Ottawa). One "Bills" row on
-  // page 1, the per-store breakdown on page 2. Stores listed here come first, in
-  // this order; any other store under Bills follows, largest first.
+  // page 1, the per-store breakdown on page 2 — only these five stores, in this
+  // order (other stores filed under Bills still count in the page-1 total).
   var BILLS_CATEGORY = 'bills';
   var BILLS = [
     { match: ['enbridge'], every: 1 },
@@ -57,6 +57,7 @@ window.HomebaseReportBuilder = (function () {
     { match: ['water'], every: 2 }        // Water - City of Ottawa: billed every 2 months
   ];
   var BILLS_LABEL = 'Bills';
+  var PAY_CATEGORY = 'pay';
 
   // Car categories (exact name for Gas, so "Enbridge Gas" never counts as gas).
   var CAR_PARTS = [
@@ -393,6 +394,8 @@ window.HomebaseReportBuilder = (function () {
   // Turns raw records into the lookups every report shares.
   function makeModel(raw) {
     var M = { raw: raw };
+    var fixCar = function (n) { return String(n || '').replace(/\bbmw\b/ig, 'BMW'); };
+    raw.cars = raw.cars.map(function (c) { return Object.assign({}, c, { name: fixCar(c.name) }); });
     M.catById = {};
     raw.categories.forEach(function (c) { M.catById[c.id] = c; });
     M.storeById = {};
@@ -403,6 +406,11 @@ window.HomebaseReportBuilder = (function () {
     M.catName = function (e) { var c = M.catById[e.categoryId]; return display((c && c.name) || e.categoryName || 'Other'); };
     M.storeName = function (e) { var s = M.storeById[e.storeId]; return display((s && s.name) || e.storeName || ''); };
     M.excluded = function (e) { var c = M.catById[e.categoryId]; return !!(c && c.excludeFromTotals); };
+    // Only the Pay category is income. Income in any other category (a refund,
+    // a reimbursement) is taken off that category's spending instead.
+    M.isPay = function (e) { return e.type === 'income' && norm(M.catName(e)) === PAY_CATEGORY; };
+    M.isSpend = function (e) { return e.type === 'expense' || (e.type === 'income' && !M.isPay(e)); };
+    M.amt = function (e) { return e.type === 'expense' ? num(e.amount) : (M.isSpend(e) ? -num(e.amount) : 0); };
 
     // Cars shown in reports: real cars by name, then "All cars". Tesla left out.
     var carList = raw.cars.filter(function (c) { return !CAR_EXCLUDE.some(function (x) { return norm(c.name).indexOf(x) !== -1; }); });
@@ -416,16 +424,13 @@ window.HomebaseReportBuilder = (function () {
     var isBillCat = function (e) { return norm(M.catName(e)) === BILLS_CATEGORY; };
     M.billName = function (e) { return M.storeName(e) || 'Other bills'; };
     var billTotals = {};
-    raw.entries.forEach(function (e) { if (e.type === 'expense' && isBillCat(e)) { var b = M.billName(e); billTotals[b] = (billTotals[b] || 0) + num(e.amount); } });
+    raw.entries.forEach(function (e) { if (M.isSpend(e) && isBillCat(e)) { var b = M.billName(e); billTotals[b] = (billTotals[b] || 0) + M.amt(e); } });
     var billNames = Object.keys(billTotals);
     M.bills = [];
     BILLS.forEach(function (b) {
       var n = billNames.filter(function (x) { return has(x, b.match) && !M.bills.some(function (y) { return y.name === x; }); })[0];
       if (n) M.bills.push({ name: n, every: b.every });
     });
-    billNames.filter(function (x) { return !M.bills.some(function (y) { return y.name === x; }); })
-      .sort(function (a, b) { return billTotals[b] - billTotals[a]; })
-      .forEach(function (x) { M.bills.push({ name: x, every: 1 }); });
     M.billColor = {};
     M.bills.forEach(function (b, i) { M.billColor[b.name] = BILL_COLORS[i % BILL_COLORS.length]; });
 
@@ -448,10 +453,11 @@ window.HomebaseReportBuilder = (function () {
           out.push({ car: c ? c.name : 'No car set', amount: num(s.amount) });
         });
         var got = sum(out, function (s) { return s.amount; });
-        if (!got) out = out.map(function (s) { return { car: s.car, amount: num(e.amount) / out.length }; });
+        if (!got) out = out.map(function (s) { return { car: s.car, amount: M.amt(e) / out.length }; });
+        else if (M.amt(e) < 0) out = out.map(function (s) { return { car: s.car, amount: -s.amount }; });
       } else {
         var car = M.carById[e.carId];
-        out.push({ car: car ? car.name : (e.carName || 'No car set'), amount: num(e.amount) });
+        out.push({ car: car ? car.name : (fixCar(e.carName) || 'No car set'), amount: M.amt(e) });
       }
       return out.filter(function (s) { return !CAR_EXCLUDE.some(function (x) { return norm(s.car).indexOf(x) !== -1; }); });
     };
@@ -460,7 +466,7 @@ window.HomebaseReportBuilder = (function () {
       var k = M.classify(e);
       if (k.carPart) return { text: M.carShares(e).map(function (s) { return s.car; }).join(', '), kind: 'car' };
       if (e.projectName || e.projectId) return { text: e.projectName || '', kind: 'proj' };
-      if (e.carName) return { text: e.carName, kind: 'car' };
+      if (e.carName) return { text: fixCar(e.carName), kind: 'car' };
       return null;
     };
 
@@ -489,15 +495,16 @@ window.HomebaseReportBuilder = (function () {
       raw.entries.forEach(function (e) {
         if (e.date < start || e.date > end) return;
         if (M.excluded(e)) return;
-        var amt = num(e.amount);
-        if (e.type === 'income') {
+        var amt = M.amt(e);
+        if (M.isPay(e)) {
+          amt = num(e.amount);
           A.income += amt;
           var cn = M.catName(e);
           A.incomeBy[cn] = (A.incomeBy[cn] || 0) + amt;
           A.entries.push(e);
           return;
         }
-        if (e.type !== 'expense') return;
+        if (!M.isSpend(e)) return;
         var k = M.classify(e);
         A.spent += amt;
         A.by[k.bucket] = (A.by[k.bucket] || 0) + amt;
@@ -663,6 +670,8 @@ window.HomebaseReportBuilder = (function () {
   // Cars for one month: breakdown | compared with last month and the same month last year.
   function carsMonthTable(M, k) {
     var A = M.month(k), pk = mkShift(k, -1), lyk = mkShift(k, -12);
+    var ytdK = monthsBetween(k.substring(0, 4) + '-01', k).filter(inData);
+    var ytdOf = function (c) { return sum(ytdK, function (m) { return carTotals(M.month(m), c); }); };
     var P = inData(pk) ? M.month(pk) : null, LY = inData(lyk) ? M.month(lyk) : null;
     var dash = function (x) { return x ? money(x) : '—'; };
     var cmp = function (tot, other) {
@@ -670,20 +679,21 @@ window.HomebaseReportBuilder = (function () {
       return '<td class="cmpl"><span class="mut">' + dash(other) + '</span>' + (tot && other ? ' ' + chip(tot, other) : '') + '</td>';
     };
     var names = M.carRows(A);
-    var rows = '', T = { gas: 0, maint: 0, ins: 0 }, PT = 0, LT = 0;
+    var rows = '', T = { gas: 0, maint: 0, ins: 0 }, PT = 0, LT = 0, YT = 0;
     names.forEach(function (c) {
       var v = A.car[c] || { gas: 0, maint: 0, ins: 0 }, tot = v.gas + v.maint + v.ins;
       T.gas += v.gas; T.maint += v.maint; T.ins += v.ins;
       var p = P ? carTotals(P, c) : null, l = LY ? carTotals(LY, c) : null;
-      PT += p || 0; LT += l || 0;
-      rows += '<tr class="lines"><td>' + esc(c) + '</td><td class="r">' + dash(v.gas) + '</td><td class="r">' + dash(v.maint) + '</td><td class="r">' + dash(v.ins) + '</td><td class="r"><b>' + dash(tot) + '</b></td><td class="gap"></td>' + cmp(tot, p) + cmp(tot, l) + '</tr>';
+      var y = ytdOf(c);
+      PT += p || 0; LT += l || 0; YT += y;
+      rows += '<tr class="lines"><td>' + esc(c) + '</td><td class="r">' + dash(v.gas) + '</td><td class="r">' + dash(v.maint) + '</td><td class="r">' + dash(v.ins) + '</td><td class="r"><b>' + dash(tot) + '</b></td><td class="gap"></td>' + cmp(tot, p) + cmp(tot, l) + '<td class="r">' + dash(y) + '</td></tr>';
     });
     var tt = T.gas + T.maint + T.ins;
     rows += '<tr class="tot"><td>Total</td><td class="r">' + dash(T.gas) + '</td><td class="r">' + dash(T.maint) + '</td><td class="r">' + dash(T.ins) + '</td><td class="r">' + dash(tt) + '</td><td class="gap"></td>' +
-      cmp(tt, P ? PT : null) + cmp(tt, LY ? LT : null) + '</tr>';
-    return '<table style="font-size:10.5px;table-layout:fixed"><colgroup><col style="width:15%"><col style="width:10%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:7%"><col style="width:18.5%"><col style="width:18.5%"></colgroup>' +
-      '<tr><th></th><th colspan="4" class="c" style="color:#8a6412">' + mkLong(k) + '</th><th class="gap"></th><th colspan="2" style="color:#8a6412">Total compared with</th></tr>' +
-      '<tr><th>Car</th><th class="r">Gas</th><th class="r">Maint.</th><th class="r">Insurance</th><th class="r">Total</th><th class="gap"></th><th>' + MNL[mkParts(pk)[1] - 1] + '</th><th>' + mkLabel(lyk) + ' ' + lyk.substring(0, 4) + '</th></tr>' + rows + '</table>';
+      cmp(tt, P ? PT : null) + cmp(tt, LY ? LT : null) + '<td class="r">' + dash(YT) + '</td></tr>';
+    return '<table style="font-size:10.5px;table-layout:fixed"><colgroup><col style="width:13%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:9%"><col style="width:4%"><col style="width:17%"><col style="width:17%"><col style="width:12%"></colgroup>' +
+      '<tr><th></th><th colspan="4" class="c" style="color:#8a6412">' + mkLong(k) + '</th><th class="gap"></th><th colspan="3" style="color:#8a6412">Total compared with</th></tr>' +
+      '<tr><th>Car</th><th class="r">Gas</th><th class="r">Maint.</th><th class="r">Insurance</th><th class="r">Total</th><th class="gap"></th><th>' + MNL[mkParts(pk)[1] - 1] + '</th><th>' + mkLabel(lyk) + ' ' + lyk.substring(0, 4) + '</th><th class="r">' + k.substring(0, 4) + ' total</th></tr>' + rows + '</table>';
   }
 
   // Cost of ownership, two periods side by side: Gas, Maintenance, Insurance, Per month.
@@ -740,7 +750,7 @@ window.HomebaseReportBuilder = (function () {
     expenses.forEach(function (e) {
       var s = M.storeName(e);
       if (!s) return;
-      t[s] = (t[s] || 0) + num(e.amount);
+      t[s] = (t[s] || 0) + M.amt(e);
       (days[s] = days[s] || {})[e.date] = 1;
     });
     return Object.keys(t).map(function (s) { return { name: s, total: t[s], visits: Object.keys(days[s]).length }; })
@@ -760,13 +770,13 @@ window.HomebaseReportBuilder = (function () {
 
   function largestRows(M, expenses, n, withYear) {
     return expenses.filter(function (e) { return !isMortgage(M, e); })
-      .sort(function (a, b) { return num(b.amount) - num(a.amount); }).slice(0, n)
+      .sort(function (a, b) { return M.amt(b) - M.amt(a); }).slice(0, n)
       .map(function (e) {
         var t = M.tagFor(e);
         var d = parseISO(e.date);
         return '<tr class="lines"><td class="mut" style="width:' + (withYear ? 70 : 46) + 'px">' + MN[d.getMonth()] + ' ' + d.getDate() + (withYear ? ', ' + d.getFullYear() : '') + '</td>' +
           '<td style="width:19%">' + esc(M.storeName(e) || '—') + '</td><td style="width:30%">' + esc(M.catName(e)) + (t && t.text ? ' ' + tag(t.text, t.kind) : '') + '</td>' +
-          '<td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:11%">' + money(e.amount, true) + '</td></tr>';
+          '<td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:11%">' + money(M.amt(e), true) + '</td></tr>';
       }).join('');
   }
 
@@ -812,14 +822,19 @@ window.HomebaseReportBuilder = (function () {
     var month = mkLong(k), pmn = mkLabel(pk);
 
     var buckets = orderBuckets([].concat(Object.keys(A.by), P ? Object.keys(P.by) : [], LY ? Object.keys(LY.by) : [], Object.keys(L[L.length - 1] ? L[L.length - 1].by : {})), function (b) { return A.by[b] || 0; });
-    var high = buckets.filter(function (b) { var a = a12(b); return a > 50 && (A.by[b] || 0) / a >= 1.4; });
-    var low = buckets.filter(function (b) { var a = a12(b); return a > 50 && (A.by[b] || 0) / a <= 0.6; });
+    // Biggest movers only, so the headline stays a sentence, not a list.
+    var high = buckets.filter(function (b) { var a = a12(b); return a > 50 && (A.by[b] || 0) / a >= 1.4; })
+      .sort(function (x, y) { return ((A.by[y] || 0) - a12(y)) - ((A.by[x] || 0) - a12(x)); });
+    var low = buckets.filter(function (b) { var a = a12(b); return a > 50 && (A.by[b] || 0) / a <= 0.6; })
+      .sort(function (x, y) { return (a12(y) - (A.by[y] || 0)) - (a12(x) - (A.by[x] || 0)); });
+    var allHigh = high;
+    high = high.slice(0, 3); low = low.slice(0, 2);
 
     var lede = (A.income ? 'You kept <b>' + pct(kept) + '</b> of what came in' + (L.length > 1 ? ', against a usual ' + pct(a12kept) + '. ' : '. ') : 'No income was recorded this month. ') +
       (L.length > 1 ? 'Total spending was ' + money(Math.abs(A.spent - a12s)) + ' ' + (A.spent > a12s ? 'above' : 'below') + ' your 12-month average' : 'You spent ' + money(A.spent)) +
       (high.length ? '. ' + listAnd(high) + ' ran well above usual' : '') +
       (low.length ? (high.length ? ', while ' : '. ') + listAnd(low) + ' came in well under.' : '.');
-    var worth = high.map(function (b) { return esc(b) + ' ' + money(A.by[b]) + ' — ' + ((A.by[b] || 0) / a12(b)).toFixed(1) + '× usual'; });
+    var worth = allHigh.slice(0, 5).map(function (b) { return esc(b) + ' ' + money(A.by[b]) + ' — ' + ((A.by[b] || 0) / a12(b)).toFixed(1) + '× usual'; });
     buckets.forEach(function (b) { var bud = M.budget(b); if (bud && (A.by[b] || 0) > bud) worth.push(esc(b) + ' over its ' + money(bud) + ' budget by ' + money(A.by[b] - bud)); });
 
     // Categories table
@@ -856,7 +871,7 @@ window.HomebaseReportBuilder = (function () {
         worth.length ? '<div class="callout"><b>Worth a look:</b> ' + worth.join(' · ') + '</div>' : '',
         block('Income and spending, last ' + l12k.length + ' months', legend([['Income', '#9CC7B2'], ['Spent', '#D9CFB8']]) + ' · in $1,000s · net below each month',
           incomeSpentSvg(L.map(function (X, i) { return { label: mkLabel(l12k[i]), income: X.income, spent: X.spent }; }))),
-        { table: catTable, title: 'Categories', legend: '<span class="mk"></span>12-month average' }
+        { table: catTable, fit: true, title: 'Categories', legend: '<span class="mk"></span>12-month average' }
       ]
     };
     var page2 = {
@@ -970,7 +985,7 @@ window.HomebaseReportBuilder = (function () {
         worth.length ? '<div class="callout"><b>Worth a look:</b> ' + worth.join(' · ') + '</div>' : '',
         block('Income and spending by month', legend([['Income', '#9CC7B2'], ['Spent', '#D9CFB8']]) + ' · in $1,000s · net below each month',
           incomeSpentSvg(ms.map(function (m) { var X = M.month(m); return { label: mkLabel(m), income: X.income, spent: X.spent }; }), { highlightLast: false })),
-        { table: catTable, title: 'Categories', legend: cmpOk ? '<span class="mk"></span>' + (y - 1) + ' total' : '' }
+        { table: catTable, fit: true, title: 'Categories', legend: cmpOk ? '<span class="mk"></span>' + (y - 1) + ' total' : '' }
       ]
     };
 
@@ -1065,7 +1080,7 @@ window.HomebaseReportBuilder = (function () {
       (hi.length ? listAnd(hi) + ' ran well above usual.' : '');
 
     var days = [];
-    for (var d = 0; d < 7; d++) { var ds = addDays(start, d); days.push({ date: ds, total: sum(A.expenses.filter(function (e) { return e.date === ds; }), function (e) { return num(e.amount); }) }); }
+    for (var d = 0; d < 7; d++) { var ds = addDays(start, d); days.push({ date: ds, total: sum(A.expenses.filter(function (e) { return e.date === ds; }), function (e) { return M.amt(e); }) }); }
     var hiDay = days.indexOf(maxBy(days, function (x) { return x.total; }));
     var daySvg = barsSvg(days.map(function (x) { return x.total; }), WD, { W: 330, H: 100, highlight: hiDay, avg: usual / 7, fmt: function (v) { return '$' + Math.round(v).toLocaleString('en-US'); } });
 
@@ -1093,8 +1108,8 @@ window.HomebaseReportBuilder = (function () {
       return '<tr class="lines"><td>' + esc(c) + '</td><td class="r">' + dash(v.gas) + '</td><td class="r">' + dash(v.maint) + '</td><td class="r">' + dash(v.ins) + '</td><td class="r"><b>' + dash(v.gas + v.maint + v.ins) + '</b></td></tr>';
     }).join('') + '<tr class="tot"><td>Total</td><td class="r">' + dash(T.gas) + '</td><td class="r">' + dash(T.maint) + '</td><td class="r">' + dash(T.ins) + '</td><td class="r">' + dash(T.gas + T.maint + T.ins) + '</td></tr>';
 
-    var big = A.expenses.slice().sort(function (a, b) { return num(b.amount) - num(a.amount); }).slice(0, 5).map(function (e) {
-      return '<tr class="lines"><td>' + esc(M.storeName(e) || '—') + ' <span class="mut">· ' + WD[wdIndex(e.date)] + '</span></td><td class="mut">' + esc(M.catName(e)) + '</td><td class="r">' + money(e.amount, true) + '</td></tr>';
+    var big = A.expenses.slice().sort(function (a, b) { return M.amt(b) - M.amt(a); }).slice(0, 5).map(function (e) {
+      return '<tr class="lines"><td>' + esc(M.storeName(e) || '—') + ' <span class="mut">· ' + WD[wdIndex(e.date)] + '</span></td><td class="mut">' + esc(M.catName(e)) + '</td><td class="r">' + money(M.amt(e), true) + '</td></tr>';
     }).join('');
 
     // Coming up: recurring rules due in the week after this one.
@@ -1103,7 +1118,7 @@ window.HomebaseReportBuilder = (function () {
       M.raw.recurring.forEach(function (r) {
         try {
           var cur = window.nextOccurrence(r, end), guard = 0;
-          while (cur && cur <= addDays(end, 7) && guard++ < 10) { coming.push({ date: cur, name: r.storeName || r.description || r.categoryName || 'Recurring', cat: display(r.categoryName || ''), amount: num(r.amount) }); cur = window.nextOccurrence(r, cur); }
+          while (cur && cur <= addDays(end, 7) && guard++ < 10) { coming.push({ date: cur, name: display(r.storeName || r.description || r.categoryName || 'Recurring'), cat: display(r.categoryName || ''), amount: num(r.amount) }); cur = window.nextOccurrence(r, cur); }
         } catch (e) { /* skip a malformed rule */ }
       });
     }
@@ -1126,9 +1141,9 @@ window.HomebaseReportBuilder = (function () {
           kpi('Vs usual week', prevWeeks.length ? '<span class="' + (diff >= 0 ? 'pos' : 'neg') + '">' + (diff >= 0 ? '−' : '+') + pct(Math.abs(diff) / (usual || 1) * 100) + '</span>' : '—', prevWeeks.length + '-week avg ' + money(usual)) + '</div>',
         '<div class="cols">' + block('Day by day', '- - - usual day ' + money(usual / 7), daySvg) +
           '<div>' + foodCard + block('Coming up · ' + shortDate(addDays(end, 1)) + ' – ' + shortDate(addDays(end, 7)), '', comingRows ? '<table style="font-size:10.5px">' + comingRows + '</table>' : '<p class="note">Nothing scheduled.</p>') + '</div></div>',
-        { table: catTable, title: 'Categories', legend: '<span class="mk"></span>8-week average' },
         '<div class="cols2">' + block('Cars this week', '', '<table style="font-size:10.5px"><tr><th>Car</th><th class="r">Gas</th><th class="r">Maint.</th><th class="r">Insurance</th><th class="r">Total</th></tr>' + carRows + '</table>') +
-          block('Biggest purchases', '', big ? '<table style="font-size:10.5px">' + big + '</table>' : '<p class="note">No expenses.</p>') + '</div>'
+          block('Biggest purchases', '', big ? '<table style="font-size:10.5px">' + big + '</table>' : '<p class="note">No expenses.</p>') + '</div>',
+        { table: catTable, fit: true, title: 'Categories', legend: '<span class="mk"></span>8-week average' }
       ]
     };
     var entryRows = [];
@@ -1136,10 +1151,10 @@ window.HomebaseReportBuilder = (function () {
       var dd = addDays(start, di);
       var es = A.expenses.filter(function (e) { return e.date === dd; });
       if (!es.length) continue;
-      entryRows.push({ group: true, html: '<tr class="day"><td colspan="4">' + dayLabel(dd) + ' · ' + es.length + (es.length === 1 ? ' entry' : ' entries') + '</td><td class="r">' + money(sum(es, function (e) { return num(e.amount); }), true) + '</td></tr>' });
+      entryRows.push({ group: true, html: '<tr class="day"><td colspan="4">' + dayLabel(dd) + ' · ' + es.length + (es.length === 1 ? ' entry' : ' entries') + '</td><td class="r">' + money(sum(es, function (e) { return M.amt(e); }), true) + '</td></tr>' });
       es.forEach(function (e) {
         var t = M.tagFor(e);
-        entryRows.push({ html: '<tr class="lines"><td style="width:18%">' + esc(M.storeName(e) || '—') + '</td><td style="width:22%">' + esc(M.catName(e)) + '</td><td style="width:14%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:11%">' + money(e.amount, true) + '</td></tr>' });
+        entryRows.push({ html: '<tr class="lines"><td style="width:18%">' + esc(M.storeName(e) || '—') + '</td><td style="width:22%">' + esc(M.catName(e)) + '</td><td style="width:14%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:11%">' + money(M.amt(e), true) + '</td></tr>' });
       });
     }
     entryRows.push({ html: '<tr class="tot"><td colspan="4">Total · ' + A.expenses.length + ' expenses</td><td class="r">' + money(A.spent, true) + '</td></tr>' });
@@ -1170,11 +1185,11 @@ window.HomebaseReportBuilder = (function () {
     var bucketOf = function (e) { return M.classify(e).bucket; };
     // A category report on Groceries + Meal Kit or Bills covers every member category.
     var match = isCat ? function (e) { var k = M.classify(e); return k.bucket === name || k.cat === name; } : function (e) { return M.storeName(e) === name; };
-    var entries = M.raw.entries.filter(function (e) { return e.type === 'expense' && e.date >= CAT_START && match(e); })
-      .sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : num(b.amount) - num(a.amount)); });
+    var entries = M.raw.entries.filter(function (e) { return M.isSpend(e) && e.date >= CAT_START && match(e); })
+      .sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : M.amt(b) - M.amt(a)); });
     var by = {};
     entries.forEach(function (e) { var k = mkOf(e.date); (by[k] = by[k] || []).push(e); });
-    var val = function (k) { return sum(by[k] || [], function (e) { return num(e.amount); }); };
+    var val = function (k) { return sum(by[k] || [], function (e) { return M.amt(e); }); };
     var visits = function (k) { return uniq((by[k] || []).map(function (e) { return e.date; })).length; };
     var count = isCat ? function (k) { return (by[k] || []).length; } : visits;
     var countWord = isCat ? 'entries' : 'visits';
@@ -1195,7 +1210,7 @@ window.HomebaseReportBuilder = (function () {
     var parts = {}, partCnt = {};
     entries.forEach(function (e) {
       var p = isCat ? (M.storeName(e) || 'No store') : M.catName(e);
-      parts[p] = (parts[p] || 0) + num(e.amount); partCnt[p] = (partCnt[p] || 0) + 1;
+      parts[p] = (parts[p] || 0) + M.amt(e); partCnt[p] = (partCnt[p] || 0) + 1;
     });
     var partNames = Object.keys(parts).sort(function (a, b) { return parts[b] - parts[a]; });
     var partColor = {};
@@ -1207,7 +1222,7 @@ window.HomebaseReportBuilder = (function () {
     entries.forEach(function (e) {
       var k = M.classify(e);
       if (k.carPart) { tagKind = tagKind || 'car'; M.carShares(e).forEach(function (s) { tagTot[s.car] = (tagTot[s.car] || 0) + s.amount; tagCnt[s.car] = (tagCnt[s.car] || 0) + 1; }); }
-      else if (e.projectName) { tagKind = tagKind || 'proj'; tagTot[e.projectName] = (tagTot[e.projectName] || 0) + num(e.amount); tagCnt[e.projectName] = (tagCnt[e.projectName] || 0) + 1; }
+      else if (e.projectName) { tagKind = tagKind || 'proj'; tagTot[e.projectName] = (tagTot[e.projectName] || 0) + M.amt(e); tagCnt[e.projectName] = (tagCnt[e.projectName] || 0) + 1; }
     });
     var tagNames = Object.keys(tagTot).sort(function (a, b) { return tagTot[b] - tagTot[a]; });
     if (tagKind === 'car') tagNames = M.cars.filter(function (c) { return tagTot[c]; }).concat(tagNames.filter(function (c) { return M.cars.indexOf(c) === -1; }));
@@ -1222,7 +1237,7 @@ window.HomebaseReportBuilder = (function () {
     if (top) {
       if (isCat) lede += esc(top) + ' is where most of it goes (' + money(parts[top]) + ').';
       else {
-        var allTop = sum(M.raw.entries.filter(function (e) { return e.type === 'expense' && e.date >= CAT_START && M.catName(e) === top; }), function (e) { return num(e.amount); });
+        var allTop = sum(M.raw.entries.filter(function (e) { return M.isSpend(e) && e.date >= CAT_START && M.catName(e) === top; }), function (e) { return M.amt(e); });
         lede += 'Most of it is <b>' + esc(top) + '</b> (' + pct(parts[top] / (total || 1) * 100) + ')' + (allTop ? ', and ' + esc(name) + ' is where ' + pct(parts[top] / allTop * 100) + ' of all your ' + esc(top) + ' spending goes.' : '.');
       }
     }
@@ -1243,7 +1258,7 @@ window.HomebaseReportBuilder = (function () {
     var nTiles = 4 + prevYears.length + (isCat ? 0 : 0);
 
     var chart = isCat ? trendSvg(chrono, chrono.map(val), bud)
-      : stackedSvg(chrono.map(mkLabel), partNames.map(function (p) { return { name: p, color: partColor[p], values: chrono.map(function (k) { return sum((by[k] || []).filter(function (e) { return M.catName(e) === p; }), function (e) { return num(e.amount); }); }) }; }), { H: 110 });
+      : stackedSvg(chrono.map(mkLabel), partNames.map(function (p) { return { name: p, color: partColor[p], values: chrono.map(function (k) { return sum((by[k] || []).filter(function (e) { return M.catName(e) === p; }), function (e) { return M.amt(e); }); }) }; }), { H: 110 });
 
     var perYear = years.map(function (y) {
       var ks = keys.filter(function (k) { return k.substring(0, 4) === y; });
@@ -1295,7 +1310,7 @@ window.HomebaseReportBuilder = (function () {
           entries.forEach(function (e) {
             if (e.date.substring(0, 4) !== y) return;
             if (tagKind === 'car' && M.classify(e).carPart) M.carShares(e).forEach(function (x) { if (x.car === t) s += x.amount; });
-            else if (e.projectName === t) s += num(e.amount);
+            else if (e.projectName === t) s += M.amt(e);
           });
           return '<td class="r mut">' + money(s) + '</td>';
         }).join('');
@@ -1314,7 +1329,7 @@ window.HomebaseReportBuilder = (function () {
               var s = 0;
               (by[k] || []).forEach(function (e) {
                 if (tagKind === 'car' && M.classify(e).carPart) M.carShares(e).forEach(function (x) { if (x.car === t) s += x.amount; });
-                else if (e.projectName === t) s += num(e.amount);
+                else if (e.projectName === t) s += M.amt(e);
               });
               return s;
             }) };
@@ -1324,7 +1339,7 @@ window.HomebaseReportBuilder = (function () {
     // Breakdown table (stores / categories)
     var pmx = parts[top] || 1;
     var pRows = partNames.map(function (p) {
-      var yv = years.map(function (y) { return '<td class="r mut">' + money(sum(entries.filter(function (e) { return e.date.substring(0, 4) === y && (isCat ? (M.storeName(e) || 'No store') : M.catName(e)) === p; }), function (e) { return num(e.amount); })) + '</td>'; }).join('');
+      var yv = years.map(function (y) { return '<td class="r mut">' + money(sum(entries.filter(function (e) { return e.date.substring(0, 4) === y && (isCat ? (M.storeName(e) || 'No store') : M.catName(e)) === p; }), function (e) { return M.amt(e); })) + '</td>'; }).join('');
       return '<tr class="lines">' + (isCat ? '<td style="width:26px;padding:3px 0">' + logoTile(M, p) + '</td><td>' + esc(p) + '</td>' : '<td><span class="sw" style="background:' + partColor[p] + ';margin-left:0"></span>' + esc(p) + '</td>') +
         '<td class="r mut">' + partCnt[p] + '×</td><td style="padding:0 8px;width:22%"><div class="bar"><i style="width:' + (parts[p] / pmx * 100).toFixed(0) + '%' + (isCat ? '' : ';background:' + partColor[p]) + '"></i></div></td>' +
         '<td class="r"><b>' + money(parts[p]) + '</b></td>' + (isCat ? '' : '<td class="r mut">' + pct(parts[p] / (total || 1) * 100) + '</td>') + yv + '<td class="r">' + money(parts[p] / partCnt[p], true) + '</td></tr>';
@@ -1337,7 +1352,7 @@ window.HomebaseReportBuilder = (function () {
     if (!isCat) {
       // Share of each category spent here + gas by car + visit sizes
       var shareRows = partNames.map(function (p) {
-        var all = sum(M.raw.entries.filter(function (e) { return e.type === 'expense' && e.date >= CAT_START && M.catName(e) === p; }), function (e) { return num(e.amount); });
+        var all = sum(M.raw.entries.filter(function (e) { return M.isSpend(e) && e.date >= CAT_START && M.catName(e) === p; }), function (e) { return M.amt(e); });
         if (!all) return '';
         return '<tr><td style="width:40%">' + esc(p) + '</td><td style="padding:3px 8px"><div class="bar" style="height:10px"><i style="height:10px;width:' + (parts[p] / all * 100).toFixed(0) + '%;background:' + partColor[p] + '"></i></div></td>' +
           '<td class="r" style="width:40px"><b>' + pct(parts[p] / all * 100) + '</b></td><td class="r mut" style="width:120px">' + money(parts[p]) + ' of ' + money(all) + '</td></tr>';
@@ -1349,7 +1364,7 @@ window.HomebaseReportBuilder = (function () {
         }).join('') + '</table>');
       }
       var vis = [];
-      keys.forEach(function (k) { var dd = {}; (by[k] || []).forEach(function (e) { dd[e.date] = (dd[e.date] || 0) + num(e.amount); }); Object.keys(dd).forEach(function (x) { vis.push(dd[x]); }); });
+      keys.forEach(function (k) { var dd = {}; (by[k] || []).forEach(function (e) { dd[e.date] = (dd[e.date] || 0) + M.amt(e); }); Object.keys(dd).forEach(function (x) { vis.push(dd[x]); }); });
       var vb = [[0, 50, 'Under $50'], [50, 100, '$50–100'], [100, 200, '$100–200'], [200, 300, '$200–300'], [300, 1e12, '$300+']];
       var sz = vb.map(function (b) { var v = vis.filter(function (x) { return x >= b[0] && x < b[1]; }); return [b[2], v.length, sum(v)]; });
       var szmx = Math.max.apply(null, sz.map(function (x) { return x[1]; }).concat([1]));
@@ -1359,15 +1374,15 @@ window.HomebaseReportBuilder = (function () {
     }
     var cal = MN.map(function (_, i) { var ks = keys.filter(function (k) { return Number(k.substring(5)) === i + 1 && k <= lastFull; }); return ks.length ? avg(ks.map(val)) : 0; });
     var season = barsSvg(cal, MN, { W: isCat ? 330 : 650, H: isCat ? 95 : 80, highlight: cal.indexOf(Math.max.apply(null, cal)), fmt: function (v) { return String(Math.round(v)); } });
-    var bigRows = entries.slice().sort(function (a, b) { return num(b.amount) - num(a.amount); }).slice(0, 10).map(function (e) {
+    var bigRows = entries.slice().sort(function (a, b) { return M.amt(b) - M.amt(a); }).slice(0, 10).map(function (e) {
       var t = M.tagFor(e);
       return '<tr class="lines"><td class="mut" style="width:18%">' + dayLabel(e.date) + ', ' + e.date.substring(0, 4) + '</td><td style="width:22%">' + esc(isCat ? (M.storeName(e) || '—') : M.catName(e)) + '</td>' +
-        '<td style="width:16%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r">' + money(e.amount, true) + '</td></tr>';
+        '<td style="width:16%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r">' + money(M.amt(e), true) + '</td></tr>';
     }).join('');
     if (isCat) {
       var eb = [[0, 20], [20, 40], [40, 60], [60, 90], [90, 1e12]];
       if (M.classify(entries[0] || {}).carPart === 'gas') eb = [[0, 30], [30, 50], [50, 70], [70, 90], [90, 1e12]];
-      var esz = eb.map(function (b) { var v = entries.filter(function (e) { return num(e.amount) >= b[0] && num(e.amount) < b[1]; }); return [(b[1] > 1e11 ? '$' + b[0] + '+' : (b[0] ? '$' + b[0] + '–' + b[1] : 'Under $' + b[1])), v.length, sum(v, function (e) { return num(e.amount); })]; });
+      var esz = eb.map(function (b) { var v = entries.filter(function (e) { return M.amt(e) >= b[0] && M.amt(e) < b[1]; }); return [(b[1] > 1e11 ? '$' + b[0] + '+' : (b[0] ? '$' + b[0] + '–' + b[1] : 'Under $' + b[1])), v.length, sum(v, function (e) { return M.amt(e); })]; });
       var eszmx = Math.max.apply(null, esz.map(function (x) { return x[1]; }).concat([1]));
       p2.push('<div class="cols2">' + block('Typical month', 'average for each month, ' + startK.substring(0, 4) + ' on', season) +
         block('Entry sizes', '', '<table style="font-size:10.5px">' + esz.map(function (x) { return '<tr><td style="width:66px">' + x[0] + '</td><td style="padding:3px 8px"><div class="bar" style="height:10px"><i style="height:10px;width:' + (x[1] / eszmx * 100).toFixed(0) + '%;background:#534AB7"></i></div></td><td class="r mut" style="width:36px">' + x[1] + '×</td><td class="r" style="width:60px">' + money(x[2]) + '</td></tr>'; }).join('') + '</table>') + '</div>');
@@ -1387,7 +1402,7 @@ window.HomebaseReportBuilder = (function () {
       es.forEach(function (e) {
         var t = M.tagFor(e);
         var mid = isCat ? esc(M.storeName(e) || '—') : '<span class="sw" style="background:' + partColor[M.catName(e)] + ';margin-left:0"></span>' + esc(M.catName(e));
-        eRows.push({ html: '<tr class="lines"><td class="mut" style="width:13%">' + dayLabel(e.date) + '</td><td style="width:' + (isCat ? 20 : 24) + '%">' + mid + '</td><td style="width:14%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:12%">' + money(e.amount, true) + '</td></tr>' });
+        eRows.push({ html: '<tr class="lines"><td class="mut" style="width:13%">' + dayLabel(e.date) + '</td><td style="width:' + (isCat ? 20 : 24) + '%">' + mid + '</td><td style="width:14%">' + (t && t.text ? tag(t.text, t.kind) : '') + '</td><td class="mut">' + esc(e.description || '—') + '</td><td class="r" style="width:12%">' + money(M.amt(e), true) + '</td></tr>' });
       });
     });
     var anyTag = entries.some(function (e) { var t = M.tagFor(e); return t && t.text; });
@@ -1428,7 +1443,7 @@ window.HomebaseReportBuilder = (function () {
     // Categories with spending since CAT_START (food and bills offered as groups too).
     var catTotals = {}, storeTotals = {};
     M.raw.entries.forEach(function (e) {
-      if (e.type !== 'expense' || e.date < CAT_START) return;
+      if (!M.isSpend(e) || e.date < CAT_START) return;
       var k = M.classify(e);
       catTotals[k.cat] = (catTotals[k.cat] || 0) + 1;
       if (k.bucket === FOOD_LABEL || k.bucket === BILLS_LABEL) catTotals[k.bucket] = (catTotals[k.bucket] || 0) + 1;
@@ -1513,7 +1528,10 @@ window.HomebaseReportBuilder = (function () {
     '.hbrp .logo { display: inline-block; position: relative; overflow: hidden; border-radius: 5px; color: #fff; text-align: center; vertical-align: middle; font-family: Georgia, serif; }',
     '.hbrp .logo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #fff; }',
     '.hbrp .logo.big { border-radius: 9px; margin-right: 12px; border: 2px solid #F7F3E9; }',
-    '.hbrp svg { display: block; max-width: 100%; height: auto; }'
+    '.hbrp svg { display: block; max-width: 100%; height: auto; }',
+    '.hbrp .tight table { font-size: 9.8px !important; } .hbrp .tight td { padding-top: 2px; padding-bottom: 2px; }',
+    '.hbrp .tighter table { font-size: 9.2px !important; } .hbrp .tighter td { padding-top: 1px; padding-bottom: 1px; } .hbrp .tighter .bar, .hbrp .tighter .bar > i { height: 5px; } .hbrp .tighter .bar > b { height: 10px; top: -2.5px; }',
+    '.hbrp .tightest table { font-size: 8.6px !important; } .hbrp .tightest td { padding-top: 0; padding-bottom: 0; line-height: 1.25; } .hbrp .tightest .bar, .hbrp .tightest .bar > i { height: 4px; } .hbrp .tightest .bar > b { height: 8px; top: -2px; } .hbrp .tightest .up, .hbrp .tightest .dn, .hbrp .tightest .eq { font-size: 8.5px; }'
   ].join('\n');
 
   function ensureStyle() {
@@ -1594,6 +1612,27 @@ window.HomebaseReportBuilder = (function () {
           rows = b.rows.map(function (r) { return { node: rowEl(r.html), group: !!r.group }; });
         }
         var titleHtml = b.title ? '<h2>' + b.title + (b.legend ? ' <span class="legend">' + b.legend + '</span>' : '') + '</h2>' : '';
+        // Tables that must stay on one page get smaller type before they're ever split.
+        if (b.fit) {
+          var whole = el('<div class="block">' + titleHtml + '</div>');
+          var full = tableShell.cloneNode(false), ftb = document.createElement('tbody');
+          if (headerTr) ftb.appendChild(headerTr.cloneNode(true));
+          rows.forEach(function (r) { ftb.appendChild(r.node.cloneNode(true)); });
+          full.appendChild(ftb); whole.appendChild(full);
+          page.appendChild(whole);
+          var steps = ['', 'tight', 'tighter', 'tightest'];
+          for (var si = 1; si < steps.length && !fits(page); si++) whole.className = 'block ' + steps[si];
+          if (fits(page)) return;
+          page.removeChild(whole);
+          if (!onlyBand(page)) {                       // try it alone on a fresh page
+            page = newPage(slim(contTitle));
+            page.appendChild(whole);
+            whole.className = 'block';
+            for (var sj = 1; sj < steps.length && !fits(page); sj++) whole.className = 'block ' + steps[sj];
+            if (fits(page)) return;
+            page.removeChild(whole);
+          }
+        }
         function startBlock(isCont) {
           var wrap = el('<div class="block">' + (b.title ? (isCont ? '<h2>' + b.title + ' (continued)</h2>' : titleHtml) : '') + '</div>');
           var tbl = tableShell.cloneNode(false);
