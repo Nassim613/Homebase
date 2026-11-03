@@ -667,6 +667,7 @@ async function renderFinanceMain() {
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
 
   const { start, end } = getFinanceRangeBounds(financeRange);
@@ -788,6 +789,33 @@ function entryTypeMeta(type) {
   if (type === 'transfer') return { icon: 'ti-arrows-left-right', color: 'var(--gold)', label: 'Transfer' };
   return { icon: 'ti-arrow-down-right', color: 'var(--red)', label: 'Expense' };
 }
+// Car / project names for the little tag on each Finance row. Looked up live so a
+// renamed car shows its new name; the name saved on the entry is the fallback (e.g. a
+// car that has since been deleted). Includes hidden projects — old entries still need them.
+let entryTagNames = { cars: {}, projects: {} };
+async function loadEntryTagNames() {
+  try {
+    const [cars, projects] = await Promise.all([DB.getAll('cars'), DB.getAll('projects')]);
+    entryTagNames = {
+      cars: Object.fromEntries(cars.map((c) => [c.id, c.name])),
+      projects: Object.fromEntries(projects.map((p) => [p.id, p.name]))
+    };
+  } catch (err) { /* keep whatever we had — the stored names still work */ }
+}
+function entryTagHtml(e) {
+  let icon = '', label = '';
+  if (e.carSplit && e.carSplit.length) {
+    icon = 'ti-car';
+    label = e.carSplit.map((s) => entryTagNames.cars[s.carId]).filter(Boolean).join(', ') || e.carName || '';
+  } else if (e.carId) {
+    icon = 'ti-car';
+    label = entryTagNames.cars[e.carId] || e.carName || '';
+  } else if (e.projectId) {
+    icon = 'ti-tools';
+    label = entryTagNames.projects[e.projectId] || e.projectName || '';
+  }
+  return label ? `<span class="entry-tag"><i class="ti ${icon}"></i>${esc(label)}</span>` : '';
+}
 function renderEntryRow(e, catById, payeeById, showDate) {
   const cat = catById[e.categoryId] || {};
   const payee = payeeById[e.storeId] || {};
@@ -818,7 +846,7 @@ function renderEntryRow(e, catById, payeeById, showDate) {
           <span class="entry-title">${esc(payee.name || cat.name || 'Entry')}${e.receiptLink ? ' <i class="ti ti-paperclip" style="font-size:12px;color:var(--ink-soft)"></i>' : ''}</span>
           <span class="entry-value ${valClass}">${sign}${fmtMoney(displayAmount)}</span>
         </div>
-        <div class="entry-meta"><span style="font-weight:700;color:${categoryColor(e.categoryId)}">${esc(cat.name || '')}</span>${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
+        <div class="entry-meta"><span style="font-weight:700;color:${categoryColor(e.categoryId)}">${esc(cat.name || '')}</span>${entryTagHtml(e)}${showDate ? ' · ' + fmtDate(e.date) : ''}${e.recurringId ? ' · Recurring' : ''}</div>
         ${e.description ? `<div class="entry-desc">${esc(e.description)}</div>` : ''}
       </div>
     </div>
@@ -870,6 +898,7 @@ async function renderFoodBudget() {
   const entries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const payees = await DB.getAll('payees');
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
   const meta = await DB.get('settings', 'meta');
@@ -1021,6 +1050,7 @@ async function renderReportsPopupContent() {
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
   const { entries, title, subtitle } = reportsPopupState;
   const sorted = reportsPopupSortBy === 'amount' ? [...entries].sort((a, b) => b.amount - a.amount) : [...entries].sort((a, b) => b.date.localeCompare(a.date));
@@ -1042,6 +1072,7 @@ async function selectReportsCell(categoryIdOrIds, mk2, displayNameOverride) {
   const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const cat = catById[categoryIds[0]] || {};
   const matches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && monthKey(e.date) === mk2);
   const label = new Date(mk2 + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -1053,6 +1084,7 @@ async function selectReportsCategoryAll(categoryIdOrIds, displayNameOverride) {
   const allEntries = await getActiveEntries();
   const categories = await DB.getAll('categories');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const displayName = displayNameOverride || (catById[categoryIds[0]] ? catById[categoryIds[0]].name : '');
   const { start, end } = getFinanceRangeBoundsForKeys(getReportsMonthKeys(reportsDateRange, allEntries));
   const matches = allEntries.filter((e) => categoryIds.includes(e.categoryId) && e.date >= start && e.date <= end);
@@ -1205,6 +1237,7 @@ async function renderReportsStub() {
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
 
   let entries = allEntries;
@@ -1877,6 +1910,7 @@ async function renderTransfersReport() {
   const categories = await DB.getAll('categories');
   const payees = await DB.getAll('payees');
   const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+  await loadEntryTagNames();
   const payeeById = Object.fromEntries(payees.map((p) => [p.id, p]));
   const transfers = allEntries.filter((e) => e.type === 'transfer');
 
@@ -2454,13 +2488,25 @@ function onCategoryChange(skipAutofill) {
   if (!skipAutofill && cat.defaultAmount) applyDefaultAmount(cat.defaultAmount);
 
   if (cat.conditionalField === 'car') {
-    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><div style="display:flex;gap:6px"><select id="f_car" style="flex:1">${(window.__cars || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewCarInline()"><i class="ti ti-plus"></i></button></div></div>`;
+    // An edit or duplicate arrives with the car it was logged against — show that one,
+    // not whichever car happens to be first. Saving without noticing used to quietly
+    // reassign the entry. If that car no longer exists, keep its id as an option so the
+    // link isn't lost on save.
+    const cars = window.__cars || [];
+    const preCar = (duplicateSource && duplicateSource.carId) || '';
+    const missing = preCar && !cars.some((c) => c.id === preCar) ? `<option value="${preCar}" selected>${esc(duplicateSource.carName || 'Unknown car')}</option>` : '';
+    area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-car"></i> Car</label><div style="display:flex;gap:6px"><select id="f_car" style="flex:1">${missing}${cars.map((c) => `<option value="${c.id}" ${preCar === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0" onclick="promptNewCarInline()"><i class="ti ti-plus"></i></button></div></div>`;
   } else if (cat.conditionalField === 'project') {
     const preselected = (duplicateSource && duplicateSource.projectId) || '';
     area.innerHTML = `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-tools"></i> Project</label><button type="button" class="btn" style="text-align:left" onclick="openProjectPickerModal()"><span id="f_projectButtonContent">Select…</span></button><input type="hidden" id="f_project" value="${preselected}"></div>`;
     updateProjectButtonDisplay();
   } else if (cat.conditionalField === 'carSplit') {
-    carSplitDraft = (window.__cars || []).map((c) => ({ carId: c.id, name: c.name, checked: false, amount: 0 }));
+    // Restore the split an edit/duplicate was saved with, so the cars stay ticked with their amounts.
+    const savedSplit = (duplicateSource && Array.isArray(duplicateSource.carSplit)) ? duplicateSource.carSplit : [];
+    carSplitDraft = (window.__cars || []).map((c) => {
+      const s = savedSplit.find((x) => x.carId === c.id);
+      return { carId: c.id, name: c.name, checked: !!s, amount: s ? (+s.amount || 0) : 0 };
+    });
     area.innerHTML = renderCarSplitUI();
   } else {
     area.innerHTML = '';
