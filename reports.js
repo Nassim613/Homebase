@@ -73,7 +73,7 @@ window.HomebaseReports = (function () {
 
   var TYPES = [
     { id: 'weekly', label: 'Weekly' }, { id: 'monthly', label: 'Monthly' }, { id: 'yearly', label: 'Yearly' },
-    { id: 'category', label: 'Category' }, { id: 'store', label: 'Store' }
+    { id: 'category', label: 'Category' }, { id: 'store', label: 'Store' }, { id: 'cars', label: 'Cars' }
   ];
   var MAX_INLINE = 4;      // periods shown before "More"
 
@@ -82,7 +82,7 @@ window.HomebaseReports = (function () {
   var state = {
     screen: 'send',        // send | manage | history
     type: 'monthly',
-    pick: { weekly: 0, monthly: 0, yearly: 0 },
+    pick: { weekly: 0, monthly: 0, yearly: 0, cars: 0 },
     category: '', store: '', scope: 'all',
     recipients: [], checked: {}, oneOff: '',
     log: [], sentIndex: {},
@@ -157,7 +157,7 @@ window.HomebaseReports = (function () {
       state.log = data.log || [];
       state.sentIndex = {};
       state.log.forEach(function (r) {
-        var key = r.type + '|' + r.start;
+        var key = r.type + '|' + (r.type === 'cars' ? r.end : r.start);
         if (r.kind !== 'downloaded' && !state.sentIndex[key]) state.sentIndex[key] = r.sentAt;
       });
     });
@@ -173,7 +173,7 @@ window.HomebaseReports = (function () {
 
   function periodList() {
     if (!opts) return [];
-    return state.type === 'weekly' ? opts.weeks : state.type === 'monthly' ? opts.months : state.type === 'yearly' ? opts.years : [];
+    return state.type === 'weekly' ? opts.weeks : (state.type === 'monthly' || state.type === 'cars') ? opts.months : state.type === 'yearly' ? opts.years : [];
   }
   function request() {
     var t = state.type, req = { type: t, user: whoAmI() };
@@ -183,8 +183,9 @@ window.HomebaseReports = (function () {
     if (!req.value) throw new Error(t === 'category' ? 'Pick a category first.' : t === 'store' ? 'Pick a store first.' : 'There’s nothing to report on yet.');
     return req;
   }
+  function lastDay(k) { var p = k.split('-'); var d = new Date(Number(p[0]), Number(p[1]), 0); return k + '-' + (d.getDate() < 10 ? '0' : '') + d.getDate(); }
   function sentLabel(type, value) {
-    var start = type === 'weekly' ? value : type === 'monthly' ? value + '-01' : value + '-01-01';
+    var start = type === 'weekly' ? value : type === 'monthly' ? value + '-01' : type === 'cars' ? lastDay(value) : value + '-01-01';
     var at = state.sentIndex[type + '|' + start];
     if (!at) return '';
     var d = new Date(at);
@@ -231,7 +232,8 @@ window.HomebaseReports = (function () {
       }
     } else {
       var periods = periodList(), idx = state.pick[state.type] || 0;
-      h += '<p class="hbr-label">' + (state.type === 'weekly' ? 'Week' : state.type === 'monthly' ? 'Month' : 'Year') + '</p>';
+      h += '<p class="hbr-label">' + (state.type === 'weekly' ? 'Week' : state.type === 'monthly' ? 'Month' : state.type === 'cars' ? 'Up to the end of' : 'Year') + '</p>';
+      if (state.type === 'cars') h += '<p class="hbr-note" style="margin-top:-4px">All cars, every month since May 2024. Includes the maintenance-over-time page and the full maintenance log.</p>';
       if (!periods.length) h += '<p class="hbr-note">Nothing to report on yet.</p>';
       var row = function (o, i) {
         var tag = sentLabel(state.type, o.value);
@@ -240,7 +242,7 @@ window.HomebaseReports = (function () {
       };
       periods.slice(0, MAX_INLINE).forEach(function (o, i) { h += row(o, i); });
       if (periods.length > MAX_INLINE) {
-        h += '<details class="hbr-more"' + (idx >= MAX_INLINE ? ' open' : '') + '><summary>More ' + (state.type === 'weekly' ? 'weeks' : state.type === 'monthly' ? 'months' : 'years') + '</summary>';
+        h += '<details class="hbr-more"' + (idx >= MAX_INLINE ? ' open' : '') + '><summary>More ' + (state.type === 'weekly' ? 'weeks' : (state.type === 'monthly' || state.type === 'cars') ? 'months' : 'years') + '</summary>';
         periods.slice(MAX_INLINE).forEach(function (o, i) { h += row(o, i + MAX_INLINE); });
         h += '</details>';
       }
@@ -291,7 +293,7 @@ window.HomebaseReports = (function () {
     return h;
   }
 
-  var TYPE_LABEL = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly', category: 'Category', store: 'Store', week: 'Weekly', month: 'Monthly', custom: 'Custom' };
+  var TYPE_LABEL = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly', category: 'Category', store: 'Store', cars: 'Cars', week: 'Weekly', month: 'Monthly', custom: 'Custom' };
 
   function renderHistory() {
     var h = '<div class="hbr-head"><span class="hbr-title">Report history</span><button class="hbr-x" data-act="back" aria-label="Back">&times;</button></div>' +
@@ -302,7 +304,7 @@ window.HomebaseReports = (function () {
       var when = r.sentAt ? new Date(r.sentAt).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
       var who = (r.recipients || []).map(function (x) { return x.name || x.email; }).join(', ');
       var what = r.kind === 'downloaded' ? 'Downloaded ' + when + ' by ' + nameFor(r.sentBy) : 'Sent ' + when + ' by ' + nameFor(r.sentBy) + ' · to ' + who + (r.resend ? ' · resend' : '');
-      var money_ = (r.type === 'category' || r.type === 'store') ? '<span class="hbr-badge">' + (r.pages ? r.pages + ' pages' : 'PDF') + '</span>'
+      var money_ = (r.type === 'category' || r.type === 'store' || r.type === 'cars') ? '<span class="hbr-badge">' + (r.pages ? r.pages + ' pages' : 'PDF') + '</span>'
         : '<span style="color:' + ((r.net || 0) >= 0 ? '#0F6E56' : '#C9564F') + ';font-weight:600">' + ((r.net || 0) >= 0 ? '+' : '') + money(r.net) + '</span>';
       h += '<div class="hbr-card"><div class="hbr-cardrow"><strong>' + esc(TYPE_LABEL[r.type] || 'Report') + ' · ' + esc(r.label) + '</strong>' + money_ + '</div>' +
         '<em class="hbr-meta">' + esc(what) + '</em><div class="hbr-cardactions">' +

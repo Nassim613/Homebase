@@ -718,6 +718,84 @@ window.HomebaseReportBuilder = (function () {
       '<tr><th style="width:12%">Car</th>' + sub + (keysB ? '<th class="gap"></th>' + sub : '') + '</tr>' + rows + '</table>';
   }
 
+  // ---------- Car maintenance over time ----------
+  // One small bar chart per car (maintenance only), every month since data
+  // collection started, with each month's amount on its bar and the year totals
+  // beside the car's name; then all cars combined, and a year-by-year table with
+  // the last 12 months against the 12 before, so a car getting expensive shows.
+  function maintBarsSvg(keys, values, color, endK) {
+    var W = 650, H = 54, n = keys.length || 1;
+    var mx = Math.max.apply(null, values.concat([1])) * 1.3;
+    var grp = W / n, bw = Math.max(grp * 0.62, 3);
+    var s = ['<svg width="' + W + '" height="' + (H + 26) + '" viewBox="0 0 ' + W + ' ' + (H + 26) + '">'];
+    s.push('<line x1="0" x2="' + W + '" y1="' + H + '" y2="' + H + '" stroke="#E4DCC8"/>');
+    keys.forEach(function (k, i) {
+      var x = i * grp + (grp - bw) / 2, v = values[i] || 0, h = v / mx * H;
+      var last = k === endK;
+      if (v > 0) {
+        s.push('<rect x="' + x.toFixed(1) + '" y="' + (H - h).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="1.5" fill="' + color + '" opacity="' + (last ? 1 : 0.8) + '"/>');
+        var t = v >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v));
+        s.push('<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - h - 3).toFixed(1) + '" font-size="7" text-anchor="middle" fill="#4a4360" ' + SVGF + '>' + t + '</text>');
+      }
+      s.push('<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H + 10) + '" font-size="7.5" text-anchor="middle" fill="' + (last ? '#8a6412' : '#a49cb0') + '" ' + SVGF + '>' + mkLabel(k).charAt(0) + '</text>');
+      if (k.substring(5) === '01' || i === 0) {
+        var lx = i * grp;
+        s.push('<line x1="' + lx.toFixed(1) + '" x2="' + lx.toFixed(1) + '" y1="' + (H + 13) + '" y2="' + (H + 25) + '" stroke="#CFC5AE"/>');
+        s.push('<text x="' + (lx + 3).toFixed(1) + '" y="' + (H + 23) + '" font-size="8.5" fill="#8a6412" ' + SVGF + '>' + k.substring(0, 4) + '</text>');
+      }
+    });
+    s.push('</svg>');
+    return s.join('');
+  }
+
+  function maintenancePage(M, endK, title) {
+    var startK = mkOf(DATA_START);
+    var keys = monthsBetween(startK, endK);
+    var years = uniq(keys.map(function (k) { return k.substring(0, 4); }));
+    var mOf = function (c, k) { var v = M.month(k).car[c]; return v ? v.maint : 0; };
+    var cars = M.cars.filter(function (c) { return keys.some(function (k) { return mOf(c, k) > 0; }); });
+    if (!cars.length) return null;
+    var yearSum = function (c, y) { return sum(keys.filter(function (k) { return k.substring(0, 4) === y; }), function (k) { return mOf(c, k); }); };
+    var l12 = keys.slice(-12), p12 = keys.slice(-24, -12);
+    var yLabel = function (y) {
+      var ks = keys.filter(function (k) { return k.substring(0, 4) === y; });
+      if (ks.length === 12) return y;
+      return y + ' <span class="mut" style="font-size:8.5px">' + mkLabel(ks[0]) + '–' + mkLabel(ks[ks.length - 1]) + '</span>';
+    };
+    var blocks = [];
+    var chartFor = function (name, color, valFn) {
+      var vals = keys.map(valFn);
+      var yrs = years.map(function (y) {
+        var t = sum(keys.filter(function (k) { return k.substring(0, 4) === y; }), function (k) { return valFn(k); });
+        return '<span style="margin-left:14px"><span class="mut">' + y + '</span> <b>' + money(t) + '</b></span>';
+      }).join('');
+      return '<div class="block" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;font-size:11px;margin-bottom:2px">' +
+        '<span><span class="sw" style="background:' + color + ';margin-left:0"></span><b>' + esc(name) + '</b></span><span>' + yrs + '</span></div>' +
+        maintBarsSvg(keys, vals, color, endK) + '</div>';
+    };
+    blocks.push('<h2>Maintenance by car, every month since ' + mkLabel(startK) + ' ' + startK.substring(0, 4) + ' <span class="legend">amount on each bar · year totals on the right</span></h2>');
+    cars.forEach(function (c) { blocks.push(chartFor(c, M.colorOfCar(c), function (k) { return mOf(c, k); })); });
+    blocks.push(chartFor('All cars combined', '#2B2640', function (k) { return sum(cars, function (c) { return mOf(c, k); }); }));
+
+    // Year-by-year table with the trend that matters: last 12 months vs the 12 before.
+    var rows = cars.concat(['Total']).map(function (c) {
+      var cs = c === 'Total' ? cars : [c];
+      var yv = years.map(function (y) { return '<td class="r">' + money(sum(cs, function (x) { return yearSum(x, y); })) + '</td>'; }).join('');
+      var a = sum(cs, function (x) { return sum(l12, function (k) { return mOf(x, k); }); });
+      var b = p12.length === 12 ? sum(cs, function (x) { return sum(p12, function (k) { return mOf(x, k); }); }) : null;
+      var visits = sum(cs, function (x) { return sum(l12, function (k) { return M.month(k).expenses.filter(function (e) { return M.classify(e).carPart === 'maint' && M.carShares(e).some(function (sh) { return sh.car === x; }); }).length; }); });
+      return '<tr class="' + (c === 'Total' ? 'tot' : 'lines') + '"><td>' + esc(c) + '</td>' + yv + '<td class="gap"></td>' +
+        '<td class="r"><b>' + money(a) + '</b></td>' + (b == null ? '<td class="r cmp"><span class="mut">—</span><span class="eq"></span></td>' : '<td class="r cmp"><span class="mut">' + money(b) + '</span> ' + (a || b ? chip(a, b) : '<span class="eq"></span>') + '</td>') +
+        '<td class="r">' + money(a / 12) + '</td><td class="r mut">' + visits + '</td></tr>';
+    }).join('');
+    var table = '<table style="font-size:10.5px"><tr><th style="width:17%">Car</th>' + years.map(function (y) { return '<th class="r">' + yLabel(y) + '</th>'; }).join('') +
+      '<th class="gap"></th><th class="r">Last 12 mo</th><th class="r" style="padding-right:50px">12 mo before</th><th class="r">Per month</th><th class="r">Visits</th></tr>' + rows + '</table>';
+    blocks.push(block('Maintenance by year', 'last 12 months = ' + mkLabel(l12[0]) + ' ' + l12[0].substring(0, 4) + ' – ' + mkLabel(endK) + ' ' + endK.substring(0, 4), table +
+      '<p class="note">Maintenance only (Car Maintenance category), using each entry’s car. A car whose last 12 months keep climbing against the 12 before is the one to watch. ' +
+      (cars.some(function (c) { return norm(c) === ALL_CARS; }) ? '“All cars” is maintenance tagged to every car. ' : '') + 'Tesla is left out.</p>'));
+    return { title: title || 'Car maintenance over time', blocks: blocks };
+  }
+
   function carCharts(M, mixKeys, mixLabel, monthKeys, highlightLast) {
     var rows = M.cars.map(function (c) { return { label: c, vals: { gas: carSum(M, mixKeys, c, 'gas'), maint: carSum(M, mixKeys, c, 'maint'), ins: carSum(M, mixKeys, c, 'ins') } }; })
       .filter(function (r) { return r.vals.gas + r.vals.maint + r.vals.ins > 0; });
@@ -1422,6 +1500,125 @@ window.HomebaseReportBuilder = (function () {
   }
 
   // ================================================================
+  // CARS — everything about the cars, since data collection started
+  // ================================================================
+  function carsReport(M, endK, opt) {
+    var startK = mkOf(DATA_START);
+    var keys = monthsBetween(startK, endK);
+    var years = uniq(keys.map(function (k) { return k.substring(0, 4); }));
+    var l12 = keys.slice(-12), p12 = keys.slice(-24, -12);
+    var hasP12 = p12.length === 12;
+    var cars = M.cars.filter(function (c) { return keys.some(function (k) { return carTotals(M.month(k), c) > 0; }); });
+    var part = function (c, k, pt) { var v = M.month(k).car[c]; return v ? v[pt] : 0; };
+    var tot = function (cs, ks, pts) { return sum(cs, function (c) { return sum(ks, function (k) { return sum(pts, function (pt) { return part(c, k, pt); }); }); }); };
+    var ALL = ['gas', 'maint', 'ins'];
+    var t12 = tot(cars, l12, ALL), tp12 = hasP12 ? tot(cars, p12, ALL) : 0;
+    var m12 = tot(cars, l12, ['maint']), mp12 = hasP12 ? tot(cars, p12, ['maint']) : 0;
+    var g12 = tot(cars, l12, ['gas']), gp12 = hasP12 ? tot(cars, p12, ['gas']) : 0;
+    var real = cars.filter(function (c) { return norm(c) !== ALL_CARS; });
+    var priciest = maxBy(real, function (c) { return tot([c], l12, ALL); });
+    var climbing = hasP12 ? real.filter(function (c) { var a = tot([c], l12, ['maint']), b = tot([c], p12, ['maint']); return b > 100 && a / b >= 1.25; })
+      .sort(function (x, y) { return tot([y], l12, ['maint']) / Math.max(tot([y], p12, ['maint']), 1) - tot([x], l12, ['maint']) / Math.max(tot([x], p12, ['maint']), 1); }) : [];
+    var range = mkLabel(l12[0]) + ' ' + l12[0].substring(0, 4) + ' – ' + mkLabel(endK) + ' ' + endK.substring(0, 4);
+
+    var lede = 'Over the last 12 months the cars cost <b>' + money(t12) + '</b>, about <b>' + money(t12 / 12) + ' a month</b>' +
+      (hasP12 ? ', ' + (t12 > tp12 ? 'up' : 'down') + ' ' + pct(Math.abs(t12 - tp12) / (tp12 || 1) * 100) + ' on the 12 months before' : '') + '. ' +
+      (priciest ? 'The <b>' + esc(priciest) + '</b> cost the most at ' + money(tot([priciest], l12, ALL)) + '. ' : '') +
+      (climbing.length ? 'Maintenance is climbing on the ' + listAnd(climbing) + '.' : (hasP12 ? 'No car’s maintenance is climbing sharply.' : ''));
+
+    // Page 1
+    var byYear = cars.concat(['Total']).map(function (c) {
+      var cs = c === 'Total' ? cars : [c];
+      return '<tr class="' + (c === 'Total' ? 'tot' : 'lines') + '"><td>' + esc(c) + '</td>' +
+        years.map(function (y) { return '<td class="r">' + money(tot(cs, keys.filter(function (k) { return k.substring(0, 4) === y; }), ALL)) + '</td>'; }).join('') +
+        '<td class="gap"></td><td class="r"><b>' + money(tot(cs, l12, ALL)) + '</b></td>' +
+        (hasP12 ? cmpCell(tot(cs, l12, ALL), tot(cs, p12, ALL)) : '') + '<td class="r">' + money(tot(cs, l12, ALL) / 12) + '</td></tr>';
+    }).join('');
+    var yLab = function (y) { var ks = keys.filter(function (k) { return k.substring(0, 4) === y; }); return ks.length === 12 ? y : y + ' <span style="font-size:8px">' + mkLabel(ks[0]) + '–' + mkLabel(ks[ks.length - 1]) + '</span>'; };
+    var byYearTbl = '<table style="font-size:10.5px"><tr><th style="width:16%">Car</th>' + years.map(function (y) { return '<th class="r">' + yLab(y) + '</th>'; }).join('') +
+      '<th class="gap"></th><th class="r">Last 12 mo</th>' + (hasP12 ? '<th class="r" style="padding-right:50px">12 mo before</th>' : '') + '<th class="r">Per month</th></tr>' + byYear + '</table>';
+    var mix = hstackRows(cars.map(function (c) { return { label: c, vals: { gas: tot([c], l12, ['gas']), maint: tot([c], l12, ['maint']), ins: tot([c], l12, ['ins']) } }; }),
+      ALL, PART_COLORS, Math.max.apply(null, cars.map(function (c) { return tot([c], l12, ALL); }).concat([1])) * 1.02);
+    var monthly = stackedSvg(l12.map(mkLabel), cars.map(function (c) { return { name: c, color: M.colorOfCar(c), values: l12.map(function (k) { return carTotals(M.month(k), c); }) }; }), { W: 650, H: 110 });
+    var page1 = {
+      head: '<div class="band"><div><p class="kicker">Homebase · Cars report</p><h1>Cars · ' + mkLong(endK) + '</h1></div><div class="meta">Since ' + mkLabel(startK) + ' ' + startK.substring(0, 4) + '<br>' + prepared(opt.user) + '</div></div>',
+      blocks: [
+        '<p class="lede">' + lede + '</p>',
+        '<div class="kpis">' + kpi('Last 12 months', money(t12), hasP12 ? '12 mo before ' + money(tp12) + ' · ' + chip(t12, tp12) : range) +
+          kpi('Per month', money(t12 / 12), 'all cars, last 12 months') +
+          kpi('Maintenance', money(m12), hasP12 ? '12 mo before ' + money(mp12) + ' · ' + chip(m12, mp12) : 'last 12 months') +
+          kpi('Gas', money(g12), hasP12 ? '12 mo before ' + money(gp12) + ' · ' + chip(g12, gp12) : 'last 12 months') + '</div>',
+        block('Cost of ownership', '', ownershipTable(M, l12, 'Last 12 months · ' + range, hasP12 ? p12 : null, '12 months before')),
+        block('What each car costs · last 12 months', legend([['Gas', PART_COLORS.gas], ['Maintenance', PART_COLORS.maint], ['Insurance', PART_COLORS.ins]]), mix),
+        block('Car costs by month', legend(cars.map(function (c) { return [c, M.colorOfCar(c)]; })), monthly),
+        block('Total cost by year', 'gas + maintenance + insurance', byYearTbl)
+      ]
+    };
+
+    // Page 2: maintenance over time
+    var page2 = maintenancePage(M, endK);
+
+    // Page 3: gas and insurance
+    var gasEntries = function (c, ks) { return sum(ks, function (k) { return M.month(k).expenses.filter(function (e) { return M.classify(e).carPart === 'gas' && M.carShares(e).some(function (x) { return x.car === c; }); }).length; }); };
+    var gasCars = cars.filter(function (c) { return keys.some(function (k) { return part(c, k, 'gas') > 0; }); });
+    var gasRows = gasCars.concat(['Total']).map(function (c) {
+      var cs = c === 'Total' ? gasCars : [c];
+      var a = tot(cs, l12, ['gas']), n = sum(cs, function (x) { return gasEntries(x, l12); });
+      return '<tr class="' + (c === 'Total' ? 'tot' : 'lines') + '"><td>' + esc(c) + '</td>' +
+        years.map(function (y) { return '<td class="r">' + money(tot(cs, keys.filter(function (k) { return k.substring(0, 4) === y; }), ['gas'])) + '</td>'; }).join('') +
+        '<td class="gap"></td><td class="r"><b>' + money(a) + '</b></td>' + (hasP12 ? cmpCell(a, tot(cs, p12, ['gas'])) : '') +
+        '<td class="r">' + money(a / 12) + '</td><td class="r mut">' + n + '</td><td class="r">' + (n ? money(a / n, true) : '—') + '</td></tr>';
+    }).join('');
+    var gasTbl = '<table style="font-size:10.5px"><tr><th style="width:15%">Car</th>' + years.map(function (y) { return '<th class="r">' + yLab(y) + '</th>'; }).join('') +
+      '<th class="gap"></th><th class="r">Last 12 mo</th>' + (hasP12 ? '<th class="r" style="padding-right:50px">12 mo before</th>' : '') + '<th class="r">Per month</th><th class="r">Fill-ups</th><th class="r">Avg fill-up</th></tr>' + gasRows + '</table>';
+    var gasChart = stackedSvg(l12.map(mkLabel), gasCars.map(function (c) { return { name: c, color: M.colorOfCar(c), values: l12.map(function (k) { return part(c, k, 'gas'); }) }; }), { W: 650, H: 100 });
+    var insCars = cars.filter(function (c) { return keys.some(function (k) { return part(c, k, 'ins') > 0; }); });
+    var insRows = insCars.concat(['Total']).map(function (c) {
+      var cs = c === 'Total' ? insCars : [c];
+      var a = tot(cs, l12, ['ins']);
+      return '<tr class="' + (c === 'Total' ? 'tot' : 'lines') + '"><td>' + esc(c) + '</td>' +
+        years.map(function (y) { return '<td class="r">' + money(tot(cs, keys.filter(function (k) { return k.substring(0, 4) === y; }), ['ins'])) + '</td>'; }).join('') +
+        '<td class="gap"></td><td class="r"><b>' + money(a) + '</b></td>' + (hasP12 ? cmpCell(a, tot(cs, p12, ['ins'])) : '') + '<td class="r">' + money(a / 12) + '</td></tr>';
+    }).join('');
+    var insTbl = '<table style="font-size:10.5px"><tr><th style="width:15%">Car</th>' + years.map(function (y) { return '<th class="r">' + yLab(y) + '</th>'; }).join('') +
+      '<th class="gap"></th><th class="r">Last 12 mo</th>' + (hasP12 ? '<th class="r" style="padding-right:50px">12 mo before</th>' : '') + '<th class="r">Per month</th></tr>' + insRows + '</table>';
+    var page3 = {
+      title: 'Gas and insurance',
+      blocks: [
+        block('Gas by month · last 12 months', legend(gasCars.map(function (c) { return [c, M.colorOfCar(c)]; })), gasChart),
+        block('Gas by car', '', gasTbl),
+        block('Insurance by car', '', insTbl + '<p class="note">Ridgeline and Sonata insurance is one bill, split between them by each entry’s car split.</p>')
+      ]
+    };
+
+    // Page 4+: maintenance log, by car, newest first
+    var log = [];
+    cars.forEach(function (c) {
+      var es = [];
+      keys.forEach(function (k) { M.month(k).expenses.forEach(function (e) {
+        if (M.classify(e).carPart !== 'maint') return;
+        var sh = M.carShares(e).filter(function (x) { return x.car === c; })[0];
+        if (sh) es.push({ e: e, amt: sh.amount });
+      }); });
+      if (!es.length) return;
+      es.sort(function (a, b) { return a.e.date < b.e.date ? 1 : -1; });
+      log.push({ group: true, html: '<tr class="day"><td colspan="3">' + esc(c) + ' · ' + es.length + (es.length === 1 ? ' visit' : ' visits') + ' since ' + mkLabel(startK) + ' ' + startK.substring(0, 4) + '</td><td class="r">' + money(sum(es, function (x) { return x.amt; }), true) + '</td></tr>' });
+      es.forEach(function (x) {
+        log.push({ html: '<tr class="lines"><td class="mut" style="width:16%">' + dayLabel(x.e.date) + ', ' + x.e.date.substring(0, 4) + '</td><td style="width:22%">' + esc(M.storeName(x.e) || '—') + '</td><td class="mut">' + esc(x.e.description || '—') + '</td><td class="r" style="width:12%">' + money(x.amt, true) + '</td></tr>' });
+      });
+    });
+    var page4 = { title: 'Maintenance log, newest first', blocks: log.length ? [{ head: '<table style="font-size:10.5px"><tr><th>Date</th><th>Store</th><th>Description</th><th class="r">Amount</th></tr>', rows: log, foot: '</table>' }] : ['<p class="note">No maintenance recorded.</p>'] };
+
+    return {
+      kind: 'cars', label: 'Cars · ' + mkLong(endK), footer: 'Cars report · ' + mkLong(endK),
+      fileName: 'Homebase Cars ' + endK + '.pdf', subject: 'Homebase — cars report: ' + mkLong(endK),
+      pages: [page1, page2, page3, page4].filter(Boolean),
+      summary: { lede: lede, figures: [['Last 12 months', money(t12)], ['Per month', money(t12 / 12)], ['Maintenance', money(m12)]] },
+      meta: { type: 'cars', start: DATA_START, end: mkEnd(endK), income: 0, expense: t12, net: -t12, entryCount: 0 }
+    };
+  }
+
+  // ================================================================
   // PICKERS
   // ================================================================
   function options(M) {
@@ -1462,6 +1659,7 @@ window.HomebaseReportBuilder = (function () {
     if (req.type === 'yearly') return yearlyReport(M, Number(req.value), opt);
     if (req.type === 'category') return focusReport(M, 'category', req.value, opt);
     if (req.type === 'store') return focusReport(M, 'store', req.value, opt);
+    if (req.type === 'cars') return carsReport(M, req.value, opt);
     throw new Error('Unknown report type: ' + req.type);
   }
 
