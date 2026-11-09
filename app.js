@@ -357,6 +357,7 @@ function hideFormDialog() {
 }
 // The dialog's X, the backdrop and Esc: leave the form the same way Back would.
 function closeFormDialog() {
+  entryRecurringDraft = null; // leaving a form without saving drops an unsaved "make recurring"
   if (currentTab === 'more') { moreView = lastPage.tab === 'more' ? lastPage.more : 'main'; return route(); }
   if (history.state && history.state.tab === currentTab && history.state.view === currentView && history.length > 1) return history.back();
   currentView = lastPage.tab === currentTab ? lastPage.view : 'main';
@@ -524,6 +525,12 @@ async function routeView() {
 let financeRange = 'thisMonth'; // thisMonth | lastMonth | twoMonthsAgo | last3Months | last6Months | lastYear | last2Years | allTime
 let financeTypeFilter = null; // null | 'income' | 'expense' | 'transfer'
 let financeSortBy = 'date'; // date | amount
+// Category / store dropdowns beside the search bar, plus the search text itself. All
+// three narrow the totals as well as the list, and all three survive a range change —
+// "Costco, last 3 months" then "Costco, October" shouldn't need re-picking Costco.
+let financeCategoryFilter = '';
+let financeStoreFilter = '';
+let financeSearchQuery = '';
 const FINANCE_RANGE_LABELS = { thisMonth: 'This month', lastMonth: 'Last month', twoMonthsAgo: '2 months ago', threeMonthsAgo: '3 months ago', last3Months: 'Last 3 months', last6Months: 'Last 6 months', lastYear: 'Last year', last2Years: 'Last 2 years', allTime: 'All time' };
 // Turns [{name:'August',year:2026}, {name:'July',year:2026}, {name:'June',year:2026}]
 // (newest first) into "August, July & June 2026" — or, on the rare window that crosses
@@ -580,7 +587,7 @@ function getFinanceRangeBounds(range) {
 }
 function setFinanceRange(r) { financeRange = r; renderFinanceMain(); }
 function openFinanceRangeMoreModal() {
-  const options = ['threeMonthsAgo', 'last3Months', 'last6Months', 'lastYear', 'last2Years', 'allTime'];
+  const options = ['threeMonthsAgo', 'last6Months', 'lastYear', 'last2Years', 'allTime']; // Last 3 months has its own pill now
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:14px">More ranges</p>
@@ -662,6 +669,18 @@ function collapseAllControls(containerId) {
   </div>`;
 }
 
+// Pills along the top: this month first (the default), then Last 3 months, then the two
+// months before this one. Everything else lives under More.
+const FINANCE_MORE_RANGES = ['threeMonthsAgo', 'last6Months', 'lastYear', 'last2Years', 'allTime'];
+
+function financeMatchesSearch(e, q, catById, payeeById) {
+  if (!q) return true;
+  const cat = catById[e.categoryId] || {};
+  const payee = payeeById[e.storeId] || {};
+  const hay = `${cat.name || ''} ${payee.name || ''} ${e.description || ''} ${e.amount}`.toLowerCase();
+  return hay.includes(q);
+}
+
 async function renderFinanceMain() {
   const entries = (await getActiveEntries()).sort((a, b) => b.date.localeCompare(a.date));
   const categories = await DB.getAll('categories');
@@ -672,42 +691,44 @@ async function renderFinanceMain() {
 
   const { start, end } = getFinanceRangeBounds(financeRange);
   const inRange = entries.filter((e) => e.date >= start && e.date <= end);
-  // Entries in categories flagged "Exclude from family totals" (e.g. personal allowances) still
-  // show up in the list below, but are left out of the Income/Expenses/Net figures.
-  const totalsSource = inRange.filter((e) => { const cat = catById[e.categoryId]; return !(cat && cat.excludeFromTotals); });
-  const income = totalsSource.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
-  const expense = totalsSource.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
-  const transfer = totalsSource.filter((e) => e.type === 'transfer').reduce((s, e) => s + e.amount, 0);
-  const net = income - expense;
 
-  const listSource = financeTypeFilter ? inRange.filter((e) => e.type === financeTypeFilter) : inRange;
+  // Dropdowns only offer categories and stores that have ever been used, so the lists
+  // stay short. A filter whose category/store has since vanished is kept as an option
+  // rather than silently dropped.
+  const usedCatIds = new Set(entries.map((e) => e.categoryId).filter(Boolean));
+  const usedStoreIds = new Set(entries.map((e) => e.storeId).filter(Boolean));
+  if (financeCategoryFilter) usedCatIds.add(financeCategoryFilter);
+  if (financeStoreFilter) usedStoreIds.add(financeStoreFilter);
+  const catChoices = [...usedCatIds].map((id) => catById[id] || { id, name: 'Unknown category' }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const storeChoices = [...usedStoreIds].map((id) => payeeById[id] || { id, name: 'Unknown store' }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  const moreActive = FINANCE_MORE_RANGES.includes(financeRange);
+  const filterActive = (on) => on ? 'border-color:var(--gold);background:var(--gold-soft)' : '';
 
   $main.innerHTML = `
     <div class="finance-top">
-    <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..."></div>
+    <div class="search-box"><i class="ti ti-search"></i><input id="financeSearch" placeholder="Search description, store, category, amount..." value="${esc(financeSearchQuery)}"></div>
+    <div class="finance-filters">
+      <select id="financeCategoryFilter" aria-label="Filter by category" style="${filterActive(financeCategoryFilter)}" onchange="setFinanceCategoryFilter(this.value)">
+        <option value="">All categories</option>
+        ${catChoices.map((c) => `<option value="${c.id}" ${financeCategoryFilter === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
+      <select id="financeStoreFilter" aria-label="Filter by store" style="${filterActive(financeStoreFilter)}" onchange="setFinanceStoreFilter(this.value)">
+        <option value="">All stores</option>
+        ${storeChoices.map((p) => `<option value="${p.id}" ${financeStoreFilter === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select>
+      <button class="chip" id="financeClearFilters" style="display:none" onclick="clearFinanceFilters()"><i class="ti ti-x" style="font-size:11px;vertical-align:-1px"></i> Clear</button>
+    </div>
 
     <div class="chip-row">
       <button class="chip ${financeRange==='thisMonth'?'active':''}" onclick="setFinanceRange('thisMonth')">${getFinanceRangeLabel('thisMonth')}</button>
+      <button class="chip ${financeRange==='last3Months'?'active':''}" onclick="setFinanceRange('last3Months')">Last 3 months</button>
       <button class="chip ${financeRange==='lastMonth'?'active':''}" onclick="setFinanceRange('lastMonth')">${getFinanceRangeLabel('lastMonth')}</button>
       <button class="chip ${financeRange==='twoMonthsAgo'?'active':''}" onclick="setFinanceRange('twoMonthsAgo')">${getFinanceRangeLabel('twoMonthsAgo')}</button>
-      <button class="chip ${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange)?'active':''}" onclick="openFinanceRangeMoreModal()">${['last3Months','last6Months','lastYear','last2Years','allTime'].includes(financeRange) ? getFinanceRangeLabel(financeRange) : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
+      <button class="chip ${moreActive?'active':''}" onclick="openFinanceRangeMoreModal()">${moreActive ? getFinanceRangeLabel(financeRange) : 'More'} <i class="ti ti-chevron-down" style="font-size:11px;vertical-align:-1px"></i></button>
     </div>
     </div>
-    <div class="finance-kpis">
-    <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${getFinanceRangeLabel(financeRange)}</p>
-        <i class="ti ${net >= 0 ? 'ti-trending-up' : 'ti-trending-down'}" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}"></i>
-      </div>
-      <p class="big" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</p>
-    </div>
-    <div class="finance-stats">
-      <div class="stat" style="cursor:pointer;${financeTypeFilter==='income'?'outline:2px solid #0F6E56':''}" onclick="toggleFinanceTypeFilter('income')"><p class="label">Income</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(income)}</p></div>
-      <div class="stat" style="cursor:pointer;${financeTypeFilter==='expense'?'outline:2px solid var(--red)':''}" onclick="toggleFinanceTypeFilter('expense')"><p class="label">Expenses</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(expense)}</p></div>
-      <div class="stat" style="cursor:pointer;${financeTypeFilter==='transfer'?'outline:2px solid var(--gold)':''}" onclick="toggleFinanceTypeFilter('transfer')"><p class="label">Transfers</p><p class="value" style="font-size:13px">${fmtMoney(transfer)}</p></div>
-    </div>
-    </div>
-    ${financeTypeFilter ? `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
+    <div id="financeSummary"></div>
 
     <div class="finance-listbar">
     <button class="btn finance-food-btn" style="margin-bottom:14px" onclick="goFoodBudget()"><i class="ti ti-shopping-cart"></i> Food budget by week</button>
@@ -721,12 +742,75 @@ async function renderFinanceMain() {
 
     <div class="list-card">
     ${financeSortBy === 'date' ? collapseAllControls('entryList') : ''}
-    <div id="entryList">${renderFinanceList(listSource, catById, payeeById)}</div>
+    <div id="entryList"></div>
     </div>
   `;
 
-  document.getElementById('financeSearch').addEventListener('input', (e) => filterEntriesLive(e.target.value, listSource, catById, payeeById));
+  // Kept on window so typing in the search box can redraw the totals and the list
+  // without rebuilding the page (which would take the cursor out of the box).
+  window.__financeView = { inRange, catById, payeeById };
+  updateFinanceFiltered();
+  document.getElementById('financeSearch').addEventListener('input', (e) => { financeSearchQuery = e.target.value; updateFinanceFiltered(); });
 }
+
+// Applies the category, store and search filters to the current range, then redraws
+// the Net/Income/Expenses/Transfers cards and the entry list from that same set.
+function updateFinanceFiltered() {
+  const view = window.__financeView;
+  if (!view || !document.getElementById('financeSummary')) return;
+  const { inRange, catById, payeeById } = view;
+  const q = financeSearchQuery.trim().toLowerCase();
+  const filtered = inRange.filter((e) =>
+    (!financeCategoryFilter || e.categoryId === financeCategoryFilter) &&
+    (!financeStoreFilter || e.storeId === financeStoreFilter) &&
+    financeMatchesSearch(e, q, catById, payeeById));
+
+  // Entries in categories flagged "Exclude from family totals" (e.g. personal allowances) still
+  // show up in the list below, but are left out of the Income/Expenses/Net figures.
+  const totalsSource = filtered.filter((e) => { const cat = catById[e.categoryId]; return !(cat && cat.excludeFromTotals); });
+  const income = totalsSource.filter((e) => e.type === 'income').reduce((s, e) => s + e.amount, 0);
+  const expense = totalsSource.filter((e) => e.type === 'expense').reduce((s, e) => s + e.amount, 0);
+  const transfer = totalsSource.filter((e) => e.type === 'transfer').reduce((s, e) => s + e.amount, 0);
+  const net = income - expense;
+
+  // "Costco · Groceries · November 2026" — so the Net card always says what it's a total of.
+  const parts = [];
+  if (financeStoreFilter) parts.push((payeeById[financeStoreFilter] || {}).name || 'Store');
+  if (financeCategoryFilter) parts.push((catById[financeCategoryFilter] || {}).name || 'Category');
+  if (q) parts.push(`"${financeSearchQuery.trim()}"`);
+  parts.push(getFinanceRangeLabel(financeRange));
+  const netLabel = parts.map(esc).join(' · ');
+
+  document.getElementById('financeSummary').innerHTML = `
+    <div class="finance-kpis">
+    <div class="card hero-card" style="background:${net >= 0 ? 'var(--sage-soft)' : 'var(--rose-soft)'}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <p class="label" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">Net · ${netLabel}</p>
+        <i class="ti ${net >= 0 ? 'ti-trending-up' : 'ti-trending-down'}" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}"></i>
+      </div>
+      <p class="big" style="color:${net >= 0 ? '#0F6E56' : 'var(--red)'}">${net >= 0 ? '+' : ''}${fmtMoney(net)}</p>
+    </div>
+    <div class="finance-stats">
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='income'?'outline:2px solid #0F6E56':''}" onclick="toggleFinanceTypeFilter('income')"><p class="label">Income</p><p class="value" style="color:#0F6E56;font-size:13px">${fmtMoney(income)}</p></div>
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='expense'?'outline:2px solid var(--red)':''}" onclick="toggleFinanceTypeFilter('expense')"><p class="label">Expenses</p><p class="value" style="color:var(--red);font-size:13px">${fmtMoney(expense)}</p></div>
+      <div class="stat" style="cursor:pointer;${financeTypeFilter==='transfer'?'outline:2px solid var(--gold)':''}" onclick="toggleFinanceTypeFilter('transfer')"><p class="label">Transfers</p><p class="value" style="font-size:13px">${fmtMoney(transfer)}</p></div>
+    </div>
+    </div>
+    ${financeTypeFilter ? `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Showing ${financeTypeFilter} only — tap it again to clear</p>` : `<p class="finance-hint" style="font-size:11px;color:var(--ink-soft);margin-bottom:14px">Tap Income, Expenses, or Transfers to filter the list</p>`}
+  `;
+
+  const listSource = financeTypeFilter ? filtered.filter((e) => e.type === financeTypeFilter) : filtered;
+  const anyFilter = financeCategoryFilter || financeStoreFilter || q;
+  const clearBtn = document.getElementById('financeClearFilters');
+  if (clearBtn) clearBtn.style.display = anyFilter ? '' : 'none';
+  document.getElementById('entryList').innerHTML = listSource.length
+    ? renderFinanceList(listSource, catById, payeeById)
+    : `<div class="empty-state">${anyFilter ? 'No matches.' : 'No entries in this range.'}</div>`;
+}
+
+function setFinanceCategoryFilter(id) { financeCategoryFilter = id || ''; renderFinanceMain(); }
+function setFinanceStoreFilter(id) { financeStoreFilter = id || ''; renderFinanceMain(); }
+function clearFinanceFilters() { financeCategoryFilter = ''; financeStoreFilter = ''; financeSearchQuery = ''; renderFinanceMain(); }
 
 function renderFinanceList(list, catById, payeeById) {
   if (!list.length) return '<div class="empty-state">No entries in this range.</div>';
@@ -853,19 +937,6 @@ function renderEntryRow(e, catById, payeeById, showDate) {
   `;
 }
 
-function filterEntriesLive(q, listSource, catById, payeeById) {
-  q = q.trim().toLowerCase();
-  const list = document.getElementById('entryList');
-  if (!q) { list.innerHTML = renderFinanceList(listSource, catById, payeeById); return; }
-  const matches = listSource.filter((e) => {
-    const cat = catById[e.categoryId] || {};
-    const payee = payeeById[e.storeId] || {};
-    const hay = `${cat.name || ''} ${payee.name || ''} ${e.description || ''} ${e.amount}`.toLowerCase();
-    return hay.includes(q);
-  });
-  list.innerHTML = matches.length ? renderFinanceList(matches, catById, payeeById) : '<div class="empty-state">No matches.</div>';
-}
-
 function goCategories() { currentView = 'categories'; route(); }
 function goReports() { currentView = 'reports'; route(); }
 let foodBudgetEditing = false;
@@ -970,7 +1041,7 @@ async function saveGroceryWeeklyBudget() {
   foodBudgetEditing = false;
   renderFoodBudget();
 }
-function goMain() { currentView = 'main'; duplicateSource = null; route(); }
+function goMain() { currentView = 'main'; duplicateSource = null; entryRecurringDraft = null; route(); }
 
 // ---------- Finance Reports ----------
 let reportsCategoryFilter = []; // array of category IDs; empty = all
@@ -2155,6 +2226,13 @@ let entryReceiptFile = null; // the picked File, kept only for its name when the
 let entryReceiptLink = null; // resolved {url, viewUrl, isImage, column} once uploaded, or the existing one being kept
 let entryReceiptUploading = false;
 let entryReceiptUploadError = null;
+// "Make this recurring" on a brand-new entry. Lives outside the DOM so a detour to add
+// a category or store (which redraws the form) doesn't untick it or lose the schedule.
+// Reset whenever a different form opens — same rule as the receipt draft above.
+let entryRecurringDraft = null;
+function freshEntryRecurringDraft() {
+  return { on: false, repeatType: 'monthly', n: 30, weekday: null, interval: 1, day: null, dayTouched: false };
+}
 
 // Reusable live search-filter for any picker modal's list — just show/hide rows by
 // whether their text matches, so it works the same way everywhere without needing a
@@ -2358,13 +2436,21 @@ async function renderAddEntry() {
   const defaultCategoryId = src && src.categoryId ? src.categoryId : (src ? null : (categories.find((c) => c.name.trim().toLowerCase() === 'groceries') || {}).id || null);
 
   const formKey = src && src.__editId ? src.__editId : (src ? 'duplicate-' + (src.id || '') : 'new');
+  // Recurring is set up from new entries (including duplicates) only. Existing
+  // schedules are edited in Settings → Recurring entries, never from an entry.
+  const isEditingEntry = !!(src && src.__editId);
   if (entryReceiptFormFor !== formKey) {
     entryReceiptFormFor = formKey;
+    // A detour to add a category/store comes back as a different form key, but it's the
+    // same entry — keep the recurring choice it left with (see snapshotEntryFormDraft).
+    if (!(entryRecurringDraft && entryRecurringDraft.keepThroughDetour)) entryRecurringDraft = freshEntryRecurringDraft();
+    entryRecurringDraft.keepThroughDetour = false;
     entryReceiptDraft = null;
     entryReceiptFile = null;
     entryReceiptLink = (src && src.__editId && src.receiptLink) ? src.receiptLink : null;
     entryReceiptUploading = false;
   }
+  if (!entryRecurringDraft) entryRecurringDraft = freshEntryRecurringDraft();
 
   const catOptions = categories.map((c) => `<option value="${c.id}" ${defaultCategoryId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const payeeOptions = payees.map((p) => `<option value="${p.id}" ${src && src.storeId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -2374,7 +2460,7 @@ async function renderAddEntry() {
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit entry' : 'Add entry'}</span></div>
 
-    <div class="field"><label class="field-label">Date</label><input type="date" id="f_date" value="${src && src.date ? src.date : todayStr()}"></div>
+    <div class="field"><label class="field-label">Date</label><input type="date" id="f_date" value="${src && src.date ? src.date : todayStr()}" onchange="onEntryDateChangeForRecurring()"></div>
 
     <div class="field"><label class="field-label">Category</label>
       <button type="button" class="btn" style="text-align:left" onclick="openCategoryPickerModal()"><span id="f_categoryButtonContent">Select…</span></button>
@@ -2402,6 +2488,8 @@ async function renderAddEntry() {
     <label class="field-label">Receipt</label>
     <div class="card tight" style="background:var(--surface);margin-bottom:20px" id="entryReceiptArea">${renderEntryReceiptSection()}</div>
 
+    ${isEditingEntry ? '' : `<div class="card tight" style="background:var(--surface);margin-bottom:20px" id="entryRecurringArea"></div>`}
+
     <button class="btn btn-primary" id="saveEntryBtn" onclick="saveEntry()">Save entry</button>
   `;
 
@@ -2420,6 +2508,107 @@ async function renderAddEntry() {
   if (src && src.type === 'transfer') selectTransferDirection(src.transferDirection || 'out');
   updateStoreButtonDisplay();
   updateCategoryButtonDisplay();
+  if (!isEditingEntry) renderEntryRecurringSection();
+}
+
+// ---------- "Make this recurring" (new entries only) ----------
+// Defaults come from the entry itself: monthly, on the entry's day of the month. The
+// entry being saved counts as the first occurrence; the schedule picks up after it.
+function entryRecurringDefaultsFromDate() {
+  const d = entryRecurringDraft;
+  const dateStr = (document.getElementById('f_date') || {}).value || todayStr();
+  const dt = new Date(dateStr + 'T00:00:00');
+  if (!d.dayTouched) { d.day = dt.getDate(); d.weekday = dt.getDay(); }
+  return dateStr;
+}
+function onEntryDateChangeForRecurring() {
+  if (entryRecurringDraft && entryRecurringDraft.on) renderEntryRecurringSection();
+}
+function toggleEntryRecurring(on) {
+  readEntryRecurringFields();
+  entryRecurringDraft.on = on;
+  renderEntryRecurringSection();
+}
+function setEntryRecurringType(type) {
+  readEntryRecurringFields();
+  entryRecurringDraft.repeatType = type;
+  renderEntryRecurringSection();
+}
+// Pulls whatever is typed in the schedule fields into the draft (they're redrawn often).
+function readEntryRecurringFields() {
+  const d = entryRecurringDraft;
+  if (!d) return;
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value : null; };
+  if (v('fr_n') !== null) d.n = Math.max(1, parseInt(v('fr_n')) || 30);
+  if (v('fr_weekday') !== null) d.weekday = parseInt(v('fr_weekday'));
+  if (v('fr_interval') !== null) d.interval = parseInt(v('fr_interval')) || 1;
+  if (v('fr_day') !== null) d.day = Math.min(31, Math.max(1, parseInt(v('fr_day')) || 1));
+}
+function onEntryRecurringFieldChange(touchedDay) {
+  if (touchedDay) entryRecurringDraft.dayTouched = true;
+  readEntryRecurringFields();
+  updateEntryRecurringNote();
+}
+// The rule the form would create, minus the bits that come from the entry itself.
+function entryRecurringScheduleFor(dateStr) {
+  const d = entryRecurringDraft;
+  const rule = { repeatType: d.repeatType, startDate: dateStr };
+  if (d.repeatType === 'everyNDays') rule.n = d.n || 30;
+  if (d.repeatType === 'weekly') { rule.weekday = d.weekday; rule.interval = d.interval || 1; }
+  if (d.repeatType === 'monthly') rule.day = d.day || 1;
+  return rule;
+}
+// The first occurrence AFTER this entry that's still in the future. An entry dated in
+// the past doesn't back-fill the bills in between — those may already be logged by hand.
+function entryRecurringNextDate(rule, dateStr) {
+  const today = todayStr();
+  let last = dateStr;
+  let next = nextOccurrence(rule, last);
+  let guard = 0;
+  while (next && next <= today && guard++ < 1000) { last = next; next = nextOccurrence(rule, last); }
+  return { next, lastGenerated: last };
+}
+function updateEntryRecurringNote() {
+  const note = document.getElementById('entryRecurringNote');
+  if (!note) return;
+  const dateStr = (document.getElementById('f_date') || {}).value || todayStr();
+  const rule = entryRecurringScheduleFor(dateStr);
+  const { next, lastGenerated } = entryRecurringNextDate(rule, dateStr);
+  const skipped = lastGenerated !== dateStr ? ' Bills between this date and today aren\'t added, in case you already logged them.' : '';
+  note.innerHTML = `<i class="ti ti-calendar" style="margin-top:2px"></i><span>This entry counts as the first one. Next: <b>${next ? fmtDateFull(next) : '—'}</b>, then ${esc(recurringScheduleLabel(rule).replace(/^./, (c) => c.toLowerCase()))}.${skipped} Everything above (except the receipt) is copied to the schedule. Edit it later in Settings → Recurring entries.</span>`;
+}
+function renderEntryRecurringSection() {
+  const area = document.getElementById('entryRecurringArea');
+  if (!area || !entryRecurringDraft) return;
+  const d = entryRecurringDraft;
+  entryRecurringDefaultsFromDate();
+  const btn = document.getElementById('saveEntryBtn');
+  if (btn && !btn.disabled) btn.textContent = d.on ? 'Save entry and schedule' : 'Save entry';
+  const box = `<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;margin:0">
+      <input type="checkbox" style="width:18px;height:18px;flex-shrink:0;accent-color:var(--ink)" ${d.on ? 'checked' : ''} onchange="toggleEntryRecurring(this.checked)">
+      <i class="ti ti-repeat" style="color:var(--ink-soft)"></i> Make this recurring
+    </label>`;
+  if (!d.on) { area.innerHTML = box; return; }
+  const types = [['everyNDays', 'Every N days'], ['weekly', 'Weekly'], ['monthly', 'Monthly']];
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  let fields = '';
+  if (d.repeatType === 'everyNDays') {
+    fields = `<label class="field-label">Every how many days?</label><input type="number" min="1" id="fr_n" value="${d.n}" oninput="onEntryRecurringFieldChange()">`;
+  } else if (d.repeatType === 'weekly') {
+    fields = `<div class="field-row">
+      <div><label class="field-label">Day</label><select id="fr_weekday" onchange="onEntryRecurringFieldChange(true)">${days.map((n, i) => `<option value="${i}" ${d.weekday === i ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      <div><label class="field-label">Interval</label><select id="fr_interval" onchange="onEntryRecurringFieldChange()">${[1,2,3,4].map((k) => `<option value="${k}" ${d.interval === k ? 'selected' : ''}>${k === 1 ? 'Every week' : `Every ${k} weeks`}</option>`).join('')}</select></div>
+    </div>`;
+  } else {
+    fields = `<label class="field-label">Day of month</label><input type="number" min="1" max="31" id="fr_day" value="${d.day}" oninput="onEntryRecurringFieldChange(true)">`;
+  }
+  area.innerHTML = `${box}
+    <div style="margin-top:12px">
+      <div class="btn-toggle-row" style="margin-bottom:10px">${types.map(([t, label]) => `<button type="button" class="btn-toggle ${d.repeatType === t ? 'active-neutral' : ''}" onclick="setEntryRecurringType('${t}')">${label}</button>`).join('')}</div>
+      <div style="margin-bottom:10px">${fields}</div>
+      <div id="entryRecurringNote" style="font-size:12px;color:var(--ink-soft);display:flex;gap:6px;align-items:flex-start"></div>
+    </div>`;
+  updateEntryRecurringNote();
 }
 
 // Captures every field currently entered on the Add/Edit entry form into duplicateSource,
@@ -2430,6 +2619,7 @@ async function renderAddEntry() {
 function snapshotEntryFormDraft() {
   const dateEl = document.getElementById('f_date');
   if (!dateEl) return;
+  if (entryRecurringDraft) { readEntryRecurringFields(); entryRecurringDraft.keepThroughDetour = true; }
   const carEl = document.getElementById('f_car');
   const projectEl = document.getElementById('f_project');
   duplicateSource = {
@@ -2884,10 +3074,40 @@ async function saveEntry() {
     receiptLink: entryReceiptLink || null,
     synced: false
   };
+  // "Make this recurring": a schedule built from this exact entry — every field, the
+  // car / project / split and the description included. This entry is occurrence #1,
+  // so lastGeneratedDate starts at it (or at the latest date already passed, for a
+  // backdated entry) and nothing gets logged twice.
+  const isNewEntry = !(duplicateSource && duplicateSource.__editId);
+  let recurringRule = null;
+  if (isNewEntry && entryRecurringDraft && entryRecurringDraft.on && document.getElementById('entryRecurringArea')) {
+    readEntryRecurringFields();
+    const schedule = entryRecurringScheduleFor(date);
+    const { lastGenerated } = entryRecurringNextDate(schedule, date);
+    recurringRule = {
+      id: uid(), ...schedule, lastGeneratedDate: lastGenerated,
+      categoryId, categoryName: entry.categoryName,
+      storeId: storeId || null, storeName: entry.storeName,
+      amount, description, type,
+      transferDirection: entry.transferDirection,
+      carId: entry.carId || null, carName: entry.carId ? entry.carName : (entry.carSplit && entry.carSplit.length ? entry.carName : ''),
+      projectId: entry.projectId || null, projectName: entry.projectName || '',
+      carSplit: entry.carSplit && entry.carSplit.length ? entry.carSplit : null,
+      createdFromEntryId: entry.id,
+      synced: false
+    };
+    // Deliberately NOT tagging this entry with recurringId: the server skips notifying
+    // for anything carrying one (it treats those as auto-generated), and this first
+    // entry was added by hand — the other person should still hear about it.
+  }
   await DB.put('entries', entry);
+  if (recurringRule) {
+    await DB.put('recurring', recurringRule);
+    Sync.pushEntry('Recurring', recurringRule).then(() => DB.put('recurring', recurringRule));
+  }
   if (btn) { btn.disabled = true; btn.textContent = 'Saving to Sheet…'; }
   const pushed = await Sync.pushEntry('Finance', entry);
-  duplicateSource = null; carSplitDraft = []; window.__transferDirection = null;
+  duplicateSource = null; carSplitDraft = []; window.__transferDirection = null; entryRecurringDraft = null;
   entryReceiptFormFor = undefined; entryReceiptDraft = null; entryReceiptFile = null; entryReceiptLink = null; entryReceiptUploading = false; entryReceiptUploadError = null;
   if (!pushed) {
     // The entry IS safely saved on this device either way — nothing is lost — but the
@@ -4947,8 +5167,8 @@ async function processRecurringEntries() {
       const entry = {
         id: uid(), date: cursor, categoryId: rule.categoryId, categoryName: rule.categoryName,
         storeId: rule.storeId, storeName: rule.storeName, amount: rule.amount, description: rule.description,
-        type: rule.type, carId: null, projectId: null, carName: '', projectName: '',
-        transferDirection: rule.type === 'transfer' ? 'out' : null, carSplit: null,
+        type: rule.type, ...recurringEntryTags(rule),
+        transferDirection: rule.type === 'transfer' ? (rule.transferDirection || 'out') : null,
         recurringId: rule.id, synced: false
       };
       await DB.put('entries', entry);
@@ -4963,6 +5183,34 @@ async function processRecurringEntries() {
       Sync.pushEntry('Recurring', rule).then(() => DB.put('recurring', rule));
     }
   }
+}
+
+// The car / project / car split a rule carries onto every entry it generates, in the
+// exact shape a hand-added entry has — so the car and project reports pick recurring
+// bills up the same way. Must match recurringEntryTags_() in the Apps Script, which
+// generates these too when the app is closed. A split is re-scaled to the rule's amount
+// as a safety net, so the per-car shares always add up to what was actually charged.
+function recurringEntryTags(rule) {
+  const tags = { carId: null, projectId: null, carName: '', projectName: '', carSplit: null };
+  if (Array.isArray(rule.carSplit) && rule.carSplit.length) {
+    const total = rule.carSplit.reduce((s, x) => s + (+x.amount || 0), 0);
+    const amount = +rule.amount || 0;
+    let split = rule.carSplit.map((x) => ({ carId: x.carId, amount: +x.amount || 0 }));
+    if (Math.abs(total - amount) > 0.005) {
+      split = total > 0
+        ? split.map((x) => ({ carId: x.carId, amount: +((x.amount / total) * amount).toFixed(2) }))
+        : split.map((x) => ({ carId: x.carId, amount: +(amount / split.length).toFixed(2) }));
+    }
+    tags.carSplit = split;
+    tags.carName = rule.carName || '';
+  } else if (rule.carId) {
+    tags.carId = rule.carId;
+    tags.carName = rule.carName || '';
+  } else if (rule.projectId) {
+    tags.projectId = rule.projectId;
+    tags.projectName = rule.projectName || '';
+  }
+  return tags;
 }
 
 function recurringScheduleLabel(rule) {
@@ -4982,7 +5230,7 @@ async function renderRecurringManager() {
     <button class="btn btn-primary" style="margin-bottom:14px" onclick="openRecurringModal()"><i class="ti ti-plus"></i> Add recurring entry</button>
     <div>${rules.length ? rules.map((r) => `
       <div class="list-row" onclick="openRecurringModal('${r.id}')">
-        <div><span style="font-weight:600">${esc(r.categoryName || '')}${r.storeName ? ' · ' + esc(r.storeName) : ''}</span><div class="entry-desc">${esc(recurringScheduleLabel(r))}</div></div>
+        <div><span style="font-weight:600">${esc(r.categoryName || '')}${r.storeName ? ' · ' + esc(r.storeName) : ''}</span><div class="entry-desc">${esc(recurringScheduleLabel(r))}${r.carName || r.projectName ? ` · <i class="ti ${r.projectName ? 'ti-tools' : 'ti-car'}" style="font-size:12px;vertical-align:-1px"></i> ${esc(r.carName || r.projectName)}` : ''}</div></div>
         <span style="font-weight:600">${fmtMoney(r.amount)}</span>
       </div>
     `).join('') : '<div class="empty-state">No recurring entries yet.</div>'}</div>
@@ -4995,17 +5243,22 @@ async function openRecurringModal(editId) {
   const existing = editId ? await DB.get('recurring', editId) : null;
   window.__recurringEditId = editId || null;
   window.__recurringRepeatType = existing ? existing.repeatType : 'monthly';
+  window.__recCategories = categories;
+  window.__recCars = await DB.getAll('cars');
+  window.__recProjects = (await DB.getAll('projects')).filter((p) => !p.hidden);
+  window.__recExisting = existing;
 
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
     <p style="font-family:'Fraunces',serif;font-size:17px;font-weight:600;margin-bottom:16px">${existing ? 'Edit' : 'Add'} recurring entry</p>
     <div class="field"><label class="field-label">Category</label>
-      <select id="rec_category">${categories.map((c) => `<option value="${c.id}" ${existing && existing.categoryId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
+      <select id="rec_category" onchange="onRecurringCategoryChange()">${categories.map((c) => `<option value="${c.id}" ${existing && existing.categoryId===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select>
     </div>
+    <div id="recConditionalArea"></div>
     <div class="field"><label class="field-label">Store</label>
       <select id="rec_store"><option value="">None</option>${payees.map((p) => `<option value="${p.id}" ${existing && existing.storeId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
     </div>
-    <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="rec_amount" value="${existing ? existing.amount : ''}"></div>
+    <div class="field"><label class="field-label">Amount</label><input type="number" step="0.01" id="rec_amount" value="${existing ? existing.amount : ''}" oninput="onRecurringAmountChange()"></div>
     <div class="field"><label class="field-label">Description</label><input id="rec_description" value="${existing ? esc(existing.description||'') : ''}"></div>
 
     <label class="field-label">Repeats</label>
@@ -5023,7 +5276,75 @@ async function openRecurringModal(editId) {
   `;
   const idx = { everyNDays: 1, weekly: 2, monthly: 3 }[window.__recurringRepeatType];
   selectRecurringRepeat(document.querySelector(`#recRepeatToggle button:nth-child(${idx})`), window.__recurringRepeatType, existing);
+  onRecurringCategoryChange(true);
   openModal();
+}
+
+// The recurring form's version of the Add entry conditional field: a car dropdown, a
+// project dropdown, or the car-split chips, depending on the category. On first open
+// it restores what the rule was saved with; after a category change it starts fresh.
+let recCarSplitDraft = [];
+function onRecurringCategoryChange(initial) {
+  const area = document.getElementById('recConditionalArea');
+  if (!area) return;
+  const catId = document.getElementById('rec_category').value;
+  const cat = (window.__recCategories || []).find((c) => c.id === catId) || {};
+  const saved = initial && window.__recExisting && window.__recExisting.categoryId === catId ? window.__recExisting : null;
+  const cars = window.__recCars || [];
+  recCarSplitDraft = [];
+  if (cat.conditionalField === 'car') {
+    const pre = saved && saved.carId ? saved.carId : '';
+    const missing = pre && !cars.some((c) => c.id === pre) ? `<option value="${pre}" selected>${esc(saved.carName || 'Unknown car')}</option>` : '';
+    area.innerHTML = `<div class="card tight" style="background:var(--surface);margin-bottom:14px"><label class="field-label"><i class="ti ti-car"></i> Car</label><select id="rec_car">${missing}${cars.map((c) => `<option value="${c.id}" ${pre === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>`;
+  } else if (cat.conditionalField === 'project') {
+    const projects = window.__recProjects || [];
+    const pre = saved && saved.projectId ? saved.projectId : '';
+    const missing = pre && !projects.some((p) => p.id === pre) ? `<option value="${pre}" selected>${esc(saved.projectName || 'Unknown project')}</option>` : '';
+    area.innerHTML = `<div class="card tight" style="background:var(--surface);margin-bottom:14px"><label class="field-label"><i class="ti ti-tools"></i> Project</label><select id="rec_project"><option value="">None</option>${missing}${projects.map((p) => `<option value="${p.id}" ${pre === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+  } else if (cat.conditionalField === 'carSplit') {
+    const savedSplit = saved && Array.isArray(saved.carSplit) ? saved.carSplit : [];
+    recCarSplitDraft = cars.map((c) => {
+      const x = savedSplit.find((y) => y.carId === c.id);
+      return { carId: c.id, name: c.name, checked: !!x, amount: x ? (+x.amount || 0) : 0 };
+    });
+    area.innerHTML = renderRecCarSplitUI();
+  } else {
+    area.innerHTML = '';
+  }
+}
+function renderRecCarSplitUI() {
+  return `<div class="card tight" style="background:var(--surface);margin-bottom:14px">
+    <label class="field-label"><i class="ti ti-car"></i> Cars covered</label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      ${recCarSplitDraft.map((c, i) => `<button type="button" class="chip ${c.checked ? 'active' : ''}" onclick="toggleRecCarSplit(${i})">${esc(c.name)}${c.checked ? ' ✓' : ''}</button>`).join('')}
+    </div>
+    <div>${recCarSplitDraft.filter((c) => c.checked).map((c) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:13px">${esc(c.name)}</span><input type="number" step="0.01" style="width:100px;text-align:right" onchange="updateRecCarSplitAmount('${c.carId}', this.value)" value="${c.amount}"></div>`).join('')}</div>
+  </div>`;
+}
+function splitRecEvenly() {
+  const checked = recCarSplitDraft.filter((c) => c.checked);
+  const total = parseFloat(document.getElementById('rec_amount').value) || 0;
+  checked.forEach((c) => (c.amount = +(total / checked.length).toFixed(2)));
+}
+function toggleRecCarSplit(i) {
+  recCarSplitDraft[i].checked = !recCarSplitDraft[i].checked;
+  if (recCarSplitDraft.some((c) => c.checked)) splitRecEvenly();
+  document.getElementById('recConditionalArea').innerHTML = renderRecCarSplitUI();
+}
+function updateRecCarSplitAmount(carId, val) {
+  const c = recCarSplitDraft.find((x) => x.carId === carId);
+  if (c) c.amount = parseFloat(val) || 0;
+}
+// Changing the amount keeps a custom split's proportions (e.g. 60/40) and just scales it;
+// an even split stays even.
+function onRecurringAmountChange() {
+  const checked = recCarSplitDraft.filter((c) => c.checked);
+  if (!checked.length) return;
+  const total = parseFloat(document.getElementById('rec_amount').value) || 0;
+  const prev = checked.reduce((s, c) => s + c.amount, 0);
+  if (prev > 0) checked.forEach((c) => (c.amount = +((c.amount / prev) * total).toFixed(2)));
+  else splitRecEvenly();
+  document.getElementById('recConditionalArea').innerHTML = renderRecCarSplitUI();
 }
 function selectRecurringRepeat(btn, type, existing) {
   document.querySelectorAll('#recRepeatToggle .btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
@@ -5066,6 +5387,27 @@ async function saveRecurring() {
   rule.amount = amount;
   rule.description = document.getElementById('rec_description').value.trim();
   rule.type = cat.type || 'expense';
+
+  // Car / project / split, same fields a hand-added entry carries. Cleared when the
+  // category no longer asks for them, so switching category never leaves a stale tag.
+  const cars = window.__recCars || [];
+  const carEl = document.getElementById('rec_car');
+  const projectEl = document.getElementById('rec_project');
+  rule.carId = null; rule.carName = ''; rule.projectId = null; rule.projectName = ''; rule.carSplit = null;
+  if (cat.conditionalField === 'car' && carEl && carEl.value) {
+    rule.carId = carEl.value;
+    rule.carName = (cars.find((c) => c.id === carEl.value) || {}).name || (window.__recExisting && window.__recExisting.carName) || '';
+  } else if (cat.conditionalField === 'project' && projectEl && projectEl.value) {
+    rule.projectId = projectEl.value;
+    rule.projectName = ((window.__recProjects || []).find((p) => p.id === projectEl.value) || {}).name || (window.__recExisting && window.__recExisting.projectName) || '';
+  } else if (cat.conditionalField === 'carSplit') {
+    const checked = recCarSplitDraft.filter((c) => c.checked);
+    if (!checked.length) { alert('Pick at least one car this covers.'); return; }
+    const splitTotal = checked.reduce((s, c) => s + c.amount, 0);
+    if (Math.abs(splitTotal - amount) > 0.01 && !confirm(`The car amounts add up to ${fmtMoney(splitTotal)}, not ${fmtMoney(amount)}. Save anyway? Each bill will scale them to match the amount.`)) return;
+    rule.carSplit = checked.map((c) => ({ carId: c.carId, amount: c.amount }));
+    rule.carName = checked.map((c) => c.name).join(' & '); // same format as a hand-added split entry
+  }
   rule.repeatType = window.__recurringRepeatType;
   rule.startDate = document.getElementById('rec_start').value || todayStr();
   if (rule.repeatType === 'everyNDays') rule.n = parseInt(document.getElementById('rec_n').value) || 30;
@@ -5076,7 +5418,7 @@ async function saveRecurring() {
   await DB.put('recurring', rule);
   Sync.pushEntry('Recurring', rule).then(() => DB.put('recurring', rule));
   closeModal();
-  window.__recurringEditId = null;
+  window.__recurringEditId = null; window.__recExisting = null; recCarSplitDraft = [];
   await processRecurringEntries(); // catch up immediately if the start date is already due
   renderRecurringManager();
 }

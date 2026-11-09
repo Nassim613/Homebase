@@ -93,6 +93,11 @@ input[type="checkbox"] {
 .chip { font-size: 12px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-raised); white-space: nowrap; cursor: pointer; }
 .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 
+/* Finance: category + store dropdowns under the search bar (beside it on desktop) */
+.finance-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.finance-filters select { flex: 1 1 0; min-width: 0; padding: 9px 11px; font-size: 14px; }
+.finance-filters .chip { flex-shrink: 0; }
+
 .section-title { font-size: 12px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 8px; display: flex; justify-content: space-between; align-items: baseline; cursor: pointer; }
 .section-title .amt { font-size: 12px; text-transform: none; letter-spacing: 0; }
 .section-title .amt.neg { color: var(--red); }
@@ -278,6 +283,9 @@ kbd { font-family: inherit; font-size: 11px; color: var(--ink-soft); border: 1px
   .finance-top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 18px; }
   .finance-top .search-box { flex: 0 1 380px; margin-bottom: 0; }
   .finance-top .chip-row { margin-bottom: 0; }
+  .finance-top .finance-filters { margin-bottom: 0; flex: 0 1 auto; }
+  .finance-top .finance-filters select { flex: 0 0 auto; width: 190px; }
+  .finance-top .chip-row { flex-basis: 100%; }
   .finance-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 10px; }
   .finance-kpis .hero-card { margin: 0; padding: 18px 20px; }
   .finance-kpis .hero-card .label { font-size: 13px; }

@@ -44,9 +44,12 @@
       </div>
     </header>
 
+    <!-- A backdrop only closes when the press STARTS and ends on it. Dragging to
+         select text in a field and letting go past the dialog's edge fires a click
+         on the backdrop; that used to close the form and lose the entry. -->
     <!-- Desktop only: forms open in this centred dialog. It sits before <main> so a
          form's element ids win any lookup over the page drawn behind it. -->
-    <div id="formDialog" class="form-dialog-backdrop" style="display:none" onclick="if(event.target===this) closeFormDialog()">
+    <div id="formDialog" class="form-dialog-backdrop" style="display:none" onpointerdown="this.__downOnSelf = event.target===this" onclick="if(event.target===this && this.__downOnSelf) closeFormDialog(); this.__downOnSelf = false">
       <div class="form-dialog" role="dialog" aria-modal="true" aria-label="Form">
         <button class="form-dialog-close" onclick="closeFormDialog()" aria-label="Close"><i class="ti ti-x"></i></button>
         <div id="formDialogBody"></div>
@@ -115,7 +118,7 @@
       </div>
     </div>
 
-    <div id="modalOverlay" class="modal-backdrop" style="display:none" onclick="if(event.target===this) closeModal()">
+    <div id="modalOverlay" class="modal-backdrop" style="display:none" onpointerdown="this.__downOnSelf = event.target===this" onclick="if(event.target===this && this.__downOnSelf) closeModal(); this.__downOnSelf = false">
       <div class="modal-sheet" id="modalSheet"></div>
     </div>
   </div>
