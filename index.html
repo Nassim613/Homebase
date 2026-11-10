@@ -38,10 +38,6 @@
           <span id="manualRefreshStatus" style="position:absolute;top:34px;right:0;font-size:11px;color:#0F6E56;white-space:nowrap;opacity:0;transition:opacity 0.3s;pointer-events:none"></span>
         </div>
       </div>
-      <!-- Desktop only: the page's main action, in place of the floating + button -->
-      <div class="header-actions">
-        <button class="btn btn-primary header-add" id="headerAddBtn" style="display:none" onclick="headerAddClick()"><i class="ti ti-plus"></i> <span id="headerAddLabel">Add</span></button>
-      </div>
     </header>
 
     <!-- A backdrop only closes when the press STARTS and ends on it. Dragging to
@@ -77,6 +73,9 @@
     <nav class="tabs">
       <p class="sidebar-title"><span class="sidebar-mark"><i class="ti ti-home"></i></span>Homebase</p>
       <button class="sidebar-search" onclick="openGlobalSearch()"><i class="ti ti-search"></i><span class="label">Search everything</span><kbd>Ctrl K</kbd></button>
+      <!-- Desktop only: the page's main action, in place of the floating + button. It sits
+           in the sidebar so it's still there when the page is scrolled down. -->
+      <button class="sidebar-add" id="headerAddBtn" style="display:none" onclick="headerAddClick()"><i class="ti ti-plus"></i><span class="label" id="headerAddLabel">Add</span></button>
       <p class="nav-group">Money</p>
       <button class="bar-item sidebar-item active" data-tab="finance"><i class="ti ti-report-money"></i><span class="label">Finance</span></button>
       <p class="nav-group">Family</p>

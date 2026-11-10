@@ -405,7 +405,7 @@ function openDetail() {
   showDetailPanel(frag, 'sheet');
 }
 
-// Desktop header button — the floating + button's job, labelled for the section.
+// Desktop sidebar button — the floating + button's job, labelled for the section.
 const HEADER_ADD_LABELS = { finance: 'Add entry', jazz: 'Add issue', noah: 'Add', weight: 'Log weight', garage: 'Add vehicle' };
 function syncHeaderAdd(view) {
   const btn = document.getElementById('headerAddBtn');
@@ -428,7 +428,7 @@ function placeSyncStatus() {
   const header = document.getElementById('pageHeader');
   if (!group || !slot || !header) return;
   if (isDesktopLayout()) { if (group.parentNode !== slot) slot.appendChild(group); }
-  else if (group.parentNode !== header) header.insertBefore(group, header.querySelector('.header-actions'));
+  else if (group.parentNode !== header) header.appendChild(group);
 }
 placeSyncStatus();
 // Crossing the desktop breakpoint redraws the screen in the other layout — except mid-form,

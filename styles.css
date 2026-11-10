@@ -221,7 +221,7 @@ nav.tabs button:not(.bar-item) { display: none; }
 /* ===== Hooks added for the desktop layout. On a phone they only reproduce what the
    inline styles used to do, so the phone layout is unchanged. ===== */
 .finance-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-.header-actions, .sidebar-footer, .sidebar-mark { display: none; }
+.sidebar-footer, .sidebar-mark { display: none; }
 kbd { font-family: inherit; font-size: 11px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; background: var(--surface-raised); }
 
 /* ===== Desktop layout — only applies above 768px, phone is untouched.
@@ -236,8 +236,6 @@ kbd { font-family: inherit; font-size: 11px; color: var(--ink-soft); border: 1px
   header.top .eyebrow { font-size: 13px; margin-bottom: 4px; }
   header.top h1 { font-family: 'Fraunces', Georgia, serif; font-size: 34px; font-weight: 600; letter-spacing: -0.01em; }
   #signedInAs { display: none; }
-  .header-actions { display: flex; align-items: center; gap: 10px; }
-  .header-add { width: auto; display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; font-size: 14px; }
   main { padding-bottom: 60px; }
   .fab { display: none !important; }
 
@@ -263,6 +261,10 @@ kbd { font-family: inherit; font-size: 11px; color: var(--ink-soft); border: 1px
   nav.tabs .sidebar-search:hover { border-color: var(--ink-soft); background: var(--surface); }
   nav.tabs .sidebar-search .label { flex: 1; text-align: left; font-weight: 400; }
   nav.tabs .sidebar-search i { font-size: 16px; }
+  /* The section's Add button, always in reach however far the page is scrolled */
+  nav.tabs .sidebar-add { justify-content: center; gap: 8px; background: var(--ink); color: #fff; margin: 0 0 4px; height: 40px; }
+  nav.tabs .sidebar-add:hover { background: #3D3756; }
+  nav.tabs .sidebar-add .label { font-weight: 600; }
   /* Settings and who's signed in sit at the bottom, away from the sections */
   nav.tabs .nav-settings { margin-top: auto; }
   .sidebar-footer { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--line); margin-top: 8px; padding: 12px 6px 0; }
