@@ -4173,42 +4173,94 @@ async function selectJazzReportType(typeId) {
 
 // ============ WEIGHT MODULE (family) ============
 let weightPerson = 'Nassim'; // real names used directly, since multiple people may use the same app/device
-let weightRange = '6m';
+// "Change since" period — drives the delta card AND the chart, so there's one set of controls.
+// '1m' | '3m' | '6m' | 'ytd' | '1y' | 'all' | 'pick'
+let weightSince = 'ytd';
+let weightPickDate = null; // YYYY-MM-DD, only used when weightSince === 'pick'
 
 let weightChartInstance = null;
 
 function goWeightMain() { currentView = 'main'; route(); }
 function selectWeightPerson(person) { weightPerson = person; renderWeightMain(); }
-function setWeightRange(r) { weightRange = r; renderWeightMain(); }
+function setWeightSince(s) { weightSince = s; renderWeightMain(); }
+function setWeightPickDate(v) { if (v) { weightPickDate = v; renderWeightMain(); } }
+
+function weightIsoLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function weightMonthsAgo(n) { const d = new Date(); d.setMonth(d.getMonth() - n); return weightIsoLocal(d); }
+
+// The date the chosen period starts on, as YYYY-MM-DD (null = from the very first entry)
+function weightSinceTarget() {
+  switch (weightSince) {
+    case '1m': return weightMonthsAgo(1);
+    case '3m': return weightMonthsAgo(3);
+    case '6m': return weightMonthsAgo(6);
+    case 'ytd': return `${new Date().getFullYear()}-01-01`;
+    case '1y': return weightMonthsAgo(12);
+    case 'pick': return weightPickDate || weightMonthsAgo(3);
+    default: return null;
+  }
+}
+
+function fmtWeightDelta(d) { return `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} lbs`; }
+function weightDeltaColor(d) { return d <= 0 ? '#0F6E56' : 'var(--red)'; }
 
 async function renderWeightMain() {
   const all = (await getActiveWeightEntries()).filter((w) => w.subject === weightPerson.toLowerCase());
-  const sorted = [...all].sort((a, b) => b.date.localeCompare(a.date));
+  const asc = [...all].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...asc].reverse();
   const latest = sorted[0];
   const prev = sorted[1];
   const diff = latest && prev ? +(latest.value - prev.value).toFixed(1) : null;
-  const inRange = all.filter((w) => withinRange(w.date, weightRange)).sort((a, b) => a.date.localeCompare(b.date));
+
+  // Baseline = the weigh-in closest to the chosen date (ties go to the earlier one),
+  // so "Since Jan 1" uses Jan 4 rather than a Dec 20 reading from two weeks before.
+  const target = weightSinceTarget();
+  let base = null;
+  if (asc.length) {
+    if (!target) base = asc[0];
+    else {
+      const t = new Date(target).getTime();
+      base = asc.reduce((best, w) => Math.abs(new Date(w.date) - t) < Math.abs(new Date(best.date) - t) ? w : best, asc[0]);
+    }
+  }
+  const baseGapDays = base && target ? Math.round(Math.abs(new Date(base.date) - new Date(target)) / 86400000) : 0;
+  const delta = base && latest && base !== latest ? +(latest.value - base.value).toFixed(1) : null;
+  const days = base && latest ? Math.round((new Date(latest.date) - new Date(base.date)) / 86400000) : 0;
+  const weeks = days / 7;
+  const inRange = base ? asc.filter((w) => w.date >= base.date) : [];
+
+  const sinceChips = [['1m', '1M'], ['3m', '3M'], ['6m', '6M'], ['ytd', 'Since Jan 1'], ['1y', '1Y'], ['all', 'All'], ['pick', 'Pick date']];
 
   $main.innerHTML = `
     <div class="btn-toggle-row">
       <button class="btn-toggle ${weightPerson==='Nassim'?'active-neutral':''}" onclick="selectWeightPerson('Nassim')">Nassim</button>
       <button class="btn-toggle ${weightPerson==='Safia'?'active-neutral':''}" onclick="selectWeightPerson('Safia')">Safia</button>
     </div>
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:baseline">
-        <div><p class="label" style="font-size:11px;color:var(--ink-soft)">Latest</p><p class="big" style="font-size:24px">${latest ? latest.value + ' lbs' : '—'}</p></div>
-        ${diff !== null ? `<div style="text-align:right"><p class="label" style="font-size:11px;color:var(--ink-soft)">Since last</p><p style="font-weight:600;color:${diff<=0?'#0F6E56':'var(--red)'}">${diff>0?'+':''}${diff} lbs</p></div>` : ''}
-      </div>
+
+    <div class="stat-grid" style="margin-bottom:12px">
+      <div class="stat"><p class="label">Latest${latest ? ' · ' + fmtDate(latest.date) : ''}</p><p class="value" style="font-size:22px">${latest ? latest.value + ' lbs' : '—'}</p></div>
+      <div class="stat"><p class="label">Since last weigh-in</p><p class="value" style="font-size:22px;color:${diff !== null ? weightDeltaColor(diff) : 'var(--ink)'}">${diff !== null ? fmtWeightDelta(diff) : '—'}</p></div>
     </div>
 
-    <div class="chip-row">
-      <button class="chip ${weightRange==='3m'?'active':''}" onclick="setWeightRange('3m')">3M</button>
-      <button class="chip ${weightRange==='6m'?'active':''}" onclick="setWeightRange('6m')">6M</button>
-      <button class="chip ${weightRange==='1y'?'active':''}" onclick="setWeightRange('1y')">1Y</button>
-      <button class="chip ${weightRange==='all'?'active':''}" onclick="setWeightRange('all')">All time</button>
-    </div>
-    <div style="position:relative;width:100%;height:180px;margin-bottom:20px">
-      ${inRange.length >= 2 ? '<canvas id="weightChart"></canvas>' : '<div class="empty-state">Log at least 2 entries in this range to see a trend.</div>'}
+    <div class="card" style="margin-bottom:20px">
+      <p class="label" style="font-size:11px;color:var(--ink-soft);margin:0 0 8px">Change since</p>
+      <div class="chip-row">
+        ${sinceChips.map(([k, l]) => `<button class="chip ${weightSince===k?'active':''}" onclick="setWeightSince('${k}')">${l}</button>`).join('')}
+      </div>
+      ${weightSince === 'pick' ? `<div class="field" style="margin-bottom:12px"><input type="date" value="${target}" max="${todayStr()}" onchange="setWeightPickDate(this.value)"></div>` : ''}
+      ${delta !== null ? `
+        <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <span style="font-size:28px;font-weight:600;color:${weightDeltaColor(delta)}">${fmtWeightDelta(delta)}</span>
+          <span style="font-size:13px;color:var(--ink-soft)">${delta < 0 ? 'lost' : delta > 0 ? 'gained' : 'no change'}${weeks >= 1 ? ` · ~${Math.abs(delta / weeks).toFixed(2)} lbs/wk` : ''}</span>
+        </div>
+        <p style="font-size:13px;color:var(--ink-soft);margin:4px 0 0">${base.value} lbs on ${fmtDateYear(base.date)} → ${latest.value} lbs on ${fmtDateYear(latest.date)}${weeks >= 1 ? ` (${Math.round(weeks)} ${Math.round(weeks) === 1 ? 'wk' : 'wks'})` : ` (${days} days)`}</p>
+        ${baseGapDays > 14 ? `<p style="font-size:12px;color:var(--ink-soft);margin:4px 0 0">Closest weigh-in to ${fmtDateYear(target)} is ${baseGapDays} days away.</p>` : ''}
+      ` : `<p style="font-size:13px;color:var(--ink-soft);margin:0">${latest ? 'No earlier weigh-in to compare in this period.' : 'No entries yet.'}</p>`}
+      <div style="position:relative;width:100%;height:170px;margin-top:12px">
+        ${inRange.length >= 2 ? '<canvas id="weightChart"></canvas>' : '<div class="empty-state">Log at least 2 entries in this period to see a trend.</div>'}
+      </div>
     </div>
 
     <p class="section-label">History</p>
@@ -4219,11 +4271,16 @@ async function renderWeightMain() {
       const controls = months.length > 1 ? collapseAllControls('weightList') : '';
       const body = months.map((mk, i) => {
         const label = new Date(mk + '-01T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-        const monthEntries = byMonth[mk];
+        const monthEntries = byMonth[mk]; // newest first
+        // Month change = this month's last weigh-in vs the previous month's last weigh-in
+        // (or vs this month's first, for the very first month on record).
+        const olderMonth = months[i + 1] ? byMonth[months[i + 1]][0] : null;
+        const from = olderMonth || (monthEntries.length > 1 ? monthEntries[monthEntries.length - 1] : null);
+        const md = from ? +(monthEntries[0].value - from.value).toFixed(1) : null;
         return `
           <div class="section-title" style="cursor:pointer" onclick="toggleCollapse(this)">
             <span>${label} <i class="ti collapse-chevron ti-chevron-${i===0?'down':'right'}" style="font-size:11px;vertical-align:-1px"></i></span>
-            <span></span>
+            <span style="font-size:12px;font-weight:600;color:${md !== null ? weightDeltaColor(md) : 'var(--ink-soft)'}">${md !== null ? fmtWeightDelta(md) : ''}</span>
           </div>
           <div class="collapse-body" style="display:${i===0?'block':'none'}">${monthEntries.map((w) => `<div class="list-row" onclick="openWeightEntryModal('${w.id}')"><div><span>${fmtDateYear(w.date)}</span>${w.note ? `<div class="entry-desc">${esc(w.note)}</div>` : ''}</div><span style="font-weight:600">${w.value} lbs</span></div>`).join('')}</div>
         `;
@@ -4235,16 +4292,24 @@ async function renderWeightMain() {
   if (inRange.length >= 2 && window.Chart) {
     const ctx = document.getElementById('weightChart');
     if (weightChartInstance) weightChartInstance.destroy();
+    const endColor = delta !== null && delta > 0 ? '#C9564F' : '#0F6E56';
+    const isEnd = (i) => i === 0 || i === inRange.length - 1;
     weightChartInstance = new Chart(ctx, {
       type: 'line',
       data: {
         labels: inRange.map((w) => fmtDate(w.date)),
-        datasets: [{ data: inRange.map((w) => w.value), borderColor: '#2a78d6', backgroundColor: 'rgba(42,120,214,0.1)', fill: true, tension: 0.3, pointRadius: 3, pointBackgroundColor: '#2a78d6' }]
+        datasets: [
+          { data: inRange.map((w) => w.value), borderColor: '#2a78d6', backgroundColor: 'rgba(42,120,214,0.1)', fill: true, tension: 0.3,
+            pointRadius: inRange.map((w, i) => isEnd(i) ? 5 : (inRange.length > 40 ? 0 : 2)),
+            pointBackgroundColor: inRange.map((w, i) => isEnd(i) ? endColor : '#2a78d6') },
+          // dotted line at the starting weight, so above/below the baseline reads at a glance
+          { data: inRange.map(() => base.value), borderColor: 'rgba(137,135,129,0.8)', borderDash: [4, 4], borderWidth: 1, pointRadius: 0, fill: false }
+        ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { x: { grid: { display: false } }, y: { grid: { color: 'rgba(137,135,129,0.2)' } } }
+        plugins: { legend: { display: false }, tooltip: { filter: (item) => item.datasetIndex === 0 } },
+        scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } }, y: { grid: { color: 'rgba(137,135,129,0.2)' } } }
       }
     });
   }
