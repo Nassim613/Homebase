@@ -103,7 +103,7 @@ async function buildSearchIndex() {
 
   noahIssues.forEach((i) => add('Noah', (noahTypeById[i.typeId] || {}).name || 'Health entry', join(i.status === 'ongoing' ? 'Ongoing' : 'Resolved', dateLabel(i.startDate), i.description),
     () => searchGoTo('noah', 'noahIssueDetail', () => { noahIssueId = i.id; noahSection = 'health'; }),
-    { date: i.startDate, hay: [i.medName, i.visitNotes].join(' ') }));
+    { date: i.startDate, hay: [(typeof noahAllMeds === 'function' ? noahAllMeds(i).map((m) => m.name).join(' ') : i.medName), i.visitNotes].join(' ') }));
   noahVisits.forEach((v) => add('Noah', (visitTypeById[v.typeId] || {}).name || 'Visit', join('Visit', dateLabel(v.date), v.reason, v.doctor),
     () => searchGoTo('noah', 'noahVisitDetail', () => { noahVisitId = v.id; noahSection = 'visits'; }),
     { date: v.date, hay: v.comments }));

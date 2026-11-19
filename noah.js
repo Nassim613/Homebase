@@ -109,6 +109,7 @@ function renderNoahOngoingCard(issue, typeById) {
   const day = noahDayCount(issue);
   const temp = noahLatestTemp(issue);
   const med = noahLatestMed(issue);
+  const others = noahOtherRecentMeds(issue);
   return `<div class="card tight" style="background:var(--gold-soft);cursor:pointer" onclick="openNoahIssue('${issue.id}')">
     <div style="display:flex;justify-content:space-between;align-items:baseline">
       <span style="font-size:14px;font-weight:600;color:#8a6412"><i class="ti ${type.icon || 'ti-virus'}"></i> ${esc(type.name || 'Issue')}, day ${day}</span>
@@ -116,6 +117,7 @@ function renderNoahOngoingCard(issue, typeById) {
     </div>
     ${temp ? `<p style="font-size:12px;color:#8a6412;margin-top:4px">Last temp ${temp.value}${NOAH_TEMP_UNIT}${temp.time ? ' at ' + esc(temp.time) : ''}</p>` : ''}
     ${med ? `<p style="font-size:12px;color:#8a6412">Last med ${esc(med.name)}${med.dose ? ' ' + esc(med.dose) : ''}${med.time ? ' at ' + esc(med.time) : ''}${noahAgo(med) ? ' (' + noahAgo(med) + ')' : ''}</p>` : ''}
+    ${others.length ? `<p style="font-size:12px;color:#8a6412;opacity:.85">Also: ${others.map((m) => esc(m.name) + (m.dose ? ' ' + esc(m.dose) : '') + (m.time ? ' at ' + esc(m.time) : '') + (noahAgo(m) ? ' (' + noahAgo(m) + ')' : '')).join(', ')}</p>` : ''}
   </div>`;
 }
 
@@ -132,14 +134,114 @@ function noahAllTemps(issue) {
   (issue.updates || []).forEach((u) => { if (u.temp) out.push({ date: u.date, time: u.time || '', value: u.temp }); });
   return out;
 }
+// An issue or an update can hold several medications, each with its own dose and
+// time, in a "meds" list. Entries saved before that existed have a single
+// medName/medDose/medTime instead — this reads either shape, so old entries keep
+// showing without any conversion. An update's dose with no time of its own falls back
+// to the update's time.
+function noahMedsOf(rec, fallbackTime) {
+  if (!rec) return [];
+  if (Array.isArray(rec.meds) && rec.meds.length) {
+    return rec.meds.filter((m) => m && m.name).map((m) => ({ name: m.name, dose: m.dose || '', time: m.time || fallbackTime || '' }));
+  }
+  if (rec.medName) return [{ name: rec.medName, dose: rec.medDose || '', time: rec.medTime || fallbackTime || '' }];
+  return [];
+}
+// Every dose on the issue and its updates, oldest first. Sorted by date then time, so
+// rows typed in any order still give the right "latest".
 function noahAllMeds(issue) {
   const out = [];
-  if (issue.medName) out.push({ date: issue.startDate, time: issue.medTime || '', name: issue.medName, dose: issue.medDose || '' });
-  (issue.updates || []).forEach((u) => { if (u.medName) out.push({ date: u.date, time: u.time || '', name: u.medName, dose: u.medDose || '' }); });
-  return out;
+  noahMedsOf(issue).forEach((m) => out.push({ date: issue.startDate, ...m }));
+  (issue.updates || []).forEach((u) => { noahMedsOf(u, u.time).forEach((m) => out.push({ date: u.date, ...m })); });
+  return out
+    .map((m, i) => ({ m, i, key: (m.date || '') + 'T' + (m.time ? noah24h(m.time) : '00:00') }))
+    .sort((a, b) => a.key.localeCompare(b.key) || a.i - b.i)
+    .map((x) => x.m);
 }
 function noahLatestTemp(issue) { const all = noahAllTemps(issue); return all.length ? all[all.length - 1] : null; }
 function noahLatestMed(issue) { const all = noahAllMeds(issue); return all.length ? all[all.length - 1] : null; }
+// The most recent dose of each *other* medication, for the "Also:" line under the last
+// dose — so a Tylenol/Advil alternation shows both at a glance.
+function noahOtherRecentMeds(issue) {
+  const all = noahAllMeds(issue);
+  if (all.length < 2) return [];
+  const latest = all[all.length - 1];
+  const seen = new Set([latest.name.toLowerCase()]);
+  const out = [];
+  for (let i = all.length - 2; i >= 0; i--) {
+    const key = all[i].name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(all[i]);
+  }
+  return out.slice(0, 2);
+}
+function noahLegacyMedFields(meds) {
+  if (!meds || !meds.length) return { medName: '', medDose: '', medTime: '' };
+  const last = meds
+    .map((m, i) => ({ m, i, key: m.time ? noah24h(m.time) : '' }))
+    .sort((a, b) => a.key.localeCompare(b.key) || a.i - b.i)
+    .pop().m;
+  return { medName: last.name, medDose: last.dose || '', medTime: last.time || '' };
+}
+function noahMedLabel(m) { return m.name + (m.dose ? ' ' + m.dose : '') + (m.time ? ' @ ' + m.time : ''); }
+function noahMedsLine(meds) {
+  return meds.length ? `<p class="meta" style="color:#8a6412"><i class="ti ti-pill"></i> ${meds.map((m) => esc(noahMedLabel(m))).join(' · ')}</p>` : '';
+}
+
+// ---------- medication rows (shared by the issue form and the update form) ----------
+
+function noahMedRowHtml(prefix, m) {
+  m = m || {};
+  return `<div class="noah-med-row" style="border:1px solid var(--line);border-radius:12px;padding:8px;margin-bottom:8px">
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <input class="nm-name" list="${prefix}MedList" placeholder="Tylenol" style="flex:1" value="${esc(m.name || '')}">
+      <button type="button" class="btn" style="width:44px;flex-shrink:0;padding:0;color:var(--red)" aria-label="Remove medication" onclick="removeNoahMedRow(this,'${prefix}')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="field-row" style="margin:0">
+      <input class="nm-dose" placeholder="5 ${NOAH_DOSE_UNIT}" value="${esc(m.dose || '')}">
+      <input class="nm-time" placeholder="6:00 pm" value="${esc(m.time || '')}">
+    </div>
+  </div>`;
+}
+function noahMedBlockHtml(prefix, meds, medHistory) {
+  const rows = meds && meds.length ? meds : [{}];
+  return `<div id="${prefix}MedRows">${rows.map((m) => noahMedRowHtml(prefix, m)).join('')}</div>
+    <datalist id="${prefix}MedList">${medHistory.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
+    <button type="button" class="btn" style="font-size:13px" onclick="addNoahMedRow('${prefix}')"><i class="ti ti-plus"></i> Add another medication</button>`;
+}
+// Rows are added and removed in place rather than by redrawing the block, so anything
+// already typed in the other rows stays put.
+function addNoahMedRow(prefix) {
+  const box = document.getElementById(prefix + 'MedRows');
+  if (!box) return;
+  box.insertAdjacentHTML('beforeend', noahMedRowHtml(prefix));
+  const inputs = box.querySelectorAll('.nm-name');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+}
+function removeNoahMedRow(btn, prefix) {
+  const row = btn.closest('.noah-med-row');
+  const box = document.getElementById(prefix + 'MedRows');
+  if (!row || !box) return;
+  // The last row is cleared rather than removed, so there's always one to type into.
+  if (box.querySelectorAll('.noah-med-row').length <= 1) { row.querySelectorAll('input').forEach((i) => { i.value = ''; }); return; }
+  row.remove();
+}
+// Returns the filled-in rows, or null (after saying why) when a row has a dose or a
+// time but no name — that's almost always a half-finished entry, not a real dose.
+function readNoahMedRows(prefix) {
+  const out = [];
+  let incomplete = false;
+  document.querySelectorAll('#' + prefix + 'MedRows .noah-med-row').forEach((row) => {
+    const name = row.querySelector('.nm-name').value.trim();
+    const dose = row.querySelector('.nm-dose').value.trim();
+    const time = row.querySelector('.nm-time').value.trim();
+    if (name) out.push({ name, dose, time });
+    else if (dose || time) incomplete = true;
+  });
+  if (incomplete) { alert('One of the medications has a dose or time but no name. Add the name, or tap × to remove that row.'); return null; }
+  return out;
+}
 
 // "1h ago" for a dose given earlier today. Deliberately only ever reports elapsed
 // time — it never suggests when a next dose is due, since that's a medical judgement
@@ -220,6 +322,7 @@ async function renderAddNoahIssue() {
   const past = await getActiveNoahIssues();
   const medHistory = [...new Set(past.flatMap((i) => noahAllMeds(i).map((m) => m.name)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const src = noahEditSource;
+  const srcMeds = noahMedsOf(src);
 
   $main.innerHTML = `
     <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goNoahMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${src && src.__editId ? 'Edit' : 'Log an'} issue</span></div>
@@ -265,17 +368,10 @@ async function renderAddNoahIssue() {
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <label class="field-label" style="margin:0">Medication given</label>
-        <button type="button" class="chip" id="noahMedToggle" onclick="toggleNoahMed()">${src && src.medName ? 'Yes' : 'No'}</button>
+        <button type="button" class="chip" id="noahMedToggle" onclick="toggleNoahMed()">${srcMeds.length ? 'Yes' : 'No'}</button>
       </div>
-      <div id="noahMedFields" style="display:${src && src.medName ? 'block' : 'none'}">
-        <div style="display:flex;gap:6px;margin-bottom:8px">
-          <input id="n_medName" list="noahMedList" placeholder="Tylenol" style="flex:1" value="${src && src.medName ? esc(src.medName) : ''}">
-          <datalist id="noahMedList">${medHistory.map((m) => `<option value="${esc(m)}">`).join('')}</datalist>
-        </div>
-        <div class="field-row">
-          <input id="n_medDose" placeholder="5 ${NOAH_DOSE_UNIT}" value="${src && src.medDose ? esc(src.medDose) : ''}">
-          <input id="n_medTime" placeholder="6:00 pm" value="${src && src.medTime ? esc(src.medTime) : ''}">
-        </div>
+      <div id="noahMedFields" style="display:${srcMeds.length ? 'block' : 'none'}">
+        ${noahMedBlockHtml('n', srcMeds, medHistory)}
       </div>
     </div>
 
@@ -315,7 +411,7 @@ async function renderAddNoahIssue() {
   const statIdx = src && src.status === 'resolved' ? 1 : 0;
   selectNoahStatus(document.querySelectorAll('#noahStatusToggle .btn-toggle')[statIdx], src ? src.status : 'ongoing');
   window.__noahTemp = !!(src && src.temp);
-  window.__noahMed = !!(src && src.medName);
+  window.__noahMed = srcMeds.length > 0;
   window.__noahVisit = !!(src && src.doctorVisit);
   window.__noahSchool = !!(src && src.missedSchool);
 }
@@ -339,6 +435,8 @@ async function saveNoahIssue() {
   const typeId = document.getElementById('n_type').value;
   if (!typeId) { alert('Pick an issue type first — tap + next to the list to add one.'); return; }
   const isEdit = noahEditSource && noahEditSource.__editId;
+  const meds = window.__noahMed ? readNoahMedRows('n') : [];
+  if (meds === null) return;
   const issue = {
     id: isEdit ? noahEditSource.__editId : uid(),
     typeId,
@@ -349,9 +447,11 @@ async function saveNoahIssue() {
     description: document.getElementById('n_description').value.trim(),
     temp: window.__noahTemp ? parseFloat(document.getElementById('n_temp').value) || null : null,
     tempTime: window.__noahTemp ? document.getElementById('n_tempTime').value.trim() : '',
-    medName: window.__noahMed ? document.getElementById('n_medName').value.trim() : '',
-    medDose: window.__noahMed ? document.getElementById('n_medDose').value.trim() : '',
-    medTime: window.__noahMed ? document.getElementById('n_medTime').value.trim() : '',
+    // The full list lives in "meds". The old single fields carry the latest dose of
+    // that list, which is what the Sheet's "Last Med" column reads — so the Apps Script
+    // didn't need to change. The app itself always reads "meds" first (noahMedsOf).
+    meds,
+    ...noahLegacyMedFields(meds),
     doctorVisit: !!window.__noahVisit,
     clinicId: window.__noahVisit ? document.getElementById('n_clinic').value : null,
     visitDate: window.__noahVisit ? document.getElementById('n_visitDate').value : '',
@@ -406,7 +506,7 @@ async function renderNoahIssueDetail() {
   const linkedVisits = (await getActiveNoahVisits()).filter((v) => v.linkedIssueId === issue.id).sort((a, b) => a.date.localeCompare(b.date));
   const visitTypeById = Object.fromEntries((await DB.getAll('noahVisitTypes')).map((t) => [t.id, t]));
 
-  const firstMeta = [issue.severity, issue.temp ? issue.temp + NOAH_TEMP_UNIT : '', issue.medName ? esc(issue.medName) + (issue.medDose ? ' ' + esc(issue.medDose) : '') : ''].filter(Boolean).join(' · ');
+  const firstMeta = [issue.severity, issue.temp ? issue.temp + NOAH_TEMP_UNIT : ''].filter(Boolean).join(' · ');
 
   $main.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -417,6 +517,7 @@ async function renderNoahIssueDetail() {
 
     <div class="thread-item">
       <p class="meta">${fmtDate(issue.startDate)}${firstMeta ? ' · ' + firstMeta : ''}</p>
+      ${noahMedsLine(noahMedsOf(issue))}
       ${issue.description ? `<p class="note">${esc(issue.description)}</p>` : ''}
     </div>
     ${issue.doctorVisit ? `<div class="thread-item" style="border-left-color:var(--gold)">
@@ -447,9 +548,11 @@ async function renderNoahIssueDetail() {
 // Temperature, dose and visit stay folded into the update's header line rather than
 // becoming separate rows — one glance down the thread reads as a timeline.
 function renderNoahUpdate(u, clinicName) {
-  const meta = [fmtDate(u.date), u.time || '', u.severity || '', u.temp ? u.temp + NOAH_TEMP_UNIT : '', u.medName ? u.medName + (u.medDose ? ' ' + u.medDose : '') : ''].filter(Boolean).join(' · ');
+  const meta = [fmtDate(u.date), u.time || '', u.severity || '', u.temp ? u.temp + NOAH_TEMP_UNIT : ''].filter(Boolean).join(' · ');
   const visitSuffix = u.doctorVisit ? ' · Doctor visit' + (u.clinicId && clinicName(u.clinicId) ? ' · ' + clinicName(u.clinicId) : '') : '';
-  const html = renderUpdateThreadItem(u, meta + visitSuffix);
+  // Doses get their own line under the header (same as the first entry), slotted in
+  // right after the shared thread item's meta line.
+  const html = renderUpdateThreadItem(u, meta + visitSuffix).replace('</p>', '</p>' + noahMedsLine(noahMedsOf(u, u.time)));
   return u.doctorVisit ? html.replace('class="thread-item thread-update"', 'class="thread-item thread-update" style="border-left-color:var(--gold)"') : html;
 }
 
@@ -488,11 +591,18 @@ async function renderAddNoahUpdate() {
       <button class="btn-toggle" onclick="selectNoahUpdateSeverity(this,'Moderate')">Moderate</button>
       <button class="btn-toggle" onclick="selectNoahUpdateSeverity(this,'Severe')">Severe</button>
     </div>
-    <div class="field-row" style="margin-bottom:14px">
-      <div><label class="field-label">Temperature</label><input id="nu_temp" type="number" step="0.1" placeholder="38.4 ${NOAH_TEMP_UNIT}"></div>
-      <div><label class="field-label">Medication</label><input id="nu_medName" list="noahUpdateMedList" placeholder="Tylenol"><datalist id="noahUpdateMedList">${medHistory.map((m) => `<option value="${esc(m)}">`).join('')}</datalist></div>
+    <div class="field"><label class="field-label">Temperature</label><input id="nu_temp" type="number" step="0.1" placeholder="38.4 ${NOAH_TEMP_UNIT}"></div>
+
+    <div class="card tight" style="background:var(--surface)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <label class="field-label" style="margin:0">Medication given</label>
+        <button type="button" class="chip" id="nuMedToggle" onclick="toggleNoahUpdateMed()">No</button>
+      </div>
+      <div id="nuMedFields" style="display:none">
+        <p style="font-size:11px;color:var(--ink-soft);margin-bottom:8px">Leave a time blank to use the update's time.</p>
+        ${noahMedBlockHtml('nu', [], medHistory)}
+      </div>
     </div>
-    <div class="field"><label class="field-label">Dose</label><input id="nu_medDose" placeholder="5 ${NOAH_DOSE_UNIT}"></div>
 
     <div class="card tight" style="background:var(--surface)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -513,6 +623,7 @@ async function renderAddNoahUpdate() {
     <button class="btn btn-primary" id="saveNoahUpdateBtn" onclick="saveNoahUpdate()">Save update</button>
   `;
   window.__noahUpdateVisit = false;
+  window.__noahUpdateMed = false;
   selectNoahUpdateSeverity(document.querySelector('#noahUpdateSeverity .btn-toggle'), issue.severity || 'Mild');
 }
 
@@ -521,6 +632,11 @@ function selectNoahUpdateSeverity(btn, val) {
   btn.parentElement.querySelectorAll('.btn-toggle').forEach((b) => b.classList.remove('active-neutral'));
   btn.classList.add('active-neutral');
   window.__noahUpdateSeverity = val;
+}
+function toggleNoahUpdateMed() {
+  window.__noahUpdateMed = !window.__noahUpdateMed;
+  document.getElementById('nuMedToggle').textContent = window.__noahUpdateMed ? 'Yes' : 'No';
+  document.getElementById('nuMedFields').style.display = window.__noahUpdateMed ? 'block' : 'none';
 }
 function toggleNoahUpdateVisit() {
   window.__noahUpdateVisit = !window.__noahUpdateVisit;
@@ -536,19 +652,21 @@ async function saveNoahUpdate() {
   const issue = await DB.get('noahIssues', noahIssueId);
   if (!issue) return;
   const clinicSel = document.getElementById('nu_clinic');
+  const meds = window.__noahUpdateMed ? readNoahMedRows('nu') : [];
+  if (meds === null) return;
   const update = {
     date: document.getElementById('nu_date').value || todayStr(),
     time: document.getElementById('nu_time').value.trim(),
     severity: window.__noahUpdateSeverity || 'Mild',
     temp: parseFloat(document.getElementById('nu_temp').value) || null,
-    medName: document.getElementById('nu_medName').value.trim(),
-    medDose: document.getElementById('nu_medDose').value.trim(),
+    meds,
+    ...noahLegacyMedFields(meds),
     doctorVisit: !!window.__noahUpdateVisit,
     clinicId: window.__noahUpdateVisit && clinicSel ? clinicSel.value : null,
     note: document.getElementById('nu_note').value.trim(),
     photoLinks: photoUploadLinks.noahUpdate.filter(Boolean)
   };
-  if (!update.note && !update.photoLinks.length && !update.temp && !update.medName && !update.doctorVisit) {
+  if (!update.note && !update.photoLinks.length && !update.temp && !update.meds.length && !update.doctorVisit) {
     alert('Add something to the update first — a note, a photo, a temperature, a dose or a visit.');
     return;
   }
