@@ -629,12 +629,17 @@ function collapseAllIn(containerId, collapse) {
 const OPEN_DAY_COUNT = 3;
 // One update in a thread: its own photos sit right under the note, since an update
 // is often mostly "here's what it looks like today".
-function renderUpdateThreadItem(update, metaLine) {
+// editAction, when given, adds a pencil on the right of the header line that opens
+// the update for editing.
+function renderUpdateThreadItem(update, metaLine, editAction) {
   const photos = (update.photoLinks || []).filter((l) => l && l.url);
+  const note = update.note || update.text || '';
   return `
     <div class="thread-item thread-update">
-      <p class="meta">${esc(metaLine)}</p>
-      ${update.note ? `<p class="note">${esc(update.note)}</p>` : ''}
+      ${editAction
+        ? `<p class="meta" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><span>${esc(metaLine)}</span><span role="button" aria-label="Edit update" title="Edit update" style="cursor:pointer;padding:0 2px;color:var(--ink-soft)" onclick="${editAction}"><i class="ti ti-pencil" style="font-size:15px"></i></span></p>`
+        : `<p class="meta">${esc(metaLine)}</p>`}
+      ${note ? `<p class="note">${esc(note)}</p>` : ''}
       ${photos.length ? `<div class="update-photos">${photos.map((l) => `<a href="${l.viewUrl || l.url}" target="_blank" rel="noopener">${l.isImage ? `<img src="${l.url}" alt="">` : `<span class="update-file"><i class="ti ti-file"></i> File</span>`}</a>`).join('')}</div>` : ''}
     </div>`;
 }
@@ -3774,8 +3779,8 @@ function removeExistingLink(context, index) {
   else if (context === 'buildExp') renderAddBuildExpense();
   else if (context === 'noahIssue') renderAddNoahIssue();
   else if (context === 'noahMilestone') renderAddNoahMilestone();
-  else if (context === 'jazzUpdate') renderAddJazzUpdate();
-  else if (context === 'noahUpdate') renderAddNoahUpdate();
+  else if (context === 'jazzUpdate') { captureJazzUpdateDraft(); renderAddJazzUpdate(); }
+  else if (context === 'noahUpdate') { captureNoahUpdateDraft(); renderAddNoahUpdate(); }
   else if (context === 'noahVisit') renderAddNoahVisit();
 }
 function keptExistingLinks(links, context) {
@@ -4040,7 +4045,7 @@ async function renderIssueDetail() {
     ${renderLinkPreviewList(issue.photoLinks, 'Photo')}
     ${updatesHeading((issue.updates || []).length, 'goAddJazzUpdate()')}
     ${(issue.updates || []).length
-      ? issue.updates.map((u) => renderUpdateThreadItem(u, fmtDate(u.date) + ' · ' + (u.severity || ''))).join('')
+      ? issue.updates.map((u, i) => renderUpdateThreadItem(u, fmtDate(u.date) + ' · ' + (u.severity || ''), `editJazzUpdate(${i})`)).join('')
       : '<p style="font-size:12px;color:var(--ink-soft);margin-bottom:14px">No updates yet.</p>'}
 
     <button class="btn" style="margin-bottom:10px" onclick="goAddJazzUpdate()"><i class="ti ti-plus"></i> Add update</button>
@@ -4052,13 +4057,41 @@ async function renderIssueDetail() {
 // An update used to be two browser prompts, then a popup sheet. It's a full page
 // now: prompts can't hold a line break and often don't appear at all in an installed
 // PWA, and a sheet is a cramped place to attach photos to.
+//
+// The same page edits an existing update — see the matching note on Noah's version in
+// noah.js for why an edit tracks the update's original contents as well as its position.
 let jazzUpdatePhotoDrafts = [];
+let jazzUpdateEditIndex = null; // null = adding a new update
+let jazzUpdateEditOriginal = null;
+let jazzUpdateDraft = null;
 
 function goAddJazzUpdate() {
   jazzUpdatePhotoDrafts = [];
   resetPhotoContext('jazzUpdate');
+  jazzUpdateEditIndex = null; jazzUpdateEditOriginal = null; jazzUpdateDraft = null;
   currentView = 'addJazzUpdate';
   route();
+}
+
+async function editJazzUpdate(index) {
+  const issue = await DB.get('jazzIssues', currentIssueId);
+  const u = issue && (issue.updates || [])[index];
+  if (!u) return;
+  jazzUpdatePhotoDrafts = [];
+  resetPhotoContext('jazzUpdate');
+  jazzUpdateEditIndex = index;
+  jazzUpdateEditOriginal = JSON.stringify(u);
+  jazzUpdateDraft = JSON.parse(JSON.stringify(u));
+  currentView = 'addJazzUpdate';
+  route();
+}
+
+// Keeps what's been typed when removing a photo redraws the page.
+function captureJazzUpdateDraft() {
+  if (jazzUpdateEditIndex === null || !jazzUpdateDraft || !document.getElementById('ju_date')) return;
+  jazzUpdateDraft.date = document.getElementById('ju_date').value;
+  jazzUpdateDraft.severity = window.__jazzUpdateSeverity || jazzUpdateDraft.severity;
+  jazzUpdateDraft.note = document.getElementById('ju_note').value;
 }
 
 async function renderAddJazzUpdate() {
@@ -4066,24 +4099,30 @@ async function renderAddJazzUpdate() {
   if (!issue) { currentView = 'main'; return route(); }
   const types = await DB.getAll('issueTypes');
   const type = types.find((t) => t.id === issue.typeId) || {};
+  const editing = jazzUpdateEditIndex !== null && jazzUpdateDraft;
+  const d = editing ? jazzUpdateDraft : {};
+  const severity = editing ? (d.severity || 'Mild') : (issue.severity || 'Mild');
 
   $main.innerHTML = `
-    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="currentView='issueDetail';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Add update</span></div>
+    <div class="back" style="margin-bottom:6px;cursor:pointer" onclick="currentView='issueDetail';route()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">${editing ? 'Edit update' : 'Add update'}</span></div>
     <p style="font-size:11px;color:var(--ink-soft);margin-bottom:16px">${esc(type.name || 'Issue')} · started ${fmtDate(issue.startDate)}</p>
 
-    <div class="field"><label class="field-label">Date</label><input type="date" id="ju_date" value="${todayStr()}"></div>
+    <div class="field"><label class="field-label">Date</label><input type="date" id="ju_date" value="${editing ? esc(d.date || '') : todayStr()}"></div>
     <label class="field-label">Severity now</label>
     <div class="btn-toggle-row" id="jazzUpdateSeverity">
       <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Mild')">Mild</button>
       <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Moderate')">Moderate</button>
       <button class="btn-toggle" onclick="selectJazzUpdateSeverity(this,'Severe')">Severe</button>
     </div>
-    <div class="field"><label class="field-label">Notes</label><textarea id="ju_note" placeholder="How he's doing, what changed..."></textarea></div>
+    <div class="field"><label class="field-label">Notes</label><textarea id="ju_note" placeholder="How he's doing, what changed...">${editing ? esc(d.note || d.text || '') : ''}</textarea></div>
+    ${editing ? renderExistingLinksGrid(d.photoLinks, 'jazzUpdate', 'Existing photos (tap × to remove)') : ''}
     <label class="field-label">Add photos</label>
     <div class="photo-grid" id="jazzUpdatePhotoGrid">${renderPhotoGrid(jazzUpdatePhotoDrafts, 'jazzUpdate')}</div>
-    <button class="btn btn-primary" id="saveJazzUpdateBtn" onclick="saveJazzUpdate()">Save update</button>
+    <button class="btn btn-primary" id="saveJazzUpdateBtn" style="margin-bottom:10px" onclick="saveJazzUpdate()">${editing ? 'Save changes' : 'Save update'}</button>
+    ${editing ? `<button class="btn" style="color:var(--red);border-color:var(--red-soft)" onclick="deleteJazzUpdate()"><i class="ti ti-trash"></i> Delete update</button>` : ''}
   `;
-  selectJazzUpdateSeverity(document.querySelector('#jazzUpdateSeverity .btn-toggle'), issue.severity || 'Mild');
+  const sevIdx = { Mild: 0, Moderate: 1, Severe: 2 }[severity] || 0;
+  selectJazzUpdateSeverity(document.querySelectorAll('#jazzUpdateSeverity .btn-toggle')[sevIdx], severity);
 }
 function selectJazzUpdateSeverity(btn, val) {
   if (!btn) return;
@@ -4093,18 +4132,34 @@ function selectJazzUpdateSeverity(btn, val) {
 }
 
 async function saveJazzUpdate() {
+  const editing = jazzUpdateEditIndex !== null;
   const btn = document.getElementById('saveJazzUpdateBtn');
   if (pendingPhotoUploads.jazzUpdate && pendingPhotoUploads.jazzUpdate.length && btn) { btn.disabled = true; btn.textContent = 'Finishing photo upload…'; }
   await waitForPendingUploads('jazzUpdate');
-  if (btn) { btn.disabled = false; btn.textContent = 'Save update'; }
+  if (btn) { btn.disabled = false; btn.textContent = editing ? 'Save changes' : 'Save update'; }
   const note = document.getElementById('ju_note').value.trim();
   const severity = window.__jazzUpdateSeverity || 'Mild';
-  const photoLinks = photoUploadLinks.jazzUpdate.filter(Boolean);
-  if (!note && !photoLinks.length) { alert('Add a note or a photo first.'); return; }
+  const keptPhotos = editing && jazzUpdateDraft ? keptExistingLinks(jazzUpdateDraft.photoLinks || [], 'jazzUpdate') : [];
+  const photoLinks = [...keptPhotos, ...photoUploadLinks.jazzUpdate.filter(Boolean)];
+  if (!note && !photoLinks.length) {
+    alert(editing ? 'This update would be empty. Add a note or photo back, or use Delete update instead.' : 'Add a note or a photo first.');
+    return;
+  }
   const issue = await DB.get('jazzIssues', currentIssueId);
   issue.updates = issue.updates || [];
-  issue.updates.push({ date: document.getElementById('ju_date').value || todayStr(), severity, note, photoLinks });
-  issue.severity = severity; // the list should show where things stand now, not day one
+  const update = { date: document.getElementById('ju_date').value || todayStr(), severity, note, photoLinks };
+  if (editing) {
+    const at = locateEditedUpdate(issue.updates, jazzUpdateEditIndex, jazzUpdateEditOriginal);
+    if (at === -1) { alert('This update was changed on another device while you were editing. Go back, reopen it and try again.'); return; }
+    const merged = { ...issue.updates[at], ...update };
+    delete merged.text; // older updates kept the note as "text"; it's "note" from here on
+    issue.updates[at] = merged;
+  } else {
+    issue.updates.push(update);
+  }
+  // The list should show where things stand now (the newest update), not day one —
+  // and editing an older update doesn't change that.
+  issue.severity = issue.updates[issue.updates.length - 1].severity || issue.severity;
   // MUST be set before the local save: the pull only leaves a record alone when it's
   // marked unsynced. Without this, a background pull landing before the push finished
   // overwrote the issue with the Sheet's older copy and the update just disappeared.
@@ -4113,6 +4168,27 @@ async function saveJazzUpdate() {
   Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
   jazzUpdatePhotoDrafts = [];
   resetPhotoContext('jazzUpdate');
+  jazzUpdateEditIndex = null; jazzUpdateEditOriginal = null; jazzUpdateDraft = null;
+  currentView = 'issueDetail';
+  route();
+}
+
+async function deleteJazzUpdate() {
+  if (jazzUpdateEditIndex === null) return;
+  if (!confirm('Delete this update? It\'s removed from the issue everywhere, including the Sheet (the old version stays in Jazz Changes).')) return;
+  const issue = await DB.get('jazzIssues', currentIssueId);
+  if (!issue) return;
+  issue.updates = issue.updates || [];
+  const at = locateEditedUpdate(issue.updates, jazzUpdateEditIndex, jazzUpdateEditOriginal);
+  if (at === -1) { alert('This update was changed on another device while you were editing. Go back, reopen it and try again.'); return; }
+  issue.updates.splice(at, 1);
+  if (issue.updates.length) issue.severity = issue.updates[issue.updates.length - 1].severity || issue.severity;
+  issue.synced = false;
+  await DB.put('jazzIssues', issue);
+  Sync.pushEntry('Jazz', issue).then(() => DB.put('jazzIssues', issue));
+  jazzUpdatePhotoDrafts = [];
+  resetPhotoContext('jazzUpdate');
+  jazzUpdateEditIndex = null; jazzUpdateEditOriginal = null; jazzUpdateDraft = null;
   currentView = 'issueDetail';
   route();
 }
