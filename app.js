@@ -4997,12 +4997,12 @@ async function renderSyncDataPage() {
       <span></span>
     </div>
     <div class="collapse-body" style="display:none">
-      <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 12px">You shouldn't need this for normal use — it's a fix-it button, only if something looks wrong (duplicate categories or stores with different colors, data that seems out of sync, etc).</p>
+      <p style="font-size:11px;color:var(--ink-soft);margin:8px 0 12px">You shouldn't need this for normal use — only if something looks wrong, like the same category or store showing up twice.</p>
       <div class="card tight">
-        <label class="field-label">Rebuild everything, automatically</label>
-        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Does all of it in one go: merges any duplicate categories or stores, clears your Sheet's tabs for you, then sends a fresh clean copy of everything. No manual steps in between.</p>
-        <button class="btn" id="fixEverythingBtn" style="background:var(--red-soft);color:var(--red);border-color:var(--red)" onclick="runFixEverything()">Rebuild everything</button>
-        <p id="fixEverythingStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
+        <label class="field-label">Merge duplicate categories and stores</label>
+        <p style="font-size:12px;color:var(--ink-soft);margin-bottom:10px">Finds categories, stores, cars, projects and Garage/Jazz types with the same name, keeps one, and moves everything onto it. Your Sheet is never cleared.</p>
+        <button class="btn" id="dupCheckBtn" onclick="checkDuplicates()"><i class="ti ti-search"></i> Check for duplicates</button>
+        <div id="dupResults" style="margin-top:10px"></div>
       </div>
     </div>
   `;
@@ -5182,63 +5182,273 @@ async function saveInlineProject() {
   if (sel) { sel.value = p.id; updateProjectButtonDisplay(); }
 }
 
-async function runDimensionCleanup() {
-  const statusEl = document.getElementById('cleanupStatus');
-  statusEl.textContent = 'Scanning for duplicates…';
-  const report = await cleanupDuplicateDimensions((msg) => { statusEl.textContent = msg; });
-  if (!report.length) {
-    statusEl.textContent = 'No duplicates found.';
-  } else {
-    statusEl.innerHTML = `<b>Done:</b><br>${report.join('<br>')}<br>Now clear your Sheet's tabs and run Force full resync below to push the clean version up.`;
+// ============ MERGE DUPLICATES ============
+// Finds dimension records (categories, stores, cars, ...) that share a name, keeps one,
+// points every record that used a duplicate at the keeper, then deletes the duplicates
+// through the normal sync path — so the Sheet removes those rows itself and archives
+// them into its Changes tabs. Nothing is ever cleared wholesale, so tabs the app
+// doesn't hold locally (ReportLog, NotifyDevices, Meta) are never at risk.
+//
+// `refs` lists every place an ID pointing at the target can live. `nested` refs are
+// arrays of objects (a car split), where each element carries its own ID field.
+const DUPLICATE_MERGE_TARGETS = [
+  { store: 'categories', label: 'Category', icon: 'ti-tag', conflictField: 'type', refs: [
+    { store: 'entries', field: 'categoryId' },
+    { store: 'recurring', field: 'categoryId' },
+    { store: 'payees', field: 'defaultCategoryId' }
+  ] },
+  { store: 'payees', label: 'Store', icon: 'ti-building-store', refs: [
+    { store: 'entries', field: 'storeId' },
+    { store: 'recurring', field: 'storeId' },
+    { store: 'buildExpenses', field: 'storeId' },
+    { store: 'categories', field: 'defaultStoreId' }
+  ] },
+  { store: 'cars', label: 'Car', icon: 'ti-car', refs: [
+    { store: 'entries', field: 'carId' },
+    { store: 'recurring', field: 'carId' },
+    { store: 'entries', nested: 'carSplit', field: 'carId' },
+    { store: 'recurring', nested: 'carSplit', field: 'carId' }
+  ] },
+  { store: 'projects', label: 'Project', icon: 'ti-tools', refs: [
+    { store: 'entries', field: 'projectId' },
+    { store: 'recurring', field: 'projectId' }
+  ] },
+  { store: 'expenseTypes', label: 'Garage expense type', icon: 'ti-tool', refs: [{ store: 'garageCosts', field: 'expenseTypeId' }] },
+  { store: 'repairTypes', label: 'Garage repair type', icon: 'ti-tool', refs: [{ store: 'garageCosts', field: 'repairTypeId' }] },
+  { store: 'issueTypes', label: 'Jazz issue type', icon: 'ti-paw', refs: [{ store: 'jazzIssues', field: 'typeId' }] },
+  { store: 'vetClinics', label: 'Vet clinic', icon: 'ti-building-hospital', refs: [{ store: 'jazzIssues', field: 'vetClinicId' }] }
+];
+
+const DUP_SKIP_FIELDS = ['id', 'name', 'hidden', 'deleted', 'synced', '_mt'];
+function dupBlank(v) { return v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length); }
+function dupNameKey(name) { return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase(); }
+function dupSheetFor(store) { const job = SYNC_JOBS.find((j) => j.store === store); return job ? job.sheet : null; }
+
+// Read-only: works out what a merge would do, without changing anything.
+async function planDuplicateMerge() {
+  const cache = {};
+  const load = async (store) => (cache[store] = cache[store] || (await DB.getAll(store)).filter((r) => !r.deleted));
+  const groups = [];
+  const skipped = [];
+
+  for (const target of DUPLICATE_MERGE_TARGETS) {
+    const items = await load(target.store);
+    const byName = {};
+    items.forEach((r) => { const k = dupNameKey(r.name); if (k) (byName[k] = byName[k] || []).push(r); });
+
+    for (const key of Object.keys(byName)) {
+      const group = byName[key];
+      if (group.length < 2) continue;
+
+      // Two categories with the same name but different types (one income, one
+      // expense) aren't really duplicates — merging them would mix up the totals.
+      if (target.conflictField) {
+        const values = [...new Set(group.map((r) => r[target.conflictField]).filter((v) => !dupBlank(v)))];
+        if (values.length > 1) { skipped.push(`${target.label} "${group[0].name}" — copies have different types (${values.join(', ')}), left alone`); continue; }
+      }
+
+      // How many records use each copy, per kind of record, for the keeper choice
+      // and for the preview.
+      const usage = {};
+      group.forEach((r) => { usage[r.id] = {}; });
+      for (const ref of target.refs) {
+        const records = await load(ref.store);
+        records.forEach((rec) => {
+          const ids = ref.nested ? (rec[ref.nested] || []).map((x) => x && x[ref.field]) : [rec[ref.field]];
+          new Set(ids).forEach((id) => { if (usage[id]) usage[id][ref.store] = (usage[id][ref.store] || 0) + 1; });
+        });
+      }
+      const total = (id) => Object.values(usage[id]).reduce((a, b) => a + b, 0);
+      const filled = (r) => Object.keys(r).filter((k) => !DUP_SKIP_FIELDS.includes(k) && !dupBlank(r[k])).length;
+
+      // Keep the copy that's actually in use: visible beats hidden, then most records,
+      // then the most filled-in settings (budget, logo, type), then a stable tiebreak.
+      const sorted = group.slice().sort((a, b) =>
+        (!!a.hidden - !!b.hidden) || (total(b.id) - total(a.id)) || (filled(b) - filled(a)) || String(a.id).localeCompare(String(b.id)));
+      groups.push({ target, keeper: sorted[0], dupes: sorted.slice(1), usage });
+    }
   }
-  Sync.retryAllPending();
+  return { groups, skipped };
 }
 
-// One combined action: merges any duplicates, clears the Sheet automatically (no more
-// manually deleting rows yourself), then pushes a fresh clean copy of everything. Replaces
-// what used to be three separate steps you had to understand and sequence yourself.
-async function runFixEverything() {
-  if (!confirm("This rebuilds your Sheet from scratch: merges any duplicate categories/stores, clears every tab, then re-sends all your data fresh. It takes a few minutes and can't be interrupted halfway. Continue?")) return;
-  const statusEl = document.getElementById('fixEverythingStatus');
-  const btn = document.getElementById('fixEverythingBtn');
-  btn.disabled = true;
+const DUP_STORE_WORDS = { entries: ['entry', 'entries'], recurring: ['recurring rule', 'recurring rules'], buildExpenses: ['Build expense', 'Build expenses'], payees: ['store default', 'store defaults'], categories: ['category default', 'category defaults'], garageCosts: ['Garage cost', 'Garage costs'], jazzIssues: ['Jazz entry', 'Jazz entries'] };
+function dupUsageText(counts) {
+  const parts = Object.keys(counts).filter((k) => counts[k]).map((k) => { const w = DUP_STORE_WORDS[k] || [k, k]; return `${counts[k]} ${counts[k] === 1 ? w[0] : w[1]}`; });
+  return parts.length ? parts.join(', ') : 'not used anywhere';
+}
 
-  // Safety check: this device's local data is about to become the new source of truth
-  // for the entire Sheet — if it's missing things the Sheet actually has (an incomplete
-  // pull, a bug, anything), proceeding would silently destroy real data. Comparing
-  // counts first catches that before it can happen, rather than trusting local data
-  // blindly the way this used to.
-  statusEl.textContent = 'Checking your data is complete before doing anything…';
-  const remoteCounts = await Sync.getRemoteCounts();
-  if (remoteCounts) {
-    const shortfalls = [];
-    for (const job of SYNC_JOBS) {
-      const localCount = (await DB.getAll(job.store)).filter((r) => !r.deleted).length;
-      const remoteCount = remoteCounts[job.sheet] || 0;
-      if (remoteCount > 0 && localCount < remoteCount * 0.5) {
-        shortfalls.push(`${job.sheet}: this device has ${localCount}, the Sheet has ${remoteCount}`);
-      }
-    }
-    if (shortfalls.length) {
-      statusEl.innerHTML = `<b>Stopped — this device's data looks incomplete compared to your Sheet:</b><br>${shortfalls.join('<br>')}<br><br>Proceeding would have deleted real data. Try the refresh button first so this device has everything, then run this again.`;
-      btn.disabled = false;
-      return;
-    }
-  }
+let duplicatePlan = null;
+async function checkDuplicates() {
+  const out = document.getElementById('dupResults');
+  out.innerHTML = '<p style="font-size:12px;color:var(--ink-soft)">Getting the latest from your Sheet first…</p>';
+  // Work from fresh data, so a duplicate someone just made on another device is caught.
+  try { await Sync.pullAll(); } catch (e) { /* offline is fine for the check itself */ }
+  duplicatePlan = await planDuplicateMerge();
+  renderDuplicatePlan();
+}
 
-  statusEl.textContent = 'Step 1 of 3 — merging any duplicates…';
-  await cleanupDuplicateDimensions(() => {});
-  statusEl.textContent = 'Step 2 of 3 — clearing your Sheet…';
-  const clearResult = await Sync.clearRemoteSheet();
-  if (!clearResult.ok) {
-    statusEl.textContent = `Couldn't clear the Sheet: ${clearResult.error || 'unknown error'}. Nothing was changed — safe to try again.`;
-    btn.disabled = false;
+function renderDuplicatePlan() {
+  const out = document.getElementById('dupResults');
+  if (!out || !duplicatePlan) return;
+  const { groups, skipped } = duplicatePlan;
+  const dupeCount = groups.reduce((n, g) => n + g.dupes.length, 0);
+  const skippedHtml = skipped.length ? `<p style="font-size:11px;color:var(--ink-soft);margin-top:8px">${skipped.map(esc).join('<br>')}</p>` : '';
+  if (!groups.length) {
+    out.innerHTML = `<p style="font-size:12px;color:#0F6E56"><i class="ti ti-check"></i> No duplicates found.</p>${skippedHtml}`;
     return;
   }
-  statusEl.textContent = 'Step 3 of 3 — sending everything fresh…';
-  await Sync.forceFullResync();
-  statusEl.textContent = 'Done! Your Sheet has been rebuilt with one clean copy of everything.';
-  btn.disabled = false;
+  out.innerHTML = `
+    <p style="font-size:12px;font-weight:600;margin-bottom:8px">Found ${groups.length} duplicate name${groups.length === 1 ? '' : 's'}</p>
+    ${groups.map((g) => {
+      const merged = {};
+      g.dupes.forEach((d) => Object.entries(g.usage[d.id]).forEach(([k, v]) => { merged[k] = (merged[k] || 0) + v; }));
+      return `
+      <div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
+        <p style="font-size:13px;font-weight:600;margin-bottom:5px"><i class="ti ${g.target.icon}" style="color:#8a6412"></i> ${esc(g.keeper.name)} <span style="font-weight:400;color:var(--ink-soft)">· ${g.target.label}, ${g.dupes.length + 1} copies</span></p>
+        <p style="font-size:12px;color:#0F6E56;margin-bottom:2px"><i class="ti ti-check"></i> Keeps: ${g.keeper.hidden ? 'hidden copy (will be made visible), ' : ''}${dupUsageText(g.usage[g.keeper.id])}</p>
+        <p style="font-size:12px;color:var(--red)"><i class="ti ti-arrow-right"></i> Merges ${g.dupes.length === 1 ? '' : g.dupes.length + ' copies: '}${dupUsageText(merged)}</p>
+      </div>`;
+    }).join('')}
+    <button class="btn btn-primary" id="dupMergeBtn" onclick="runDuplicateMerge()">Merge ${dupeCount} duplicate${dupeCount === 1 ? '' : 's'}</button>
+    <p style="font-size:11px;color:var(--ink-soft);margin-top:8px">Removed copies are saved in the Sheet's Changes tabs.</p>
+    ${skippedHtml}
+    <p id="dupMergeStatus" style="font-size:12px;color:var(--ink-soft);margin-top:8px"></p>
+  `;
+}
+
+// Pushes records in chunks the same way retryAllPending does, but reports whether
+// every chunk landed — the merge only deletes duplicates once the repointed records
+// are safely in the Sheet.
+async function dupPushAll(store, records) {
+  const job = SYNC_JOBS.find((j) => j.store === store);
+  if (!job || !records.length) return true;
+  for (let i = 0; i < records.length; i += 200) {
+    const chunk = records.slice(i, i + 200);
+    const payloads = chunk.map((r) => { const p = { ...r }; job.strip.forEach((k) => delete p[k]); return p; });
+    const ok = await Sync.pushBatch(job.sheet, payloads);
+    if (!ok) return false;
+    chunk.forEach((r, idx) => { r.synced = true; r._mt = payloads[idx]._mt; });
+    await DB.putMany(store, chunk);
+  }
+  return true;
+}
+
+async function runDuplicateMerge() {
+  if (!duplicatePlan || !duplicatePlan.groups.length) return;
+  if (!navigator.onLine) { alert("You're offline. Connect first, so the merge can reach your Sheet."); return; }
+  if (!confirm('Merge these duplicates? Everything that used a duplicate moves to the copy being kept, then the extra copies are deleted. Removed copies stay in the Sheet\'s Changes tabs.')) return;
+  const btn = document.getElementById('dupMergeBtn');
+  const statusEl = document.getElementById('dupMergeStatus');
+  btn.disabled = true;
+
+  // Re-plan from what's on the device right now, in case anything changed since the check.
+  const { groups } = await planDuplicateMerge();
+  const changed = {};    // store -> Map(id -> record) of repointed records to push
+  const keepers = {};    // store -> keeper records with filled-in settings
+  const toDelete = {};   // store -> duplicate records to delete
+
+  const remap = {};      // store -> { dupeId: keeperId }
+  groups.forEach((g) => {
+    remap[g.target.store] = remap[g.target.store] || {};
+    g.dupes.forEach((d) => { remap[g.target.store][d.id] = g.keeper.id; });
+  });
+
+  statusEl.textContent = 'Moving records onto the copies being kept…';
+  for (const target of DUPLICATE_MERGE_TARGETS) {
+    const map = remap[target.store];
+    if (!map) continue;
+    for (const ref of target.refs) {
+      // Read through the pending map, so a record touched by two targets (an entry
+      // with both a duplicate category and a duplicate store) keeps both changes.
+      const pending = (changed[ref.store] = changed[ref.store] || new Map());
+      const records = (await DB.getAll(ref.store)).filter((r) => !r.deleted).map((r) => pending.get(r.id) || r);
+      for (const rec of records) {
+        let touched = false;
+        if (ref.nested) {
+          (rec[ref.nested] || []).forEach((x) => { if (x && map[x[ref.field]]) { x[ref.field] = map[x[ref.field]]; touched = true; } });
+          // A split that had both copies of the same car now names it twice — fold
+          // those into one share so the per-car totals stay right.
+          if (touched) {
+            const merged = [];
+            rec[ref.nested].forEach((x) => {
+              const same = x && merged.find((m) => m && m[ref.field] === x[ref.field]);
+              if (same) same.amount = Math.round(((Number(same.amount) || 0) + (Number(x.amount) || 0)) * 100) / 100;
+              else merged.push(x);
+            });
+            rec[ref.nested] = merged;
+          }
+        } else if (map[rec[ref.field]]) {
+          rec[ref.field] = map[rec[ref.field]];
+          touched = true;
+        }
+        if (touched) { rec.synced = false; pending.set(rec.id, rec); }
+      }
+    }
+  }
+
+  // The keeper picks up any setting only a duplicate had (a budget, a logo, a type),
+  // and is made visible if the copy being kept happened to be hidden.
+  for (const g of groups) {
+    const store = g.target.store;
+    const pending = (changed[store] = changed[store] || new Map());
+    const keeper = pending.get(g.keeper.id) || g.keeper;
+    let touched = false;
+    if (keeper.hidden) { keeper.hidden = false; touched = true; }
+    g.dupes.map((d) => pending.get(d.id) || d).forEach((d) => Object.keys(d).forEach((k) => {
+      if (!DUP_SKIP_FIELDS.includes(k) && dupBlank(keeper[k]) && !dupBlank(d[k])) { keeper[k] = d[k]; touched = true; }
+    }));
+    if (touched) { keeper.synced = false; pending.set(keeper.id, keeper); }
+    (keepers[store] = keepers[store] || []).push(keeper);
+    (toDelete[store] = toDelete[store] || []).push(...g.dupes.map((d) => pending.get(d.id) || d));
+  }
+  // A duplicate is about to be deleted, so it never needs its own repointed version pushed.
+  Object.keys(toDelete).forEach((store) => toDelete[store].forEach((d) => changed[store] && changed[store].delete(d.id)));
+
+  // Save locally first, then send. synced:false means a background pull won't overwrite
+  // these, and if a send fails the normal sync will retry them later.
+  for (const store of Object.keys(changed)) {
+    const list = [...changed[store].values()];
+    if (list.length) await DB.putMany(store, list);
+  }
+
+  statusEl.textContent = 'Sending the changes to your Sheet…';
+  let allSent = true;
+  for (const store of Object.keys(changed)) {
+    if (!(await dupPushAll(store, [...changed[store].values()]))) allSent = false;
+  }
+  if (!allSent) {
+    statusEl.innerHTML = "<b>Paused.</b> Some changes didn't reach your Sheet yet, so no duplicates were deleted. They'll keep syncing in the background — run Check for duplicates again in a minute to finish.";
+    btn.disabled = false;
+    Sync.retryAllPending();
+    return;
+  }
+
+  statusEl.textContent = 'Removing the extra copies…';
+  let removed = 0, failed = 0;
+  for (const store of Object.keys(toDelete)) {
+    const dupes = toDelete[store].map((d) => ({ ...d, deleted: true, hidden: true, synced: false }));
+    await DB.putMany(store, dupes); // hidden right away, even before the Sheet confirms
+    const job = SYNC_JOBS.find((j) => j.store === store);
+    const payloads = dupes.map((d) => { const p = { ...d }; job.strip.forEach((k) => delete p[k]); return p; });
+    if (await Sync.pushBatch(job.sheet, payloads)) {
+      // Kept locally as a deleted record (not removed outright) so a pull that lands
+      // before the Sheet catches up can't bring the duplicate back. The normal
+      // missing-from-Sheet check clears it off the device on the next couple of pulls.
+      dupes.forEach((d, idx) => { d.synced = true; d._mt = payloads[idx]._mt; });
+      await DB.putMany(store, dupes);
+      removed += dupes.length;
+    } else {
+      failed += dupes.length; // stays marked deleted; background sync sends it later
+    }
+  }
+
+  const moved = Object.values(changed).reduce((n, m) => n + m.size, 0);
+  statusEl.innerHTML = failed
+    ? `<b>Almost done.</b> Moved ${moved} record${moved === 1 ? '' : 's'} and removed ${removed} duplicate${removed === 1 ? '' : 's'}. ${failed} more will be removed once your Sheet responds.`
+    : `<b>Done.</b> Moved ${moved} record${moved === 1 ? '' : 's'} and removed ${removed} duplicate${removed === 1 ? '' : 's'}.`;
+  if (failed) Sync.retryAllPending();
+  btn.style.display = 'none';
+  duplicatePlan = null;
 }
 
 // ============ RECURRING ENTRIES ============
