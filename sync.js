@@ -31,7 +31,9 @@ const SYNC_JOBS = [
   { store: 'noahIssueTypes', sheet: 'NoahIssueTypes', strip: [] },
   { store: 'noahClinics', sheet: 'NoahClinics', strip: [] },
   { store: 'noahVisits', sheet: 'NoahVisits', strip: ['photos'] },
-  { store: 'noahVisitTypes', sheet: 'NoahVisitTypes', strip: [] }
+  { store: 'noahVisitTypes', sheet: 'NoahVisitTypes', strip: [] },
+  { store: 'debts', sheet: 'Debts', strip: [] },
+  { store: 'debtActivity', sheet: 'DebtActivity', strip: [] }
 ];
 
 const Sync = {
@@ -272,6 +274,15 @@ const Sync = {
             if (remoteFlag.importedAt && !localMeta.importedAt) { localMeta.importedAt = remoteFlag.importedAt; changed = true; }
             if (changed) await DB.put('settings', localMeta);
           }
+          // The shared payoff plan (Debts): monthly amount and strategy.
+          if (remoteFlag.key === 'debtPlan') {
+            const localMeta = (await DB.get('settings', 'meta')) || { id: 'meta' };
+            if (localMeta.debtPlan !== remoteFlag.value) {
+              localMeta.debtPlan = remoteFlag.value;
+              await DB.put('settings', localMeta);
+              anyChanged = true;
+            }
+          }
           if (remoteFlag.key === 'groceryWeeklyBudget') {
             const localMeta = (await DB.get('settings', 'meta')) || { id: 'meta' };
             if (localMeta.groceryWeeklyBudget !== remoteFlag.value) {
@@ -473,7 +484,7 @@ const Sync = {
   // typing — never auto-refresh these, no matter how new the incoming data is.
   // (Builds' expense select mode lives on 'subBuildDetail' and keeps its selection in
   // memory across re-renders, so a background refresh redraws it without losing picks.)
-  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate', 'addNoahVisit'],
+  FORM_VIEWS: ['add', 'addCost', 'addIssue', 'addVehicle', 'addWeight', 'categoryForm', 'projectForm', 'storeForm', 'sellVehicle', 'addBuild', 'addSubBuild', 'addBuildExpense', 'contractorForm', 'addNoahIssue', 'addNoahGrowth', 'addNoahMilestone', 'addJazzUpdate', 'addNoahUpdate', 'addNoahVisit', 'addDebt', 'debtMove', 'debtOffer', 'debtRates', 'debtPlan'],
 
   startPolling() {
     window.addEventListener('online', () => this.fullSync());

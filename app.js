@@ -63,7 +63,7 @@ async function getActiveGarageCosts() { return (await DB.getAll('garageCosts')).
 function renderHeader() {
   const now = new Date();
   document.getElementById('dateLine').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-  const titles = { finance: 'Finances', noah: 'Noah', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', builds: 'Builds', more: 'Settings' };
+  const titles = { finance: 'Finances', debts: 'Debts', noah: 'Noah', jazz: 'Jazz', weight: 'Weight', garage: 'Garage', builds: 'Builds', more: 'Settings' };
   // Documents and Passwords live inside the Settings tab but are their own places
   const moreTitles = { docFolders: 'Documents', docFolderView: 'Documents', docFolderForm: 'Documents', passwords: 'Passwords', passwordForm: 'Passwords' };
   const title = currentTab === 'more' && typeof moreView !== 'undefined' && moreTitles[moreView] ? moreTitles[moreView] : titles[currentTab];
@@ -132,7 +132,7 @@ function goTab(tab, view, mv) {
 
 // Anything reachable only through the More sheet keeps More lit while you're in it,
 // so the bar still tells you where you are.
-const MORE_SHEET_TABS = ['garage', 'builds', 'more'];
+const MORE_SHEET_TABS = ['debts', 'garage', 'builds', 'more'];
 function syncNavActive() {
   document.querySelectorAll('nav.tabs button').forEach((b) => {
     if (b.id === 'moreSheetBtn') { b.classList.toggle('active', MORE_SHEET_TABS.includes(currentTab)); return; }
@@ -151,6 +151,10 @@ function openMoreSheet() {
   const row = (label, icon, onclick) => `<div class="list-row" onclick="closeModal();${onclick}"><span><i class="ti ${icon}"></i> ${label}</span><i class="ti ti-chevron-right"></i></div>`;
   document.getElementById('modalSheet').innerHTML = `
     <div class="sheet-handle"></div>
+    <p class="more-label">Money</p>
+    <div class="more-grid">
+      ${tile('Debts', 'ti-credit-card', "goTab('debts')")}
+    </div>
     <p class="more-label">Home and car</p>
     <div class="more-grid">
       ${tile('Garage', 'ti-car', "goTab('garage')")}
@@ -177,6 +181,7 @@ $fab.addEventListener('click', () => {
   else if (currentTab === 'noah' && currentView === 'main') { noahFabAction(); }
   else if (currentTab === 'weight' && currentView === 'main') { currentView = 'addWeight'; route(); }
   else if (currentTab === 'garage' && currentView === 'main') { currentView = 'addVehicle'; route(); }
+  else if (currentTab === 'debts' && currentView === 'main') { goAddDebt(); }
 });
 
 // ---------- Router ----------
@@ -238,7 +243,8 @@ const DIALOG_VIEWS = {
   noah: { addNoahIssue: 'main', addNoahGrowth: 'main', addNoahMilestone: 'main', addNoahUpdate: 'noahIssueDetail', addNoahVisit: 'main' },
   weight: { addWeight: 'main' },
   garage: { addVehicle: 'main', addCost: 'vehicleDetail', sellVehicle: 'vehicleDetail' },
-  builds: { addBuild: 'main', addSubBuild: 'buildDetail', addBuildExpense: 'subBuildDetail', contractorForm: 'subBuildDetail' }
+  builds: { addBuild: 'main', addSubBuild: 'buildDetail', addBuildExpense: 'subBuildDetail', contractorForm: 'subBuildDetail' },
+  debts: { addDebt: 'main', debtMove: 'main', debtOffer: 'main', debtRates: 'main' }
 };
 // Settings has its own sub-screens (moreView) rather than views.
 const MORE_DIALOG_VIEWS = { passwordForm: 'passwords', docFolderForm: 'docFolders', buildCategoryForm: 'buildCategories' };
@@ -406,7 +412,7 @@ function openDetail() {
 }
 
 // Desktop sidebar button — the floating + button's job, labelled for the section.
-const HEADER_ADD_LABELS = { finance: 'Add entry', jazz: 'Add issue', noah: 'Add', weight: 'Log weight', garage: 'Add vehicle' };
+const HEADER_ADD_LABELS = { finance: 'Add entry', debts: 'Add debt', jazz: 'Add issue', noah: 'Add', weight: 'Log weight', garage: 'Add vehicle' };
 function syncHeaderAdd(view) {
   const btn = document.getElementById('headerAddBtn');
   if (!btn) return;
@@ -511,6 +517,16 @@ async function routeView() {
     if (currentView === 'buildPhotos') return renderBuildPhotos();
     if (currentView === 'addBuildExpense') return renderAddBuildExpense();
     if (currentView === 'contractorForm') return renderContractorForm();
+  } else if (currentTab === 'debts') {
+    $fab.style.display = currentView === 'main' ? 'flex' : 'none';
+    if (currentView === 'main') return renderDebtsMain();
+    if (currentView === 'debtDetail') return renderDebtDetail();
+    if (currentView === 'addDebt') return renderAddDebt();
+    if (currentView === 'debtMove') return renderDebtMove();
+    if (currentView === 'debtOffer') return renderDebtOffer();
+    if (currentView === 'debtRates') return renderDebtRates();
+    if (currentView === 'debtPlan') return renderDebtPlan();
+    currentView = 'main'; return renderDebtsMain();
   } else if (currentTab === 'more') {
     $fab.style.display = 'none';
     return renderMoreView();
@@ -881,13 +897,14 @@ function entryTypeMeta(type) {
 // Car / project names for the little tag on each Finance row. Looked up live so a
 // renamed car shows its new name; the name saved on the entry is the fallback (e.g. a
 // car that has since been deleted). Includes hidden projects — old entries still need them.
-let entryTagNames = { cars: {}, projects: {} };
+let entryTagNames = { cars: {}, projects: {}, debts: {} };
 async function loadEntryTagNames() {
   try {
-    const [cars, projects] = await Promise.all([DB.getAll('cars'), DB.getAll('projects')]);
+    const [cars, projects, debts] = await Promise.all([DB.getAll('cars'), DB.getAll('projects'), DB.getAll('debts')]);
     entryTagNames = {
       cars: Object.fromEntries(cars.map((c) => [c.id, c.name])),
-      projects: Object.fromEntries(projects.map((p) => [p.id, p.name]))
+      projects: Object.fromEntries(projects.map((p) => [p.id, p.name])),
+      debts: Object.fromEntries(debts.map((d) => [d.id, d.name + (d.last4 ? ' ••' + d.last4 : '')]))
     };
   } catch (err) { /* keep whatever we had — the stored names still work */ }
 }
@@ -902,6 +919,9 @@ function entryTagHtml(e) {
   } else if (e.projectId) {
     icon = 'ti-tools';
     label = entryTagNames.projects[e.projectId] || e.projectName || '';
+  } else if (e.debtId) {
+    icon = 'ti-credit-card';
+    label = (entryTagNames.debts || {})[e.debtId] || e.debtName || '';
   }
   return label ? `<span class="entry-tag"><i class="ti ${icon}"></i>${esc(label)}</span>` : '';
 }
@@ -2088,6 +2108,8 @@ async function renderEntryDetail() {
   const payee = payees.find((p) => p.id === entry.storeId) || {};
   const car = entry.carId ? cars.find((c) => c.id === entry.carId) : null;
   const project = entry.projectId ? projects.find((p) => p.id === entry.projectId) : null;
+  const debt = entry.debtId ? await DB.get('debts', entry.debtId) : null;
+  const debtLabel = entry.debtId ? (debt ? debt.name + (debt.last4 ? ' ••' + debt.last4 : '') : (entry.debtName || 'Deleted debt')) : '';
   const isRefund = entry.type === 'expense' && entry.amount < 0;
   const isNeg = entry.type === 'expense' && !isRefund;
   const valClass = entry.type === 'transfer' ? '' : (isNeg ? 'neg' : 'pos');
@@ -2108,7 +2130,8 @@ async function renderEntryDetail() {
     const extraRows = [
       car ? ['Car', car.name] : null,
       entry.carName && !car ? ['Cars', entry.carName] : null,
-      project ? ['Project', project.name] : null
+      project ? ['Project', project.name] : null,
+      debtLabel ? ['Debt', debtLabel] : null
     ].filter(Boolean);
     const receipt = entry.receiptLink && entry.receiptLink.url ? entry.receiptLink : null;
     const receiptOpen = receipt ? (receipt.viewUrl || receipt.url) : '';
@@ -2172,6 +2195,7 @@ async function renderEntryDetail() {
       ${car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Car</span><span style="font-size:12px">${esc(car.name)}</span></div>` : ''}
       ${entry.carName && !car ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Cars</span><span style="font-size:12px">${esc(entry.carName)}</span></div>` : ''}
       ${project ? `<div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Project</span><span style="font-size:12px">${esc(project.name)}</span></div>` : ''}
+      ${debtLabel ? `<div class="list-row" ${debt ? `onclick="closeModal();debtCurrentId='${entry.debtId}';goTab('debts','debtDetail')"` : 'style="cursor:default"'}><span style="color:var(--ink-soft);font-size:12px">Debt</span><span style="font-size:12px">${esc(debtLabel)}${debt ? ' <i class="ti ti-chevron-right"></i>' : ''}</span></div>` : ''}
       <div class="list-row" style="cursor:default"><span style="color:var(--ink-soft);font-size:12px">Synced</span><span style="font-size:12px">${entry.synced ? 'Yes' : 'Pending'}</span></div>
     </div>
     ${renderLinkPreview(entry.receiptLink, 'Receipt')}
@@ -2499,6 +2523,7 @@ async function renderAddEntry() {
   `;
 
   window.__cars = cars; window.__projects = projects; window.__categories = categories; window.__payeesCache = payees;
+  window.__debtsForEntry = await getDebtPickerList();
   // An edit or a duplicate arrives with a store that was chosen deliberately, once —
   // so treat it as picked and leave it be. A fresh form starts with nothing chosen.
   storePickedByUser = !!(src && src.storeId);
@@ -2638,6 +2663,7 @@ function snapshotEntryFormDraft() {
     description: document.getElementById('f_description').value,
     carId: carEl ? carEl.value : null,
     projectId: projectEl ? projectEl.value : null,
+    debtId: document.getElementById('f_debt') ? document.getElementById('f_debt').value : null,
     receiptLink: entryReceiptLink || null
   };
 }
@@ -2703,9 +2729,22 @@ function onCategoryChange(skipAutofill) {
       return { carId: c.id, name: c.name, checked: !!s, amount: s ? (+s.amount || 0) : 0 };
     });
     area.innerHTML = renderCarSplitUI();
+  } else if (cat.conditionalField === 'debt') {
+    area.innerHTML = renderDebtPickerCard('f_debt', (duplicateSource && duplicateSource.debtId) || '', window.__debtsForEntry || [], duplicateSource && duplicateSource.debtName);
   } else {
     area.innerHTML = '';
   }
+}
+
+// The "Debt" extra field: which debt this payment lowers. Shared by the entry form and
+// the recurring-entry form. A debt that no longer exists keeps its option so the link
+// isn't lost on save.
+function renderDebtPickerCard(selectId, pre, list, preName) {
+  const missing = pre && !list.some((d) => d.id === pre) ? `<option value="${pre}" selected>${esc(preName || 'Deleted debt')}</option>` : '';
+  if (!list.length && !missing) {
+    return `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-credit-card"></i> Debt</label><p style="font-size:12px;color:var(--ink-soft);margin:0">No debts yet — add them in the Debts section first.</p><input type="hidden" id="${selectId}" value=""></div>`;
+  }
+  return `<div class="card tight" style="background:var(--surface)"><label class="field-label"><i class="ti ti-credit-card"></i> Debt</label><select id="${selectId}">${missing}${list.map((d) => `<option value="${d.id}" ${pre === d.id ? 'selected' : ''}>${esc(d.name)} · ${d.balance > 0.005 ? fmtMoney(d.balance) + ' owing' : 'nothing owing'}</option>`).join('')}</select><p style="font-size:11px;color:var(--ink-soft);margin:6px 0 0">Lowers this debt's balance when saved.</p></div>`;
 }
 
 function renderCarSplitUI() {
@@ -2781,6 +2820,7 @@ async function renderCategoryForm() {
       <option value="car" ${window.__categoryConditionalDraft === 'car' ? 'selected' : ''}>Car (single)</option>
       <option value="carSplit" ${window.__categoryConditionalDraft === 'carSplit' ? 'selected' : ''}>Cars (split across multiple)</option>
       <option value="project" ${window.__categoryConditionalDraft === 'project' ? 'selected' : ''}>Project</option>
+      <option value="debt" ${window.__categoryConditionalDraft === 'debt' ? 'selected' : ''}>Debt</option>
     </select>
 
     <div class="divider"></div>
@@ -3060,6 +3100,8 @@ async function saveEntry() {
   const projectId = document.getElementById('f_project') ? document.getElementById('f_project').value : null;
   const carObj = carId ? (window.__cars || []).find((c) => c.id === carId) : null;
   const projectObj = projectId ? (window.__projects || []).find((p) => p.id === projectId) : null;
+  const debtId = document.getElementById('f_debt') ? (document.getElementById('f_debt').value || null) : null;
+  const debtObj = debtId ? (window.__debtsForEntry || []).find((d) => d.id === debtId) : null;
   const carSplitFinal = carSplitDraft.length ? carSplitDraft.filter((c) => c.checked).map((c) => ({ carId: c.carId, amount: c.amount })) : null;
   const carSplitNames = carSplitFinal ? carSplitFinal.map((s) => {
     const c = (window.__cars || []).find((c) => c.id === s.carId);
@@ -3074,6 +3116,7 @@ async function saveEntry() {
     carId, projectId,
     carName: carObj ? carObj.name : carSplitNames,
     projectName: projectObj ? projectObj.name : '',
+    debtId, debtName: debtObj ? debtObj.name : (debtId && duplicateSource && duplicateSource.debtName) || '',
     transferDirection: type === 'transfer' ? (window.__transferDirection || 'out') : null,
     carSplit: carSplitFinal,
     receiptLink: entryReceiptLink || null,
@@ -3098,6 +3141,7 @@ async function saveEntry() {
       carId: entry.carId || null, carName: entry.carId ? entry.carName : (entry.carSplit && entry.carSplit.length ? entry.carName : ''),
       projectId: entry.projectId || null, projectName: entry.projectName || '',
       carSplit: entry.carSplit && entry.carSplit.length ? entry.carSplit : null,
+      debtId: entry.debtId || null, debtName: entry.debtName || '',
       createdFromEntryId: entry.id,
       synced: false
     };
@@ -5542,7 +5586,9 @@ async function processRecurringEntries() {
 // generates these too when the app is closed. A split is re-scaled to the rule's amount
 // as a safety net, so the per-car shares always add up to what was actually charged.
 function recurringEntryTags(rule) {
-  const tags = { carId: null, projectId: null, carName: '', projectName: '', carSplit: null };
+  const tags = { carId: null, projectId: null, carName: '', projectName: '', carSplit: null, debtId: null, debtName: '' };
+  // A debt payment carries its debt, so a recurring minimum lowers the right balance.
+  if (rule.debtId) { tags.debtId = rule.debtId; tags.debtName = rule.debtName || ''; }
   if (Array.isArray(rule.carSplit) && rule.carSplit.length) {
     const total = rule.carSplit.reduce((s, x) => s + (+x.amount || 0), 0);
     const amount = +rule.amount || 0;
@@ -5596,6 +5642,7 @@ async function openRecurringModal(editId) {
   window.__recurringRepeatType = existing ? existing.repeatType : 'monthly';
   window.__recCategories = categories;
   window.__recCars = await DB.getAll('cars');
+  window.__recDebts = await getDebtPickerList();
   window.__recProjects = (await DB.getAll('projects')).filter((p) => !p.hidden);
   window.__recExisting = existing;
 
@@ -5659,6 +5706,8 @@ function onRecurringCategoryChange(initial) {
       return { carId: c.id, name: c.name, checked: !!x, amount: x ? (+x.amount || 0) : 0 };
     });
     area.innerHTML = renderRecCarSplitUI();
+  } else if (cat.conditionalField === 'debt') {
+    area.innerHTML = `<div style="margin-bottom:14px">${renderDebtPickerCard('rec_debt', saved && saved.debtId ? saved.debtId : '', window.__recDebts || [], saved && saved.debtName)}</div>`;
   } else {
     area.innerHTML = '';
   }
@@ -5744,7 +5793,12 @@ async function saveRecurring() {
   const cars = window.__recCars || [];
   const carEl = document.getElementById('rec_car');
   const projectEl = document.getElementById('rec_project');
-  rule.carId = null; rule.carName = ''; rule.projectId = null; rule.projectName = ''; rule.carSplit = null;
+  rule.carId = null; rule.carName = ''; rule.projectId = null; rule.projectName = ''; rule.carSplit = null; rule.debtId = null; rule.debtName = '';
+  const debtEl = document.getElementById('rec_debt');
+  if (cat.conditionalField === 'debt' && debtEl && debtEl.value) {
+    rule.debtId = debtEl.value;
+    rule.debtName = ((window.__recDebts || []).find((d) => d.id === debtEl.value) || {}).name || (window.__recExisting && window.__recExisting.debtName) || '';
+  }
   if (cat.conditionalField === 'car' && carEl && carEl.value) {
     rule.carId = carEl.value;
     rule.carName = (cars.find((c) => c.id === carEl.value) || {}).name || (window.__recExisting && window.__recExisting.carName) || '';

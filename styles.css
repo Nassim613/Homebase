@@ -224,6 +224,63 @@ nav.tabs button:not(.bar-item) { display: none; }
 .sidebar-footer, .sidebar-mark { display: none; }
 kbd { font-family: inherit; font-size: 11px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; background: var(--surface-raised); }
 
+
+/* ===== Debts ===== */
+.debt-hero { background: var(--surface-raised); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); margin-bottom: 8px; cursor: pointer; border-left: 0; }
+.debt-hero .label { font-size: 12px; color: #0F6E56; margin: 0; }
+.debt-hero .big { font-family: 'Fraunces', serif; font-size: 26px; font-weight: 600; color: #0F6E56; margin: 2px 0; }
+.debt-hero .sub { font-size: 12px; color: var(--ink-soft); margin: 0; }
+.debt-hero.muted .label, .debt-hero.muted .big { color: var(--ink); }
+.debt-hero.warn .label, .debt-hero.warn .big { color: var(--red); }
+.debt-alert { border-radius: 12px; padding: 10px 12px; font-size: 13px; margin-bottom: 8px; line-height: 1.45; }
+.debt-alert p { font-size: 12px; margin: 3px 0 0; }
+.debt-alert.warn { background: var(--gold-soft); color: #7a5508; }
+.debt-alert.info { background: var(--surface-raised); color: var(--ink-soft); border: 1px solid var(--line); }
+.debt-alert.good { background: var(--sage-soft); color: #0F6E56; margin-top: 8px; }
+.debt-alert.bad { background: var(--red-soft); color: var(--red); margin-top: 8px; }
+.debt-suggest { border: 2px solid var(--ink); }
+.debt-suggest-head { font-size: 12px; font-weight: 600; margin: 0 0 6px; }
+.debt-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; }
+.debt-note { font-size: 11px; color: var(--ink-soft); line-height: 1.45; margin: 4px 0 0; }
+.muted { color: var(--ink-soft); }
+.debt-list { padding: 4px 14px; }
+.debt-row { padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.debt-row:last-child { border-bottom: none; }
+.debt-row-top { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.debt-row-top .ti { color: var(--ink-soft); margin-right: 2px; }
+.debt-amt { font-weight: 600; white-space: nowrap; }
+.debt-row-sub { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.debt-row-sub:empty { display: none; }
+.debt-row-meta { font-size: 11px; color: var(--ink-soft); margin-top: 4px; }
+.debt-chip { display: inline-flex; align-items: center; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--ink-soft); white-space: nowrap; }
+.debt-chip.warn { background: var(--gold-soft); border-color: var(--gold); color: #7a5508; }
+.debt-chip.good { background: var(--sage-soft); border-color: var(--sage); color: #0F6E56; }
+.debt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.debt-actions .btn { font-size: 13px; padding: 10px 8px; }
+.debt-ratebar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-bottom: 4px; }
+.debt-ratebar-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 10px; }
+.debt-act { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+.debt-act:last-child { border-bottom: none; }
+.debt-act p { margin: 0; }
+.debt-act .sub { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+.debt-act .pos { color: #0F6E56; font-weight: 600; white-space: nowrap; }
+.debt-act .neg { color: var(--red); font-weight: 600; white-space: nowrap; }
+.debt-act.finance { background: var(--sage-soft); margin: 0 -14px; padding: 9px 14px; }
+.debt-rate-edit { display: grid; grid-template-columns: 1.4fr 0.8fr auto 40px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.debt-rate-edit input { padding: 8px 9px; font-size: 14px; min-width: 0; }
+.debt-rate-edit label { font-size: 12px; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.debt-rate-edit label input { width: auto; }
+.debt-rate-edit .btn { padding: 0; height: 36px; }
+.debt-offer-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.debt-offer-row:last-child { border-bottom: none; }
+.debt-offer-row p { margin: 0; font-size: 13px; }
+.debt-offer-row .sub { font-size: 11px; color: var(--ink-soft); }
+.debt-offer-row input { width: 110px; text-align: right; flex-shrink: 0; }
+.debt-step { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.debt-step:last-child { border-bottom: none; }
+.debt-step .when { font-size: 11px; color: var(--ink-soft); margin: 0 0 2px; }
+.debt-step p { margin: 0; }
+
 /* ===== Desktop layout — only applies above 768px, phone is untouched.
    Placed near the end of the file so it wins the cascade against the base (mobile)
    rules above, which share the same selectors. ===== */
