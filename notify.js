@@ -267,6 +267,12 @@ async function renderNotificationsSettings() {
           <span><i class="ti ${m.icon}"></i> ${m.label}</span>
           <span class="chip ${prefs[m.key] ? 'active' : ''}" id="notifyPref_${m.key}">${prefs[m.key] ? 'On' : 'Off'}</span>
         </div>`).join('')}
+      <p class="section-label settings-group">Reminders</p>
+      <div class="list-row" onclick="toggleDebtReminders()">
+        <span><i class="ti ti-alarm"></i> Debt promo and rate reminders</span>
+        <span class="chip ${prefs.debts !== false ? 'active' : ''}" id="notifyPref_debts">${prefs.debts !== false ? 'On' : 'Off'}</span>
+      </div>
+      <p style="font-size:11px;color:var(--ink-soft);margin-top:6px">30, 14 and 7 days before a 0% promo ends or a rate changes on a debt that still has money on it.</p>
       <div style="display:flex;gap:8px;margin-top:16px">
         <button class="btn" style="flex:1" onclick="sendTestNotification()"><i class="ti ti-bell-ringing"></i> Send test</button>
         <button class="btn" style="flex:1" onclick="disableNotificationsHere()">Turn off here</button>
@@ -307,6 +313,16 @@ async function toggleNotifyPref(key) {
   const next = !(rec.prefs && rec.prefs[key]);
   await Notify.setPref(key, next);
   const chip = document.getElementById('notifyPref_' + key);
+  if (chip) { chip.textContent = next ? 'On' : 'Off'; chip.classList.toggle('active', next); }
+}
+
+// Debt reminders are on unless switched off, so "not set" counts as on here.
+async function toggleDebtReminders() {
+  const rec = await Notify.localRecord();
+  if (!rec) return;
+  const next = !(rec.prefs && rec.prefs.debts !== false);
+  await Notify.setPref('debts', next);
+  const chip = document.getElementById('notifyPref_debts');
   if (chip) { chip.textContent = next ? 'On' : 'Off'; chip.classList.toggle('active', next); }
 }
 
