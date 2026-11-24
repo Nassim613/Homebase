@@ -525,7 +525,6 @@ async function routeView() {
     if (currentView === 'debtMove') return renderDebtMove();
     if (currentView === 'debtOffer') return renderDebtOffer();
     if (currentView === 'debtRates') return renderDebtRates();
-    if (currentView === 'debtPlan') return renderDebtPlan();
     currentView = 'main'; return renderDebtsMain();
   } else if (currentTab === 'more') {
     $fab.style.display = 'none';

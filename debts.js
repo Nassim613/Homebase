@@ -89,6 +89,10 @@ function debtRateAt(d, dateStr) {
   for (const p of rates) if (p.from <= dateStr) cur = p;
   return cur;
 }
+function debtSettledRate(d) {
+  const rates = debtSortedRates(d);
+  return rates.length ? rates[rates.length - 1].rate : 0;
+}
 function debtNextChange(d, dateStr) {
   return debtSortedRates(d).find((p) => p.from > dateStr) || null;
 }
@@ -196,101 +200,6 @@ async function ensureDebtPaymentCategory() {
   Sync.pushEntry('Categories', cat).then(() => DB.put('categories', cat));
 }
 
-// The shared payoff plan (monthly amount and strategy) lives in Meta so both phones
-// see the same plan.
-async function getDebtPlan() {
-  const meta = (await DB.get('settings', 'meta')) || {};
-  let plan = meta.debtPlan;
-  if (typeof plan === 'string') { try { plan = JSON.parse(plan); } catch (e) { plan = null; } }
-  return Object.assign({ budget: null, strategy: 'rate' }, plan || {});
-}
-async function saveDebtPlan(plan) {
-  const meta = (await DB.get('settings', 'meta')) || { id: 'meta' };
-  meta.debtPlan = JSON.stringify(plan);
-  await DB.put('settings', meta);
-  Sync.pushEntry('Meta', { id: 'debtPlanFlag', key: 'debtPlan', value: meta.debtPlan });
-}
-
-// ---------- payoff simulation ----------
-// Month by month from today. Each month: any 0% promo that has ended moves to the
-// cheapest line with room (what actually gets done), interest is added at that month's
-// rate, minimums are paid, and everything left over goes to the highest rate (or the
-// smallest balance). Returns the debt-free month, total interest, and the events along
-// the way. Balance moves are assumed fee-free (lines of credit).
-function simulateDebtPayoff(rows, budget, strategy, today) {
-  const st = rows.filter((r) => !r.debt.closed).map((r) => ({
-    id: r.debt.id, name: debtName(r.debt), debt: r.debt, bal: Math.max(0, r.balance), limit: r.limit, paidMonth: null, moved: false, everOwed: r.balance > DEBT_EPS
-  }));
-  const events = [];
-  let totalInterest = 0, months = 0, shortfall = false;
-  const active = () => st.filter((s) => s.bal > DEBT_EPS);
-  if (!active().length) return { months: 0, endDate: today, totalInterest: 0, events, payoffs: [], shortfall: false, never: false };
-  let prev = today;
-  for (let m = 1; m <= 600; m++) {
-    const date = debtAddMonths(today, m);
-    // 1. promos that ended this month: move what's left to the cheapest room
-    st.forEach((s) => {
-      if (s.bal <= DEBT_EPS || s.moved) return;
-      const before = debtRateAt(s.debt, prev), after = debtRateAt(s.debt, date);
-      if (!(before.promo && !after.promo)) return;
-      const ended = debtSortedRates(s.debt).find((p) => p.from > prev && p.from <= date);
-      const targets = st.filter((t) => t !== s && t.limit > 0 && !debtRateAt(t.debt, date).promo)
-        .map((t) => ({ t, rate: debtRateAt(t.debt, date).rate, room: Math.max(0, t.limit - t.bal) }))
-        .filter((x) => x.room > 1 && x.rate < after.rate)
-        .sort((a, b) => a.rate - b.rate);
-      for (const x of targets) {
-        if (s.bal <= DEBT_EPS) break;
-        const amt = Math.min(s.bal, x.room);
-        s.bal -= amt; x.t.bal += amt;
-        events.push({ date: ended ? debtAddDays(ended.from, -1) : date, kind: 'move', text: `Move ${debtMoney0(amt)} from ${s.name} to ${x.t.name} (${debtPct(x.rate)})` });
-      }
-      if (s.bal > DEBT_EPS) events.push({ date: ended ? ended.from : date, kind: 'warn', text: `${debtMoney0(s.bal)} left on ${s.name} goes to ${debtPct(after.rate)} — no room to move it` });
-      else { s.bal = 0; s.everOwed = false; } // emptied by a move, not paid off
-      s.moved = true;
-    });
-    // 2. interest for the month, at the rate that applied over it
-    const interestBy = {};
-    st.forEach((s) => {
-      if (s.bal <= DEBT_EPS) return;
-      const r = debtRateAt(s.debt, prev).rate;
-      const i = s.bal * r / 1200;
-      interestBy[s.id] = i; s.bal += i; totalInterest += i;
-    });
-    // 3. minimums
-    let pool = budget;
-    st.forEach((s) => {
-      if (s.bal <= DEBT_EPS) return;
-      const min = s.debt.minInterestOnly ? (interestBy[s.id] || 0) : Math.min(Number(s.debt.minPayment) || 0, s.bal);
-      const pay = Math.min(min, s.bal);
-      s.bal -= pay; pool -= pay;
-    });
-    if (pool < -0.5) shortfall = true;
-    // 4. the rest, in strategy order
-    const order = active().slice().sort((a, b) => strategy === 'smallest'
-      ? a.bal - b.bal
-      : (debtRateAt(b.debt, date).rate - debtRateAt(a.debt, date).rate) || (a.bal - b.bal));
-    for (const s of order) {
-      if (pool <= 0) break;
-      const pay = Math.min(pool, s.bal);
-      s.bal -= pay; pool -= pay;
-    }
-    st.forEach((s) => {
-      if (s.bal > DEBT_EPS) { s.everOwed = true; return; }
-      s.bal = 0;
-      if (s.everOwed && s.paidMonth === null) {
-        s.paidMonth = date;
-        events.push({ date, kind: 'paid', text: `${s.name} paid off` });
-      }
-    });
-    months = m; prev = date;
-    if (!active().length) break;
-  }
-  const never = active().length > 0;
-  const payoffs = st.filter((s) => s.paidMonth).map((s) => ({ id: s.id, name: s.name, date: s.paidMonth }));
-  events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return { months, endDate: never ? null : debtAddMonths(today, months), totalInterest, events, payoffs, shortfall, never };
-}
-
 // Where money sitting on an expiring promo is cheapest to put: other accounts with
 // room, lowest rate (as it'll be once the promo is over) first.
 function debtCheapestHomes(state, sourceRow, amount, whenDate) {
@@ -338,8 +247,10 @@ async function renderDebtsMain() {
 
   const owing = open.filter((r) => r.balance > DEBT_EPS)
     .sort((a, b) => (b.rateNow - a.rateNow) || (b.balance - a.balance));
-  const available = open.filter((r) => r.balance <= DEBT_EPS && r.limit > 0)
-    .sort((a, b) => a.rateNow - b.rateNow);
+  // Room on a line still counts as available even when part of it is used.
+  const available = open.filter((r) => r.limit > 0 && r.room > 0.5)
+    // Cheapest first, judged by the rate each one settles at once intro rates and promos end.
+    .sort((a, b) => debtSettledRate(a.debt) - debtSettledRate(b.debt));
   const paidNoLimit = open.filter((r) => r.balance <= DEBT_EPS && !(r.limit > 0));
   const closed = state.debts.filter((r) => r.debt.closed);
 
@@ -435,19 +346,6 @@ async function renderDebtsMain() {
   }
 
   const focus = owing.slice().sort((a, b) => (b.rateNow - a.rateNow) || (a.balance - b.balance))[0];
-  const plan = await getDebtPlan();
-  let freeHtml;
-  if (plan.budget && owing.length) {
-    const sim = simulateDebtPayoff(state.debts, Number(plan.budget), plan.strategy, today);
-    freeHtml = sim.never
-      ? `<div class="debt-hero warn" onclick="goDebtPlan()"><p class="label">Debt-free</p><p class="big">Not at ${debtMoney0(plan.budget)}/mo</p><p class="sub">That doesn't cover the interest. Tap to change the plan.</p></div>`
-      : `<div class="debt-hero" onclick="goDebtPlan()"><p class="label">Debt-free in</p><p class="big">${debtDurationText(sim.months)}</p><p class="sub">${debtMonthLabel(sim.endDate)} at ${debtMoney0(plan.budget)}/mo · tap for the plan</p></div>`;
-  } else if (owing.length) {
-    freeHtml = `<div class="debt-hero muted" onclick="goDebtPlan()"><p class="label">Debt-free date</p><p class="big" style="font-size:18px">Set your monthly amount</p><p class="sub">Tell the plan what you can put toward debt each month.</p></div>`;
-  } else {
-    freeHtml = `<div class="debt-hero"><p class="label">Nothing owing</p><p class="big">Debt-free</p></div>`;
-  }
-
   const holderChip = (d) => d.holder ? `<span class="debt-chip">${esc(d.holder)}</span>` : '';
   const owingRow = (r) => {
     const d = r.debt;
@@ -461,17 +359,16 @@ async function renderDebtsMain() {
   };
   const availRow = (r) => `<div class="debt-row" onclick="openDebt('${r.debt.id}')">
       <div class="debt-row-top"><span><i class="ti ${debtIcon(r.debt)}"></i> ${esc(debtName(r.debt))}</span><span class="debt-amt" style="color:#0F6E56">${debtMoney0(r.room)} free</span></div>
-      <div class="debt-row-sub">${holderChip(r.debt)}</div>
+      <div class="debt-row-sub">${holderChip(r.debt)}${r.balance > DEBT_EPS ? `<span class="debt-chip">also ${debtMoney0(r.balance)} owing</span>` : ''}</div>
       <div class="debt-row-meta">${esc(debtRateText(r.debt, today))}${debtMinText(r.debt) ? ' · ' + esc(debtMinText(r.debt)) : ''}</div>
     </div>`;
 
   $main.innerHTML = `
-    ${freeHtml}
     <div class="stat-grid">
       <div class="stat"><p class="label">Total owed</p><p class="value">${fmtMoney(totalOwed)}</p>${paidSoFar > 1 ? `<p class="debt-note" style="color:#0F6E56;margin:2px 0 0">${debtMoney0(paidSoFar)} paid down</p>` : ''}</div>
-      <div class="stat"><p class="label">Interest this month</p><p class="value">${fmtMoney(interestNow)}</p><p class="debt-note" style="margin:2px 0 0">estimated</p></div>
+      <div class="stat" style="cursor:pointer" onclick="openDebtInterestSheet()"><p class="label">Interest this month <i class="ti ti-chevron-right" style="font-size:11px"></i></p><p class="value">${fmtMoney(interestNow)}</p><p class="debt-note" style="margin:2px 0 0">estimated · tap for details</p></div>
       <div class="stat"><p class="label">Available credit</p><p class="value">${debtMoney0(availableCredit)}</p></div>
-      <div class="stat"><p class="label">Accounts</p><p class="value">${owing.length} owing · ${available.length} free</p></div>
+      <div class="stat"><p class="label">Accounts</p><p class="value">${owing.length} owing · ${available.filter((r) => r.balance <= DEBT_EPS).length} unused</p></div>
     </div>
     ${promoHtml}${rateHtml}
     ${suggestHtml}
@@ -481,7 +378,6 @@ async function renderDebtsMain() {
     ${paidNoLimit.length ? `<p class="section-label" style="margin-top:14px">Paid off</p><div class="card tight debt-list">${paidNoLimit.map((r) => `<div class="debt-row" onclick="openDebt('${r.debt.id}')"><div class="debt-row-top"><span style="color:var(--ink-soft)"><i class="ti ti-check"></i> ${esc(debtName(r.debt))}</span><span class="muted">Paid off</span></div></div>`).join('')}</div>` : ''}
     <div class="debt-actions">
       <button class="btn" onclick="goDebtMove()"><i class="ti ti-arrows-exchange"></i> Move balance</button>
-      <button class="btn" onclick="goDebtPlan()"><i class="ti ti-calculator"></i> Payoff plan</button>
       <button class="btn" onclick="goDebtOffer()"><i class="ti ti-gift"></i> New 0% offer</button>
       <button class="btn" onclick="goDebtRates()"><i class="ti ti-percentage"></i> Update rates</button>
     </div>
@@ -489,11 +385,6 @@ async function renderDebtsMain() {
       ${debtShowClosed ? `<div class="card tight debt-list">${closed.map((r) => `<div class="debt-row" onclick="openDebt('${r.debt.id}')"><div class="debt-row-top"><span style="color:var(--ink-soft)"><i class="ti ti-archive"></i> ${esc(debtName(r.debt))}</span><span class="muted">${fmtMoney(r.balance)}</span></div></div>`).join('')}</div>` : ''}` : ''}
     <p class="debt-note" style="margin-top:14px">Payments come from Finance entries in the "${esc(await debtPaymentCategoryName())}" category. Balances don't include interest charged since your last balance check — update them from your statements now and then.</p>
   `;
-}
-function debtDurationText(months) {
-  if (months <= 0) return 'now';
-  const y = Math.floor(months / 12), m = months % 12;
-  return [y ? `${y} yr${y === 1 ? '' : 's'}` : '', m ? `${m} mo` : ''].filter(Boolean).join(' ');
 }
 async function debtPaymentCategoryName() {
   const cats = await DB.getAll('categories');
@@ -572,6 +463,8 @@ async function renderDebtDetail() {
       <p style="font-size:12px;color:var(--ink-soft);margin:0">${r.balance > DEBT_EPS ? 'Owing' : (r.limit > 0 ? 'Nothing owing' : 'Paid off')}</p>
       <p class="display" style="font-size:28px;font-weight:600;margin:2px 0">${fmtMoney(r.balance)}</p>
       <p style="font-size:12px;color:var(--ink-soft);margin:0 0 12px">${(DEBT_KINDS[d.kind] || DEBT_KINDS.other).label}${d.holder ? ' · Account holder: ' + esc(d.holder) : ''}${d.closed ? ' · Closed' : ''}</p>
+      ${d.accountNumber ? `<div class="debt-acct"><div><p class="muted" style="font-size:11px;margin:0">Account number</p><p id="debtAcctNum" class="debt-acct-num" data-shown="0">${esc(debtMaskAccount(d.accountNumber))}</p></div>
+        <div style="display:flex;gap:6px"><button class="btn" aria-label="Show account number" onclick="toggleDebtAccount('${d.id}')"><i class="ti ti-eye" id="debtAcctEye"></i></button><button class="btn" aria-label="Copy account number" onclick="copyDebtAccount('${d.id}')"><i class="ti ti-copy" id="debtAcctCopy"></i></button></div></div>` : ''}
       ${barHtml}
       <div class="list-row" style="cursor:default"><span class="muted">Rate now</span><span>${debtPct(cur.rate)}${cur.promo ? ' (promo)' : ''}</span></div>
       ${r.limit > 0 ? `<div class="list-row" style="cursor:default"><span class="muted">Credit limit</span><span>${fmtMoney(r.limit)} · ${debtMoney0(r.room)} free</span></div>` : ''}
@@ -581,7 +474,7 @@ async function renderDebtDetail() {
       ${estInterest > 1 ? `<p class="debt-note" style="margin-top:8px">About ${fmtMoney(estInterest)} of interest has likely been charged since the last balance check (${fmtDate(lastCheck)}). Update the balance from your statement to stay exact.</p>` : ''}
     </div>
     <div class="debt-actions">
-      <button class="btn" onclick="openDebtActivitySheet(null,'payment')"><i class="ti ti-cash"></i> Log payment</button>
+      <button class="btn" onclick="goDebtPayInFinance('${d.id}')"><i class="ti ti-report-money"></i> Log payment</button>
       <button class="btn" onclick="openDebtActivitySheet(null,'balance')"><i class="ti ti-refresh"></i> Update balance</button>
       ${r.balance > DEBT_EPS ? `<button class="btn" onclick="goDebtMove('${d.id}')"><i class="ti ti-arrows-exchange"></i> Move balance</button>` : `<button class="btn" onclick="goDebtMove(null,'${d.id}')"><i class="ti ti-arrows-exchange"></i> Move money here</button>`}
       <button class="btn" onclick="openDebtActivitySheet(null,'charge')"><i class="ti ti-plus"></i> Charge or fee</button>
@@ -721,6 +614,7 @@ async function renderAddDebt() {
       <div class="field"><label class="field-label">Bank</label><input id="df_lender" placeholder="Tangerine" value="${esc(f.lender || '')}"></div>
       <div class="field"><label class="field-label">Last 4 digits</label><input id="df_last4" inputmode="numeric" maxlength="4" placeholder="1234" value="${esc(f.last4 || '')}"></div>
     </div>
+    <div class="field"><label class="field-label">Account number <span class="muted" style="font-weight:400">(optional — shown hidden, tap to reveal)</span></label><input id="df_acct" autocomplete="off" placeholder="Full account number" value="${esc(f.accountNumber || '')}"></div>
     <label class="field-label">Account holder <span class="muted" style="font-weight:400">(just where the debt lives)</span></label>
     <div class="chip-row">${DEBT_HOLDERS.map((h) => `<button type="button" class="chip ${f.holder === h ? 'active' : ''}" onclick="debtFormSet('holder', ${JSON.stringify(f.holder === h ? '' : h).replace(/"/g, '&quot;')})">${h}</button>`).join('')}</div>
     <div class="field"><label class="field-label">Credit limit <span class="muted" style="font-weight:400">(optional)</span></label><input type="number" step="0.01" id="df_limit" placeholder="Leave blank for a loan or if unknown" value="${f.limit || ''}"></div>
@@ -756,6 +650,7 @@ function debtFormRead() {
   if (v('df_name') !== undefined) f.name = v('df_name').trim();
   if (v('df_lender') !== undefined) f.lender = v('df_lender').trim();
   if (v('df_last4') !== undefined) f.last4 = v('df_last4').replace(/\D/g, '').slice(-4);
+  if (v('df_acct') !== undefined) f.accountNumber = v('df_acct').trim();
   if (v('df_limit') !== undefined) f.limit = parseFloat(v('df_limit')) || null;
   if (v('df_start') !== undefined) f.__startBalance = v('df_start');
   if (v('df_startDate') !== undefined) f.__startDate = v('df_startDate');
@@ -784,7 +679,10 @@ async function saveDebtForm() {
   const isNew = !debtEditId;
   const rec = isNew ? { id: f.id, createdAt: new Date().toISOString() } : await DB.get('debts', debtEditId);
   Object.assign(rec, {
-    name: f.name, kind: f.kind, lender: f.lender, last4: f.last4, holder: f.holder, limit: f.limit,
+    name: f.name, kind: f.kind, lender: f.lender, holder: f.holder, limit: f.limit,
+    accountNumber: f.accountNumber || '',
+    // Last 4 come from the account number when one is entered, so the two never disagree.
+    last4: f.accountNumber && f.accountNumber.replace(/\D/g, '').length >= 4 ? f.accountNumber.replace(/\D/g, '').slice(-4) : f.last4,
     rates, minInterestOnly: !!f.minInterestOnly, minPayment: f.minInterestOnly ? null : f.minPayment,
     notes: f.notes || '', closed: !!f.closed
   });
@@ -1077,83 +975,69 @@ async function saveDebtRates() {
   goDebtsMain();
 }
 
-// ---------- payoff plan ----------
-function goDebtPlan() { currentTab = 'debts'; currentView = 'debtPlan'; route(); }
-async function renderDebtPlan() {
+// ---------- interest breakdown ----------
+// Where "Interest this month" comes from, debt by debt, and what it becomes as the
+// scheduled rate changes land (if nothing is moved or paid).
+async function openDebtInterestSheet() {
   const state = await loadDebtState();
-  const plan = await getDebtPlan();
-  window.__debtPlanState = state;
-  const owing = state.debts.filter((r) => !r.debt.closed && r.balance > DEBT_EPS);
-  const minTotal = owing.reduce((s, r) => s + (r.debt.minInterestOnly ? r.balance * r.rateNow / 1200 : Math.min(Number(r.debt.minPayment) || 0, r.balance)), 0);
-  const budget = plan.budget || '';
-  $main.innerHTML = `
-    <div class="back" style="margin-bottom:14px;cursor:pointer" onclick="goDebtsMain()"><i class="ti ti-arrow-left"></i> <span style="font-family:'Fraunces',serif;font-size:17px;margin-left:6px">Payoff plan</span></div>
-    ${!owing.length ? '<div class="empty-state">Nothing owing — nothing to plan.</div>' : `
-    <label class="field-label">You put toward debt each month</label>
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:4px">
-      <input type="range" min="0" max="5000" step="50" id="dp_slider" value="${budget || 1500}" style="flex:1;padding:0;border:none" oninput="document.getElementById('dp_budget').value=this.value;updateDebtPlan()">
-      <input type="number" step="10" id="dp_budget" value="${budget}" placeholder="1500" style="width:110px;text-align:right" oninput="document.getElementById('dp_slider').value=this.value||0;updateDebtPlan()">
-    </div>
-    <p class="debt-note" style="margin-bottom:12px">Minimums this month come to about ${fmtMoney(minTotal)}.</p>
-    <label class="field-label">Extra money goes to</label>
-    <div class="btn-toggle-row" id="dp_strategy">
-      <button type="button" class="btn-toggle ${plan.strategy !== 'smallest' ? 'active-neutral' : ''}" data-s="rate" onclick="setDebtPlanStrategy('rate')">Highest rate first<br><span style="font-size:11px;color:var(--ink-soft)">Saves the most</span></button>
-      <button type="button" class="btn-toggle ${plan.strategy === 'smallest' ? 'active-neutral' : ''}" data-s="smallest" onclick="setDebtPlanStrategy('smallest')">Smallest balance first<br><span style="font-size:11px;color:var(--ink-soft)">Quick wins</span></button>
-    </div>
-    <div id="debtPlanResult"></div>
-    <button class="btn btn-primary" style="margin-top:12px" id="dp_save" onclick="saveDebtPlanForm()">Save as our plan</button>
-    <p class="debt-note" style="margin-top:10px">Assumes promo and intro-rate balances get moved to the cheapest line with room when they end, if that's cheaper (no fee), interest is charged monthly at each month's rate, and minimums are paid first. Rates you've scheduled are included; future changes you haven't entered aren't.</p>`}
-  `;
-  window.__debtPlanStrategy = plan.strategy || 'rate';
-  updateDebtPlan();
-}
-function setDebtPlanStrategy(s) {
-  window.__debtPlanStrategy = s;
-  document.querySelectorAll('#dp_strategy .btn-toggle').forEach((b) => b.classList.toggle('active-neutral', b.dataset.s === s));
-  updateDebtPlan();
-}
-function updateDebtPlan() {
-  const el = document.getElementById('debtPlanResult');
-  const state = window.__debtPlanState;
-  if (!el || !state) return;
-  const budget = parseFloat(document.getElementById('dp_budget').value) || 0;
-  if (budget <= 0) { el.innerHTML = '<p class="debt-note">Enter a monthly amount to see your debt-free date.</p>'; return; }
-  const sim = simulateDebtPayoff(state.debts, budget, window.__debtPlanStrategy, state.today);
-  const base = sim.never ? null : sim;
-  el.innerHTML = `
-    <div class="stat-grid">
-      <div class="stat" style="background:${sim.never ? 'var(--red-soft)' : 'var(--sage-soft)'}"><p class="label">Debt-free</p><p class="value" style="color:${sim.never ? 'var(--red)' : '#0F6E56'}">${sim.never ? 'Not at this amount' : debtMonthLabel(sim.endDate)}</p>${base ? `<p class="debt-note" style="margin:2px 0 0">${debtDurationText(sim.months)}</p>` : ''}</div>
-      <div class="stat"><p class="label">Total interest</p><p class="value">${sim.never ? '—' : fmtMoney(sim.totalInterest)}</p></div>
-    </div>
-    ${sim.shortfall ? '<div class="debt-alert bad"><i class="ti ti-alert-triangle"></i> Some months this doesn\'t cover the minimums.</div>' : ''}
-    <p class="section-label" style="margin-top:12px">The plan</p>
-    <div class="card tight">
-      ${debtPlanSteps(state, sim, budget).map((s) => `<div class="debt-step"><p class="when">${s.when}</p><p>${s.text}</p></div>`).join('')}
-    </div>`;
-}
-// Readable steps: what to pay now, the dated events, and the finish.
-function debtPlanSteps(state, sim, budget) {
-  const owing = state.debts.filter((r) => !r.debt.closed && r.balance > DEBT_EPS);
-  const mins = owing.filter((r) => !r.debt.minInterestOnly && Number(r.debt.minPayment) > 0);
-  const focus = owing.slice().sort((a, b) => window.__debtPlanStrategy === 'smallest' ? a.balance - b.balance : (b.rateNow - a.rateNow) || (a.balance - b.balance))[0];
-  const steps = [];
-  const minTxt = mins.map((r) => `${fmtMoney(r.debt.minPayment)} to ${esc(debtName(r.debt))}`).join(', ');
-  steps.push({ when: 'Each month now', text: `${minTxt ? minTxt + ', ' : ''}interest on the lines of credit, and everything else to <b>${esc(debtName(focus.debt))}</b>.` });
-  owing.forEach((r) => {
-    if (r.next && !r.promoNow) steps.push({ when: fmtDateYear(r.next.from), date: r.next.from, text: `${esc(debtName(r.debt))} goes to ${debtPct(r.next.rate)}.` });
+  const today = state.today;
+  const owing = state.debts.filter((r) => !r.debt.closed && r.balance > DEBT_EPS)
+    .sort((a, b) => (b.balance * b.rateNow) - (a.balance * a.rateNow) || b.balance - a.balance);
+  const total = owing.reduce((s, r) => s + r.balance * r.rateNow / 1200, 0);
+  const changeDates = [...new Set(owing.map((r) => debtSortedRates(r.debt).filter((p) => p.from > today && debtDaysBetween(today, p.from) <= 366).map((p) => p.from)).flat())].sort();
+  const future = changeDates.map((date) => {
+    const changed = owing.filter((r) => debtSortedRates(r.debt).some((p) => p.from === date));
+    const amt = owing.reduce((s, r) => s + r.balance * debtRateAt(r.debt, date).rate / 1200, 0);
+    return { date, amt, what: changed.map((r) => `${debtName(r.debt)} to ${debtPct(debtRateAt(r.debt, date).rate)}`).join(', ') };
   });
-  sim.events.forEach((e) => steps.push({ when: e.kind === 'move' ? 'Before ' + fmtDateYear(debtAddDays(e.date, 1)) : e.kind === 'paid' ? debtMonthLabel(e.date) : fmtDateYear(e.date), date: e.date, text: (e.kind === 'paid' ? '<i class="ti ti-check" style="color:#0F6E56"></i> ' : e.kind === 'warn' ? '<i class="ti ti-alert-triangle" style="color:var(--red)"></i> ' : '') + esc(e.text) }));
-  const head = steps.shift();
-  steps.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  steps.unshift(head);
-  if (!sim.never) steps.push({ when: debtMonthLabel(sim.endDate), text: '<b>Debt-free.</b>' });
-  return steps;
+  document.getElementById('modalSheet').innerHTML = `
+    <div class="sheet-handle"></div>
+    <p class="display" style="font-size:18px;margin-bottom:2px">Interest this month</p>
+    <p style="font-size:12px;color:var(--ink-soft);margin-bottom:12px">Balance × rate ÷ 12, at today's rates</p>
+    <div class="card tight">
+      ${owing.map((r) => `<div class="list-row" style="cursor:default;align-items:flex-start"><div><p style="margin:0;font-size:14px">${esc(debtName(r.debt))}</p><p class="debt-note" style="margin:2px 0 0">${fmtMoney(r.balance)} × ${debtPct(r.rateNow)}${r.promoNow ? ' promo' : ''}</p></div><span style="font-weight:600;font-size:14px">${fmtMoney(r.balance * r.rateNow / 1200)}</span></div>`).join('')}
+      <div class="list-row" style="cursor:default"><span style="font-weight:600">Total</span><span style="font-weight:600">${fmtMoney(total)}</span></div>
+    </div>
+    ${future.length ? `<p class="section-label" style="margin-top:12px">Coming up, if nothing moves</p>
+    <div class="card tight">${future.map((f) => `<div class="list-row" style="cursor:default;align-items:flex-start"><div><p style="margin:0;font-size:14px">From ${fmtDateYear(f.date)}</p><p class="debt-note" style="margin:2px 0 0">${esc(f.what)}</p></div><span style="font-weight:600;font-size:14px${f.amt > total * 1.5 ? ';color:var(--red)' : ''}">${fmtMoney(f.amt)}/mo</span></div>`).join('')}</div>` : ''}
+    <p class="debt-note" style="margin:8px 0 12px">Estimates. Your lender's statement is the real figure.</p>
+    <button class="btn" onclick="closeModal()">Close</button>`;
+  openModal();
 }
-async function saveDebtPlanForm() {
-  const budget = parseFloat(document.getElementById('dp_budget').value) || null;
-  await saveDebtPlan({ budget, strategy: window.__debtPlanStrategy || 'rate' });
-  const btn = document.getElementById('dp_save');
-  if (btn) { btn.textContent = 'Saved ✓'; setTimeout(() => { if (btn) btn.textContent = 'Save as our plan'; }, 1500); }
+
+// ---------- account number ----------
+function debtMaskAccount(n) {
+  const s = String(n || '');
+  return s.length <= 4 ? s : '•'.repeat(Math.min(8, s.length - 4)) + s.slice(-4);
+}
+async function toggleDebtAccount(id) {
+  const d = await DB.get('debts', id);
+  const el = document.getElementById('debtAcctNum');
+  if (!d || !el) return;
+  const shown = el.dataset.shown === '1';
+  el.textContent = shown ? debtMaskAccount(d.accountNumber) : d.accountNumber;
+  el.dataset.shown = shown ? '0' : '1';
+  const eye = document.getElementById('debtAcctEye');
+  if (eye) eye.className = 'ti ' + (shown ? 'ti-eye' : 'ti-eye-off');
+}
+async function copyDebtAccount(id) {
+  const d = await DB.get('debts', id);
+  if (!d || !d.accountNumber) return;
+  try { await navigator.clipboard.writeText(d.accountNumber); } catch (e) { return; }
+  const ic = document.getElementById('debtAcctCopy');
+  if (ic) { ic.className = 'ti ti-check'; setTimeout(() => { ic.className = 'ti ti-copy'; }, 1200); }
+}
+
+// ---------- Log payment → Finance ----------
+// Payments are Finance entries: this opens Add entry with the Debt payment category
+// and this debt already picked, so it's one place for all payments.
+async function goDebtPayInFinance(id) {
+  await ensureDebtPaymentCategory();
+  const cats = await DB.getAll('categories');
+  const cat = cats.find((c) => !c.deleted && !c.hidden && c.conditionalField === 'debt') || cats.find((c) => !c.deleted && c.conditionalField === 'debt');
+  const d = await DB.get('debts', id);
+  duplicateSource = { date: todayStr(), categoryId: cat ? cat.id : null, type: cat ? (cat.type || 'expense') : 'expense', debtId: id, debtName: debtName(d), amount: '', description: '' };
+  goTab('finance', 'add');
 }
 
 // ---------- used by the Finance entry form ----------
